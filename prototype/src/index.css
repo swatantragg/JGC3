@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  width: 100%;
+}
+
+body {
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 15px;
+  background: #fbfaf7;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scale the whole UI up uniformly (text + spacing) and let it fill the width.
+   `zoom` behaves like browser zoom: auto/percentage widths reflow to fit the
+   viewport, so nothing overflows horizontally. */
+#root {
+  zoom: 1.15;
+}
+
+/* Guard against a wide nowrap table forcing page-level horizontal scroll */
+main {
+  overflow-x: hidden;
+}
