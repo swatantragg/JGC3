@@ -1,15 +1,21 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   LayoutDashboard, Database, ClipboardList, PackageCheck, BarChart3, FileText,
   Ship, Plus, ArrowRight, Check, Boxes, Building2, ChevronRight, Anchor,
-  Package, Layers, Truck, RotateCcw, Globe, ListOrdered, History, Download, Pencil, X
+  Package, Layers, Truck, RotateCcw, Globe, ListOrdered, History, Download, Pencil, X, Sun, Moon
 } from "lucide-react";
 
-/* ===== Global Trade identity ===== */
+/* ===== Global Trade identity =====
+   Colours resolve to CSS variables so light/dark themes swap centrally (see index.css).
+   `brand` = the fixed dark-navy surface (header, hero, table heads) — stays dark in both themes.
+   `navy`  = primary foreground/text — dark in light mode, light in dark mode. */
 const C = {
-  navy: "#0B2C4D", navy2: "#143b61", amber: "#E8A33D", amberDark: "#9A6A1A", amberTint: "#FBEBD0",
-  teal: "#1C7C8C", tealTint: "#E1F0F2", tealDark: "#0F5260", canvas: "#FBFAF7", card: "#FFFFFF",
-  border: "#E7E3DA", ink: "#0B2C4D", muted: "#5A6B7A", faint: "#94A0AC", navyTint: "#EAEFF3",
+  brand: "var(--c-brand)", navy: "var(--c-navy)", navy2: "var(--c-brand-2)",
+  amber: "var(--c-amber)", amberDark: "var(--c-amber-dark)", amberTint: "var(--c-amber-tint)",
+  teal: "var(--c-teal)", tealTint: "var(--c-teal-tint)", tealDark: "var(--c-teal-dark)",
+  canvas: "var(--c-canvas)", card: "var(--c-card)", border: "var(--c-border)",
+  ink: "var(--c-ink)", muted: "var(--c-muted)", faint: "var(--c-faint)",
+  navyTint: "var(--c-navy-tint)", code: "var(--c-code)",
 };
 const FONT = "Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 const MONO = "ui-monospace, 'SF Mono', Menlo, Consolas, monospace";
@@ -131,7 +137,7 @@ function downloadCSV(filename, headers, rows) {
 
 /* ===== UI atoms ===== */
 function Btn({ children, onClick, kind = "amber", icon: Icon, disabled, small }) {
-  const styles = { amber: { background: disabled ? "#E8C893" : C.amber, color: C.navy }, teal: { background: C.teal, color: "#fff" }, ghost: { background: "#fff", color: C.navy, border: `1px solid ${C.border}` } };
+  const styles = { amber: { background: disabled ? "#E8C893" : C.amber, color: C.brand }, teal: { background: "#1C7C8C", color: "#fff" }, ghost: { background: C.card, color: C.navy, border: `1px solid ${C.border}` } };
   return (
     <button onClick={onClick} disabled={disabled} className={`inline-flex items-center gap-2 rounded-lg font-semibold transition ${small ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm"}`}
       style={{ ...styles[kind], opacity: disabled ? 0.7 : 1, cursor: disabled ? "default" : "pointer" }}>
@@ -140,11 +146,11 @@ function Btn({ children, onClick, kind = "amber", icon: Icon, disabled, small })
   );
 }
 const Card = ({ children, pad = true, style }) => <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, ...style }} className={pad ? "p-5" : ""}>{children}</div>;
-const Code = ({ children }) => <span style={{ fontFamily: MONO, fontSize: 12.5, color: "#1d4f7c" }}>{children}</span>;
+const Code = ({ children }) => <span style={{ fontFamily: MONO, fontSize: 12.5, color: C.code }}>{children}</span>;
 const Eyebrow = ({ children }) => <div className="uppercase font-semibold" style={{ fontSize: 11, letterSpacing: 1.4, color: C.teal }}>{children}</div>;
 const Pill = ({ children, tint = C.navyTint, color = C.navy }) => <span className="px-2 py-0.5 rounded-md font-medium" style={{ background: tint, color, fontSize: 11.5 }}>{children}</span>;
 const Field = ({ label, children }) => <label className="block"><div className="mb-1 font-medium" style={{ fontSize: 12, color: C.muted }}>{label}</div>{children}</label>;
-const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 9, border: `1px solid ${C.border}`, fontSize: 15, color: C.ink, background: "#fff", outline: "none", fontFamily: FONT };
+const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 9, border: `1px solid ${C.border}`, fontSize: 15, color: C.ink, background: C.card, outline: "none", fontFamily: FONT };
 const smInput = { ...inputStyle, padding: "8px 10px", fontSize: 14 };
 const EditBtn = ({ onClick }) => <button onClick={onClick} title="Edit" style={{ background: "none", border: "none", cursor: "pointer", color: C.teal, padding: 4, display: "inline-flex" }}><Pencil size={14} /></button>;
 
@@ -154,8 +160,8 @@ function EditModal({ title, schema, value, onSave, onClose }) {
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(11,44,77,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 20 }} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 760, maxHeight: "86vh", overflowY: "auto", boxShadow: "0 24px 70px rgba(0,0,0,0.35)" }}>
-        <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: "#fff" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: C.card, borderRadius: 16, width: "100%", maxWidth: 760, maxHeight: "86vh", overflowY: "auto", boxShadow: "0 24px 70px rgba(0,0,0,0.35)" }}>
+        <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: C.card }}>
           <div className="flex items-center gap-2"><Pencil size={16} color={C.teal} /><span className="font-bold" style={{ color: C.navy, fontSize: 16 }}>{title}</span></div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: C.faint }}><X size={18} /></button>
         </div>
@@ -211,10 +217,10 @@ function BuyerMasterTable({ rows, emptyMsg }) {
   return (
     <div style={{ overflowX: "auto", maxHeight: 420, overflowY: "auto" }}>
       <table style={{ borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
-        <thead><tr style={{ background: C.navy, color: "#fff", textAlign: "left", position: "sticky", top: 0 }}>{BM_HEAD.map((h) => <th key={h} className="px-2.5 py-2 font-semibold">{h}</th>)}</tr></thead>
+        <thead><tr style={{ background: C.brand, color: "#fff", textAlign: "left", position: "sticky", top: 0 }}>{BM_HEAD.map((h) => <th key={h} className="px-2.5 py-2 font-semibold">{h}</th>)}</tr></thead>
         <tbody>{rows.map((r, i) => (
-          <tr key={r.id} style={{ background: i % 2 ? C.canvas : "#fff", borderTop: `1px solid ${C.border}` }}>
-            {bmRow(r).map((c, j) => <td key={j} className="px-2.5 py-1.5" style={{ color: j < 2 || j === 3 ? "#1d4f7c" : C.ink, fontFamily: [3, 8, 9].includes(j) ? MONO : FONT, fontWeight: j === 11 ? 600 : 400 }}>{c}</td>)}
+          <tr key={r.id} style={{ background: i % 2 ? C.canvas : C.card, borderTop: `1px solid ${C.border}` }}>
+            {bmRow(r).map((c, j) => <td key={j} className="px-2.5 py-1.5" style={{ color: j < 2 || j === 3 ? C.code : C.ink, fontFamily: [3, 8, 9].includes(j) ? MONO : FONT, fontWeight: j === 11 ? 600 : 400 }}>{c}</td>)}
           </tr>
         ))}</tbody>
       </table>
@@ -241,9 +247,9 @@ function SupplierMaster7A({ rows, rbi }) {
   return (
     <div style={{ overflowX: "auto", maxHeight: 440, overflowY: "auto" }}>
       <table style={{ borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
-        <thead><tr style={{ background: C.navy, color: "#fff", textAlign: "left", position: "sticky", top: 0 }}>{SM7_HEAD.map((h) => <th key={h} className="px-2 py-2 font-semibold">{h}</th>)}</tr></thead>
+        <thead><tr style={{ background: C.brand, color: "#fff", textAlign: "left", position: "sticky", top: 0 }}>{SM7_HEAD.map((h) => <th key={h} className="px-2 py-2 font-semibold">{h}</th>)}</tr></thead>
         <tbody>{rows.map((g, i) => (
-          <tr key={i} style={{ background: i % 2 ? C.canvas : "#fff", borderTop: `1px solid ${C.border}` }}>
+          <tr key={i} style={{ background: i % 2 ? C.canvas : C.card, borderTop: `1px solid ${C.border}` }}>
             {sm7Cells(g, rbi).map((c, j) => <td key={j} className="px-2 py-1.5" style={{ color: C.ink, fontFamily: [0, 2, 3, 4, 5, 10, 11].includes(j) ? MONO : FONT, fontWeight: [0, 12, 13].includes(j) ? 600 : 400 }}>{c}</td>)}
           </tr>
         ))}</tbody>
@@ -288,7 +294,7 @@ function Dashboard({ ledger, shipments, items, go }) {
   const recent = shipments.flatMap((s) => s.lines.map((l) => ({ ...l, shipId: s.shipId, date: s.date }))).sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5);
   return (
     <div className="space-y-6">
-      <div style={{ background: C.navy, borderRadius: 16, color: "#fff", overflow: "hidden", position: "relative" }} className="p-7">
+      <div style={{ background: C.brand, borderRadius: 16, color: "#fff", overflow: "hidden", position: "relative" }} className="p-7">
         <div style={{ position: "absolute", right: -30, top: -30, fontFamily: MONO, fontSize: 120, color: "rgba(255,255,255,0.04)" }}>2001–2421</div>
         <Eyebrow>Jaikvin Global · Export operations</Eyebrow>
         <h1 className="font-bold mt-2" style={{ fontSize: 30, letterSpacing: -0.5, lineHeight: 1.1 }}>Enter once. Generate everything.<br />Always balanced.</h1>
@@ -385,7 +391,7 @@ function Masters({ items, setItems }) {
         <p style={{ fontSize: 13, color: C.muted }}>Set up once. Every document downstream reads from here — so an order only needs a code and a quantity. Use the pencil to edit any value; changes apply to new transactions only.</p></div>
       <div className="flex gap-1 p-1 rounded-xl flex-wrap" style={{ background: C.navyTint, width: "fit-content" }}>
         {tabs.map(([k, lbl, I]) => <button key={k} onClick={() => setTab(k)} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition"
-          style={{ fontSize: 13, background: tab === k ? "#fff" : "transparent", color: tab === k ? C.navy : C.muted, cursor: "pointer" }}><I size={15} /> {lbl}</button>)}
+          style={{ fontSize: 13, background: tab === k ? C.card : "transparent", color: tab === k ? C.navy : C.muted, cursor: "pointer" }}><I size={15} /> {lbl}</button>)}
       </div>
 
       {tab === "items" && (
@@ -400,12 +406,12 @@ function Masters({ items, setItems }) {
           <Card pad={false} style={{ overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
               <table style={{ borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
-                <thead><tr style={{ background: C.navy, color: "#fff", textAlign: "left" }}>
+                <thead><tr style={{ background: C.brand, color: "#fff", textAlign: "left" }}>
                   {["GD code", "Code", "OSWIN", "GL", "Description", "Size mm", "Len mm", "Packing", "Bar code", "HSN", "Vol/box", "Net/box", "Gross/box", "Bg", "P", "Stk/box", "Type UP", "Unit ₹", "FOB/100 $", "Supplier", ""].map((h, i) => <th key={i} className="px-2.5 py-2.5 font-semibold">{h}</th>)}
                 </tr></thead>
                 <tbody>
                   {shownItems.map((it, i) => (
-                    <tr key={it.id} style={{ background: i % 2 ? C.canvas : "#fff", borderTop: `1px solid ${C.border}` }}>
+                    <tr key={it.id} style={{ background: i % 2 ? C.canvas : C.card, borderTop: `1px solid ${C.border}` }}>
                       <td className="px-2.5 py-2.5"><Code>{it.gd}</Code></td><td className="px-2.5 py-2.5"><Code>{it.code}</Code></td>
                       <td className="px-2.5 py-2.5"><Code>{it.oswin}</Code></td><td className="px-2.5 py-2.5"><Code>{it.gl}</Code></td>
                       <td className="px-2.5 py-2.5" style={{ color: C.navy, fontWeight: 600 }}>{it.description}<div style={{ color: C.faint, fontWeight: 400, fontSize: 11 }}>{it.group}</div></td>
@@ -483,12 +489,12 @@ function Masters({ items, setItems }) {
 
       {tab === "buyersData" && (
         <Card pad={false} style={{ overflow: "hidden" }}>
-          <div className="px-5 py-3 font-semibold" style={{ background: C.navy, color: "#fff", fontSize: 13 }}>Buyer master (2A) — constant fields for verification</div>
+          <div className="px-5 py-3 font-semibold" style={{ background: C.brand, color: "#fff", fontSize: 13 }}>Buyer master (2A) — constant fields for verification</div>
           <div style={{ overflowX: "auto" }}>
             <table style={{ borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
               <thead><tr style={{ background: C.canvas, color: C.navy, textAlign: "left" }}>{["GD", "Code", "Size", "Len", "Packing", "Description", "Bar code", "HSN", "Vol/box", "Net/box", "Gross/box", "Stk/box", "Unit ₹", "FOB/100 $", "Supplier", ""].map((h, i) => <th key={i} className="px-2.5 py-2.5 font-semibold">{h}</th>)}</tr></thead>
               <tbody>{items.map((it, i) => (
-                <tr key={it.id} style={{ background: i % 2 ? C.canvas : "#fff", borderTop: `1px solid ${C.border}` }}>
+                <tr key={it.id} style={{ background: i % 2 ? C.canvas : C.card, borderTop: `1px solid ${C.border}` }}>
                   <td className="px-2.5 py-2.5"><Code>{it.gd}</Code></td><td className="px-2.5 py-2.5"><Code>{it.code}</Code></td><td className="px-2.5 py-2.5">{it.size}</td><td className="px-2.5 py-2.5">{it.length}</td>
                   <td className="px-2.5 py-2.5">{it.packing} / box</td><td className="px-2.5 py-2.5" style={{ color: C.navy }}>{it.description}</td><td className="px-2.5 py-2.5"><Code>{it.barcode}</Code></td><td className="px-2.5 py-2.5"><Code>{it.hsn}</Code></td>
                   <td className="px-2.5 py-2.5">{num(it.volume, 3)}</td><td className="px-2.5 py-2.5">{it.netPerBox}</td><td className="px-2.5 py-2.5">{it.grossPerBox}</td><td className="px-2.5 py-2.5">{num((it.bgPerBox + it.pPerBox) * 1.1)}</td>
@@ -504,12 +510,12 @@ function Masters({ items, setItems }) {
 
       {tab === "supplierData" && (
         <Card pad={false} style={{ overflow: "hidden" }}>
-          <div className="px-5 py-3 font-semibold" style={{ background: C.navy, color: "#fff", fontSize: 13 }}>Supplier master (7A) — constant fields for verification</div>
+          <div className="px-5 py-3 font-semibold" style={{ background: C.brand, color: "#fff", fontSize: 13 }}>Supplier master (7A) — constant fields for verification</div>
           <div style={{ overflowX: "auto" }}>
             <table style={{ borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
               <thead><tr style={{ background: C.canvas, color: C.navy, textAlign: "left" }}>{["GD", "Code", "OSWIN", "GL", "Size", "Len", "Packing", "Description", "Bar code", "HSN", "Vol/box", "BG", "PC", "TTL", "Cost/unit ₹", "FOB/pc $", "Supplier", ""].map((h, i) => <th key={i} className="px-2.5 py-2.5 font-semibold">{h}</th>)}</tr></thead>
               <tbody>{items.map((it, i) => (
-                <tr key={it.id} style={{ background: i % 2 ? C.canvas : "#fff", borderTop: `1px solid ${C.border}` }}>
+                <tr key={it.id} style={{ background: i % 2 ? C.canvas : C.card, borderTop: `1px solid ${C.border}` }}>
                   <td className="px-2.5 py-2.5"><Code>{it.gd}</Code></td><td className="px-2.5 py-2.5"><Code>{it.code}</Code></td><td className="px-2.5 py-2.5"><Code>{it.oswin}</Code></td><td className="px-2.5 py-2.5"><Code>{it.gl}</Code></td>
                   <td className="px-2.5 py-2.5">{it.size}</td><td className="px-2.5 py-2.5">{it.length}</td><td className="px-2.5 py-2.5">{it.packing} / box</td><td className="px-2.5 py-2.5" style={{ color: C.navy }}>{it.description}</td>
                   <td className="px-2.5 py-2.5"><Code>{it.barcode}</Code></td><td className="px-2.5 py-2.5"><Code>{it.hsn}</Code></td><td className="px-2.5 py-2.5">{num(it.volume, 3)}</td>
@@ -587,7 +593,7 @@ function BuyerOrder({ items, buyerMaster, setBuyerMaster }) {
           <div className="flex items-center justify-between mb-3"><Eyebrow>Derived for this line — all fields</Eyebrow><Pill tint={C.amberTint} color={C.amberDark}>live</Pill></div>
           <div className="grid grid-cols-3 gap-2.5">
             {tiles.map(([k, v]) => (
-              <div key={k} className="p-2.5 rounded-xl" style={{ background: C.tealTint, border: "1px solid #CFE6EA" }}>
+              <div key={k} className="p-2.5 rounded-xl" style={{ background: C.tealTint, border: "1px solid var(--c-tile-border)" }}>
                 <div style={{ fontSize: 10, color: C.tealDark, textTransform: "uppercase", letterSpacing: 0.4, lineHeight: 1.3 }}>{k}</div>
                 <div className="font-bold mt-0.5" style={{ fontSize: 14.5, color: C.navy, fontFamily: ["Bar code", "HSN", "Code"].includes(k) ? MONO : FONT }}>{v}</div>
               </div>
@@ -617,12 +623,12 @@ function POView({ buyerMaster, selPo, setSelPo }) {
   return (
     <div className="grid gap-5" style={{ gridTemplateColumns: "260px minmax(0, 1fr)" }}>
       <Card pad={false} style={{ overflow: "hidden", alignSelf: "start" }}>
-        <div className="px-4 py-3 font-semibold" style={{ background: C.navy, color: "#fff", fontSize: 13 }}>{poList.length} purchase order(s)</div>
+        <div className="px-4 py-3 font-semibold" style={{ background: C.brand, color: "#fff", fontSize: 13 }}>{poList.length} purchase order(s)</div>
         <div style={{ maxHeight: 520, overflowY: "auto" }}>
           {poList.map((p) => {
             const active = p.po === sel.po;
             return (
-              <button key={p.po} onClick={() => setSelPo(p.po)} className="w-full text-left px-4 py-3 transition" style={{ borderTop: `1px solid ${C.border}`, background: active ? C.amberTint : "#fff", borderLeft: `3px solid ${active ? C.amber : "transparent"}`, cursor: "pointer" }}>
+              <button key={p.po} onClick={() => setSelPo(p.po)} className="w-full text-left px-4 py-3 transition" style={{ borderTop: `1px solid ${C.border}`, background: active ? C.amberTint : C.card, borderLeft: `3px solid ${active ? C.amber : "transparent"}`, cursor: "pointer" }}>
                 <div className="flex items-center justify-between"><span style={{ fontFamily: MONO, fontWeight: 700, color: C.navy, fontSize: 13.5 }}>PO {p.po}</span><span style={{ fontSize: 11, color: C.faint }}>{dmy(p.date)}</span></div>
                 <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2 }}>{p.items} item(s) · {p.qty.toLocaleString("en-IN")} pcs · {inr(p.val)}</div>
               </button>
@@ -638,7 +644,7 @@ function POView({ buyerMaster, selPo, setSelPo }) {
           </div>
           <div className="grid grid-cols-5 gap-3 mt-4">
             {[["Items", sel.items], ["Total quantity", sel.qty.toLocaleString("en-IN") + " pcs"], ["Total boxes", sel.boxes], ["Total value", inr(sel.val)], ["Total FOB", usd(sel.fob)]].map(([k, v]) => (
-              <div key={k} className="p-3 rounded-xl" style={{ background: C.tealTint, border: "1px solid #CFE6EA" }}><div style={{ fontSize: 10.5, color: C.tealDark, textTransform: "uppercase", letterSpacing: 0.4 }}>{k}</div><div className="font-bold mt-0.5" style={{ fontSize: 16, color: C.navy }}>{v}</div></div>
+              <div key={k} className="p-3 rounded-xl" style={{ background: C.tealTint, border: "1px solid var(--c-tile-border)" }}><div style={{ fontSize: 10.5, color: C.tealDark, textTransform: "uppercase", letterSpacing: 0.4 }}>{k}</div><div className="font-bold mt-0.5" style={{ fontSize: 16, color: C.navy }}>{v}</div></div>
             ))}
           </div>
         </Card>
@@ -669,7 +675,7 @@ function Orders({ buyerMaster }) {
         <p style={{ fontSize: 13, color: C.muted }}>Choose a party and a date or range, view the orders, and download the master for that period.</p></div>
       <div className="flex gap-1 p-1 rounded-xl" style={{ background: C.navyTint, width: "fit-content" }}>
         {[["buyer", "Buyer", Globe], ["supplier", "Supplier (7A)", Truck], ["po", "By PO", ClipboardList]].map(([k, lbl, I]) => <button key={k} onClick={() => setTab(k)} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition"
-          style={{ fontSize: 13, background: tab === k ? "#fff" : "transparent", color: tab === k ? C.navy : C.muted, cursor: "pointer" }}><I size={15} /> {lbl}</button>)}
+          style={{ fontSize: 13, background: tab === k ? C.card : "transparent", color: tab === k ? C.navy : C.muted, cursor: "pointer" }}><I size={15} /> {lbl}</button>)}
       </div>
 
       {tab === "buyer" && (
@@ -723,7 +729,7 @@ function PackingFIFO({ items, buyerMaster, receipts, setReceipts }) {
       <div className="flex items-end justify-between">
         <div><Eyebrow>Stage B · Supplier packing · FIFO</Eyebrow><h2 className="font-bold mt-1" style={{ fontSize: 22, color: C.navy }}>Deliveries clear the oldest order first</h2>
           <p style={{ fontSize: 13, color: C.muted }}>Record what a supplier packed; it deducts from pending orders oldest-first and stores which order each box cleared.</p></div>
-        <button onClick={() => { setReceipts([]); setFlash(null); }} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.muted, fontSize: 12.5, cursor: "pointer", background: "#fff" }}><RotateCcw size={13} /> Reset demo</button>
+        <button onClick={() => { setReceipts([]); setFlash(null); }} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg" style={{ border: `1px solid ${C.border}`, color: C.muted, fontSize: 12.5, cursor: "pointer", background: C.card }}><RotateCcw size={13} /> Reset demo</button>
       </div>
       <div className="grid gap-5" style={{ gridTemplateColumns: "340px 1fr" }}>
         <Card>
@@ -767,10 +773,10 @@ function Reports({ items, buyerMaster, receipts }) {
         <p style={{ fontSize: 13, color: C.muted }}>Reports 36–39 are live views of the FIFO ledger — pending quantity, item-wise and supplier-wise.</p></div>
       <div className="grid gap-5" style={{ gridTemplateColumns: "1fr 1fr" }}>
         <Card pad={false} style={{ overflow: "hidden" }}>
-          <div className="px-5 py-3 font-semibold" style={{ background: C.navy, color: "#fff", fontSize: 13 }}>Item-wise balance</div>
+          <div className="px-5 py-3 font-semibold" style={{ background: C.brand, color: "#fff", fontSize: 13 }}>Item-wise balance</div>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
             <thead><tr style={{ textAlign: "left", color: C.muted }}>{["Item", "Ordered", "Received", "Pending", "Supplier"].map((h) => <th key={h} className="px-3 py-2 font-medium">{h}</th>)}</tr></thead>
-            <tbody>{rows.map((r, i) => <tr key={r.it.id} style={{ borderTop: `1px solid ${C.border}`, background: i % 2 ? C.canvas : "#fff" }}>
+            <tbody>{rows.map((r, i) => <tr key={r.it.id} style={{ borderTop: `1px solid ${C.border}`, background: i % 2 ? C.canvas : C.card }}>
               <td className="px-3 py-2.5"><Code>{r.it.gd}</Code></td><td className="px-3 py-2.5">{r.ordered}</td><td className="px-3 py-2.5">{r.supplied}</td>
               <td className="px-3 py-2.5"><span style={{ fontWeight: 700, color: r.pending ? C.amberDark : C.teal }}>{r.pending}</span></td><td className="px-3 py-2.5"><Pill>{supCode(r.it.supplierId)}</Pill></td>
             </tr>)}</tbody>
@@ -798,9 +804,9 @@ function HistoryView({ items, shipments }) {
       <Card pad={false} style={{ overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
-            <thead><tr style={{ background: C.navy, color: "#fff", textAlign: "left" }}>{["Item", "Boxes", "Cleared PO", "Shipped", "Ship ID", "Invoice", "Container", "Vessel", "BL", "Discharge"].map((h) => <th key={h} className="px-3 py-2.5 font-semibold">{h}</th>)}</tr></thead>
+            <thead><tr style={{ background: C.brand, color: "#fff", textAlign: "left" }}>{["Item", "Boxes", "Cleared PO", "Shipped", "Ship ID", "Invoice", "Container", "Vessel", "BL", "Discharge"].map((h) => <th key={h} className="px-3 py-2.5 font-semibold">{h}</th>)}</tr></thead>
             <tbody>{rows.map((r, i) => { const it = items.find((x) => x.id === r.itemId); return (
-              <tr key={i} style={{ background: i % 2 ? C.canvas : "#fff", borderTop: `1px solid ${C.border}` }}>
+              <tr key={i} style={{ background: i % 2 ? C.canvas : C.card, borderTop: `1px solid ${C.border}` }}>
                 <td className="px-3 py-2.5"><Code>{it.gd}</Code> <span style={{ color: C.navy }}>{it.description}</span></td>
                 <td className="px-3 py-2.5" style={{ fontWeight: 600 }}>{r.boxes}</td><td className="px-3 py-2.5"><Pill tint={C.amberTint} color={C.amberDark}>PO {r.po}</Pill></td>
                 <td className="px-3 py-2.5" style={{ color: C.muted }}>{dmy(r.date)}</td><td className="px-3 py-2.5"><Code>{r.shipId}</Code></td><td className="px-3 py-2.5"><Code>{r.invoice}</Code></td>
@@ -834,8 +840,8 @@ function Documents() {
         <Card pad={false} style={{ overflow: "hidden", maxHeight: 560, overflowY: "auto" }}>
           {groups.map((g) => (
             <div key={g.k}>
-              <div className="px-4 py-2 flex items-center gap-2" style={{ background: C.navy, color: "#fff", position: "sticky", top: 0 }}><span style={{ fontFamily: MONO, color: C.amber, fontWeight: 700, fontSize: 12 }}>{g.k}</span><span style={{ fontSize: 12.5, fontWeight: 600 }}>{g.t}</span></div>
-              {g.docs.map(([no, nm]) => { const active = open === no; return <button key={no} onClick={() => setOpen(no)} className="w-full text-left px-4 py-2 flex items-center justify-between transition" style={{ borderTop: `1px solid ${C.border}`, background: active ? C.amberTint : "#fff", cursor: "pointer" }}>
+              <div className="px-4 py-2 flex items-center gap-2" style={{ background: C.brand, color: "#fff", position: "sticky", top: 0 }}><span style={{ fontFamily: MONO, color: C.amber, fontWeight: 700, fontSize: 12 }}>{g.k}</span><span style={{ fontSize: 12.5, fontWeight: 600 }}>{g.t}</span></div>
+              {g.docs.map(([no, nm]) => { const active = open === no; return <button key={no} onClick={() => setOpen(no)} className="w-full text-left px-4 py-2 flex items-center justify-between transition" style={{ borderTop: `1px solid ${C.border}`, background: active ? C.amberTint : C.card, cursor: "pointer" }}>
                 <span style={{ fontSize: 12.5, color: C.navy }}><Code>{no}</Code> &nbsp;{nm}</span>{rendered[no] ? <Pill tint={active ? "#fff" : C.tealTint} color={C.tealDark}>preview</Pill> : <ChevronRight size={13} color={C.faint} />}</button>; })}
             </div>
           ))}
@@ -903,27 +909,40 @@ export default function App() {
     { id: "history", label: "History", sub: "Shipped from FIFO", icon: History },
     { id: "docs", label: "Documents", sub: "Stage A–F", icon: FileText },
   ];
+  const [theme, setTheme] = useState(
+    () => (typeof localStorage !== "undefined" && localStorage.getItem("jg-theme")) || "light"
+  );
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    try { localStorage.setItem("jg-theme", theme); } catch (e) { /* ignore */ }
+  }, [theme]);
   return (
-    <div style={{ fontFamily: FONT, background: C.canvas, minHeight: "100vh", color: C.ink }}>
-      <header style={{ position: "sticky", top: 0, zIndex: 50, background: C.navy, boxShadow: "0 2px 14px rgba(11,44,77,0.16)" }}>
+    <div style={{ fontFamily: FONT, background: C.canvas, minHeight: "100vh", color: C.ink, display: "flex", flexDirection: "column" }}>
+      <header style={{ position: "sticky", top: 0, zIndex: 50, background: C.brand, boxShadow: "0 2px 14px rgba(11,44,77,0.16)" }}>
         <div style={{ maxWidth: 2000, margin: "0 auto", padding: "0 24px", display: "flex", alignItems: "center", gap: 18, height: 60 }}>
           <div className="flex items-center gap-2.5" style={{ flexShrink: 0 }}>
-            <div style={{ width: 34, height: 34, borderRadius: 9, background: C.amber, display: "flex", alignItems: "center", justifyContent: "center" }}><Anchor size={18} color={C.navy} strokeWidth={2.6} /></div>
+            <div style={{ width: 34, height: 34, borderRadius: 9, background: C.amber, display: "flex", alignItems: "center", justifyContent: "center" }}><Anchor size={18} color={C.brand} strokeWidth={2.6} /></div>
             <div><div style={{ color: "#fff", fontWeight: 700, fontSize: 14, lineHeight: 1 }}>Jaikvin Global</div><div style={{ color: "#8FA6BC", fontSize: 10, letterSpacing: 0.6 }}>EXPORT SYSTEM</div></div>
           </div>
           <nav className="flex items-center gap-1" style={{ flex: 1, overflowX: "auto" }}>
             {nav.map((n) => <NavItem key={n.id} label={n.label} icon={n.icon} active={view === n.id} onClick={() => setView(n.id)} />)}
           </nav>
-          <div style={{ flexShrink: 0 }}><Pill tint={C.amberTint} color={C.amberDark}>R1 · working prototype</Pill></div>
+          <div className="flex items-center gap-3" style={{ flexShrink: 0 }}>
+            <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} aria-label="Toggle theme"
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 34, height: 34, borderRadius: 9, background: "rgba(255,255,255,0.10)", border: "1px solid rgba(255,255,255,0.18)", color: "#fff", cursor: "pointer" }}>
+              {theme === "dark" ? <Sun size={16} strokeWidth={2.2} /> : <Moon size={16} strokeWidth={2.2} />}
+            </button>
+            <Pill tint={C.amberTint} color={C.amberDark}>R1 · working prototype</Pill>
+          </div>
         </div>
       </header>
-      <div style={{ background: "#fff", borderBottom: `1px solid ${C.border}` }}>
+      <div style={{ background: C.card, borderBottom: `1px solid ${C.border}` }}>
         <div style={{ maxWidth: 2000, margin: "0 auto", padding: "9px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div className="flex items-center gap-2" style={{ fontSize: 12.5, color: C.muted }}><Ship size={15} color={C.teal} /> Shipment in flight: <Code>{SHIPMENT.invoice}</Code><span style={{ color: C.border }}>|</span><Code>{SHIPMENT.container}</Code> · {SHIPMENT.pol} → {SHIPMENT.pod}</div>
           <div style={{ fontSize: 11.5, color: C.faint }}>Sample data · mirrors the Next.js + Python + Neon build</div>
         </div>
       </div>
-      <main>
+      <main style={{ flex: 1 }}>
         <div style={{ padding: 28, maxWidth: 2000, margin: "0 auto" }}>
           {view === "dashboard" && <Dashboard ledger={ledger} shipments={SHIPMENTS} items={items} go={setView} />}
           {view === "masters" && <Masters items={items} setItems={setItems} />}
@@ -935,6 +954,12 @@ export default function App() {
           {view === "docs" && <Documents />}
         </div>
       </main>
+      <footer style={{ borderTop: `1px solid ${C.border}`, background: C.card }}>
+        <div style={{ maxWidth: 2000, margin: "0 auto", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12.5, color: C.muted }}>Maintained and Developed By <span style={{ fontWeight: 600, color: C.navy }}>Avita Technologies</span></span>
+          <span style={{ fontFamily: MONO, fontSize: 12.5, color: C.faint }}>V-1.0</span>
+        </div>
+      </footer>
     </div>
   );
 }
