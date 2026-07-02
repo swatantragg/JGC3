@@ -1,5 +1,53 @@
 @import "tailwindcss";
 
+/* ===== Theme tokens =====
+   Light is the default (:root). Dark overrides the same variable names.
+   `--c-brand` is the fixed dark-navy brand surface (header/hero/table heads) and
+   stays dark in BOTH themes; `--c-navy`/`--c-ink` are foreground text and flip. */
+:root {
+  color-scheme: light;
+  --c-brand: #0b2c4d;
+  --c-brand-2: #143b61;
+  --c-navy: #0b2c4d;
+  --c-amber: #e8a33d;
+  --c-amber-dark: #9a6a1a;
+  --c-amber-tint: #fbebd0;
+  --c-teal: #1c7c8c;
+  --c-teal-tint: #e1f0f2;
+  --c-teal-dark: #0f5260;
+  --c-canvas: #fbfaf7;
+  --c-card: #ffffff;
+  --c-border: #e7e3da;
+  --c-ink: #0b2c4d;
+  --c-muted: #5a6b7a;
+  --c-faint: #94a0ac;
+  --c-navy-tint: #eaeff3;
+  --c-code: #1d4f7c;
+  --c-tile-border: #cfe6ea;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --c-brand: #0b2c4d;
+  --c-brand-2: #143b61;
+  --c-navy: #e8eef6;
+  --c-amber: #e8a33d;
+  --c-amber-dark: #f1c888;
+  --c-amber-tint: #3a2a12;
+  --c-teal: #54c1d2;
+  --c-teal-tint: #122e35;
+  --c-teal-dark: #a7dce6;
+  --c-canvas: #0c121a;
+  --c-card: #151e29;
+  --c-border: #26313e;
+  --c-ink: #e8eef6;
+  --c-muted: #9fb1c1;
+  --c-faint: #70808f;
+  --c-navy-tint: #1b2632;
+  --c-code: #83b4e0;
+  --c-tile-border: #26313e;
+}
+
 html,
 body,
 #root {
@@ -12,8 +60,20 @@ body,
 body {
   font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 15px;
-  background: #fbfaf7;
+  background: var(--c-canvas);
+  color: var(--c-ink);
+  transition: background 0.2s ease, color 0.2s ease;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* Inter figures: tabular (equal-width) + slashed zero for data legibility */
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-feature-settings: "tnum" 1, "zero" 1, "cv05" 1;
+}
+
+/* Force perfect vertical alignment of numeric columns in every table */
+table {
+  font-variant-numeric: tabular-nums slashed-zero;
 }
 
 /* Scale the whole UI up uniformly (text + spacing) and let it fill the width.
