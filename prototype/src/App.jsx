@@ -5,6 +5,7 @@ import {
   Package, Layers, Truck, RotateCcw, Globe, ListOrdered, History, Download, Pencil, X, Sun, Moon,
   SlidersHorizontal, GripVertical, Trash2
 } from "lucide-react";
+import { buildDocument, DOC_META, writeXLS, renderDocument, PREVIEW_CSS } from "./docs.js";
 
 /* ===== Global Trade identity =====
    Colours resolve to CSS variables so light/dark themes swap centrally (see index.css).
@@ -1230,66 +1231,49 @@ function PackingFIFO({ items, buyerMaster, invoices, setInvoices }) {
 
 /* ===== Invoice tab — pick an invoice, fill shipment details, download documents ===== */
 function InvoiceTab({ invoices, setInvoices, items }) {
-  const [selId, setSelId] = useState(invoices[0]?.id);
-  const [editShip, setEditShip] = useState(false);
-  const inv = invoices.find((i) => i.id === selId) || invoices[0];
+  const [openId, setOpenId] = useState(null);   // invoice open in the detail interface
+  const [editId, setEditId] = useState(null);   // invoice whose shipment is being edited
+  const openInv = invoices.find((i) => i.id === openId);
+  const editInv = invoices.find((i) => i.id === editId);
+  const saveShip = (f) => { setInvoices(invoices.map((x) => (x.id === editId ? { ...x, ship: f } : x))); setEditId(null); };
   const header = (
-    <div><Eyebrow>Stage C · Invoicing</Eyebrow><h2 className="font-bold mt-1" style={{ fontSize: 22, color: C.navy }}>One invoice, every document</h2>
-      <p style={{ fontSize: 13, color: C.muted }}>Pick an invoice, review its lines, fill the shipment details once, then download the proforma (17, buyer) or the custom invoice (18, after shipment) — both in Excel.</p></div>
+    <div><Eyebrow>Stage C · Invoicing</Eyebrow><h2 className="font-bold mt-1" style={{ fontSize: 22, color: C.navy }}>All invoices</h2>
+      <p style={{ fontSize: 13, color: C.muted }}>Every invoice raised so far. Click any invoice to open it — review its buyer &amp; supplier lines, fill the shipment details once, then download the proforma (17), custom invoice (18) or supplier sheet, all in Excel.</p></div>
   );
-  if (!inv) return <div className="space-y-5">{header}<Card><div style={{ color: C.faint, fontSize: 13 }}>No invoices yet — create one in Packing &amp; FIFO.</div></Card></div>;
-  const buyer = buyerById(inv.buyerId), tot = invoiceTotals(inv, items), done = shipComplete(inv.ship), s = inv.ship || {};
-  const saveShip = (f) => { setInvoices(invoices.map((x) => (x.id === inv.id ? { ...x, ship: f } : x))); setEditShip(false); };
-  const missing = ["blNo", "vessel", "container", "pod"].filter((k) => !s[k]);
+  if (!invoices.length) return <div className="space-y-5">{header}<Card><div style={{ color: C.faint, fontSize: 13 }}>No invoices yet — create one in Packing &amp; FIFO.</div></Card></div>;
+  const cols = ["Invoice No", "Date", "Buyer", "Boxes", "Volume m³", "FOB Value $", "Shipment", ""];
   return (
     <div className="space-y-5">
       {header}
-      <Card>
-        <div className="flex items-end gap-4 flex-wrap">
-          <Field label="Invoice"><select style={{ ...smInput, width: 320 }} value={inv.id} onChange={(e) => setSelId(e.target.value)}>{invoices.map((x) => <option key={x.id} value={x.id}>{x.invoiceNo} — {dmy(x.date)} — {buyerById(x.buyerId).brand}</option>)}</select></Field>
-          <Pill tint={done ? C.tealTint : C.amberTint} color={done ? C.tealDark : C.amberDark}>{done ? "shipment complete" : "shipment pending"}</Pill>
-          <div style={{ marginLeft: "auto" }} className="flex gap-2 flex-wrap">
-            <Btn kind="ghost" icon={Download} onClick={() => buildProformaXLS(inv, items, buyer)}>Proforma (17)</Btn>
-            <Btn kind="ghost" icon={Download} onClick={() => buildSupplierXLS(inv, items)}>Supplier sheet</Btn>
-            <Btn icon={Download} disabled={!done} onClick={() => buildCustomInvoiceXLS(inv, items, buyer)}>Custom invoice (18)</Btn>
-          </div>
+      <Card pad={false} style={{ overflow: "hidden" }}>
+        <div className="px-5 py-3 flex items-center justify-between" style={{ background: C.canvas, borderBottom: `1px solid ${C.border}` }}>
+          <span className="font-semibold" style={{ color: C.navy, fontSize: 13 }}>{invoices.length} invoice{invoices.length > 1 ? "s" : ""}</span>
+          <span style={{ fontSize: 11.5, color: C.faint }}>Click a row to open the invoice</span>
         </div>
-        {!done && <div className="mt-3 p-2.5 rounded-lg" style={{ background: C.amberTint, fontSize: 12, color: C.amberDark }}>Custom invoice (18) needs these first: <b>{missing.map((k) => (SHIP_FIELDS.find((f) => f.key === k) || {}).label || k).join(", ")}</b>. Add them below, then it unlocks.</div>}
-      </Card>
-      <div className="grid gap-5" style={{ gridTemplateColumns: "1fr 1.3fr" }}>
-        <Card pad={false} style={{ overflow: "hidden", alignSelf: "start" }}>
-          <div className="px-5 py-3 flex items-center justify-between" style={{ background: C.canvas, borderBottom: `1px solid ${C.border}` }}>
-            <span className="font-semibold" style={{ color: C.navy, fontSize: 13 }}>Shipment details</span><Btn kind="ghost" small icon={Pencil} onClick={() => setEditShip(true)}>Edit</Btn>
-          </div>
-          <div className="p-4 grid grid-cols-2 gap-x-4 gap-y-2.5">
-            {[["Buyer", buyer.name + " (" + buyer.brand + ")"], ["Buyer order", buyer.orderNo], ...SHIP_FIELDS.map((f) => [f.label, f.type === "date" && s[f.key] ? dmy(s[f.key]) : s[f.key]])].map(([k, v]) => (
-              <div key={k}><div style={{ fontSize: 10.5, color: C.faint }}>{k}</div><div style={{ fontSize: 12.5, color: v ? C.ink : C.faint, fontWeight: 500 }}>{v || "—"}</div></div>
-            ))}
-          </div>
-        </Card>
-        <Card pad={false} style={{ overflow: "hidden", alignSelf: "start" }}>
-          <div className="px-5 py-3 flex items-center justify-between" style={{ background: C.canvas, borderBottom: `1px solid ${C.border}` }}>
-            <span className="font-semibold" style={{ color: C.navy, fontSize: 13 }}>Lines — buyer (USD / FOB)</span><Pill tint={C.tealTint} color={C.tealDark}>{tot.boxes} boxes</Pill>
-          </div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
-              <thead><tr style={{ background: C.brand, color: "#fff" }}>{[["GD code"], ["Pieces", 1], ["Boxes", 1], ["Vol m³", 1], ["Rate $/pc", 1], ["Amount $", 1]].map(([h, r]) => <th key={h} className="px-3 py-2 font-semibold" style={{ textAlign: r ? "right" : "left" }}>{h}</th>)}</tr></thead>
-              <tbody>{tot.lines.map((x, i) => (
-                <tr key={i} style={{ borderTop: `1px solid ${C.border}`, background: i % 2 ? C.canvas : C.card }}>
-                  <td className="px-3 py-2"><Code>{x.it.gd}</Code></td>
-                  <td className="px-3 py-2" style={{ textAlign: "right" }}>{x.pieces.toLocaleString("en-IN")}</td>
-                  <td className="px-3 py-2" style={{ textAlign: "right", fontWeight: 600 }}>{x.boxes}</td>
-                  <td className="px-3 py-2" style={{ textAlign: "right" }}>{num(x.volume, 3)}</td>
-                  <td className="px-3 py-2" style={{ textAlign: "right" }}>{usd(x.buyerRate)}</td>
-                  <td className="px-3 py-2" style={{ textAlign: "right", fontWeight: 600 }}>{usd(x.buyerAmt)}</td>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
+            <thead><tr style={{ background: C.brand, color: "#fff", textAlign: "left" }}>{cols.map((h, i) => <th key={h} className="px-4 py-2.5 font-semibold" style={{ textAlign: [3, 4, 5].includes(i) ? "right" : "left" }}>{h}</th>)}</tr></thead>
+            <tbody>{invoices.map((x, i) => {
+              const b = buyerById(x.buyerId), t = invoiceTotals(x, items), done = shipComplete(x.ship);
+              return (
+                <tr key={x.id} onClick={() => setOpenId(x.id)} className="transition" style={{ background: i % 2 ? C.canvas : C.card, borderTop: `1px solid ${C.border}`, cursor: "pointer" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = C.navyTint)} onMouseLeave={(e) => (e.currentTarget.style.background = i % 2 ? C.canvas : C.card)}>
+                  <td className="px-4 py-3"><Code>{x.invoiceNo}</Code></td>
+                  <td className="px-4 py-3" style={{ color: C.muted }}>{dmy(x.date)}</td>
+                  <td className="px-4 py-3" style={{ color: C.navy, fontWeight: 500 }}>{b.name} <span style={{ color: C.faint }}>· {b.brand}</span></td>
+                  <td className="px-4 py-3" style={{ textAlign: "right", fontWeight: 600 }}>{t.boxes}</td>
+                  <td className="px-4 py-3" style={{ textAlign: "right" }}>{num(t.volume, 3)}</td>
+                  <td className="px-4 py-3" style={{ textAlign: "right", fontWeight: 600 }}>{usd(t.buyerAmt)}</td>
+                  <td className="px-4 py-3"><Pill tint={done ? C.tealTint : C.amberTint} color={done ? C.tealDark : C.amberDark}>{done ? "complete" : "pending"}</Pill></td>
+                  <td className="px-4 py-3" style={{ textAlign: "right" }}><span className="inline-flex items-center gap-1 font-semibold" style={{ color: C.teal, fontSize: 12.5 }}>Open <ChevronRight size={14} /></span></td>
                 </tr>
-              ))}</tbody>
-              <tfoot><tr style={{ background: C.amberTint, fontWeight: 700, color: C.navy }}><td className="px-3 py-2">Total</td><td className="px-3 py-2" style={{ textAlign: "right" }}>{tot.lines.reduce((s2, x) => s2 + x.pieces, 0).toLocaleString("en-IN")}</td><td className="px-3 py-2" style={{ textAlign: "right" }}>{tot.boxes}</td><td className="px-3 py-2" style={{ textAlign: "right" }}>{num(tot.volume, 3)}</td><td></td><td className="px-3 py-2" style={{ textAlign: "right" }}>{usd(tot.buyerAmt)}</td></tr></tfoot>
-            </table>
-          </div>
-        </Card>
-      </div>
-      {editShip && <EditModal title={`Edit shipment · ${inv.invoiceNo}`} schema={SHIP_FIELDS} value={inv.ship} onClose={() => setEditShip(false)} onSave={saveShip} />}
+              );
+            })}</tbody>
+          </table>
+        </div>
+      </Card>
+      {openInv && <InvoiceModal inv={openInv} items={items} onEditShip={() => setEditId(openInv.id)} onClose={() => setOpenId(null)} />}
+      {editInv && <EditModal title={`Edit shipment · ${editInv.invoiceNo}`} schema={SHIP_FIELDS} value={editInv.ship} onClose={() => setEditId(null)} onSave={saveShip} />}
     </div>
   );
 }
@@ -1355,12 +1339,38 @@ function Reports({ items, buyerMaster, invoices }) {
   const th = (h, r, i) => <th key={h} className="px-3 py-2.5 font-semibold" style={{ textAlign: r ? "right" : "left", ...(freezeStyle(RP_FREEZE, i, C.brand, true) || {}) }}>{h}</th>;
   const td = (i, rowBg, right, node, extra) => <td key={i} className="px-3 py-2.5" style={{ textAlign: right ? "right" : "left", ...(extra || {}), ...(freezeStyle(RP_FREEZE, i, rowBg) || {}) }}>{node}</td>;
 
+  // ---- Excel export (one report per tab; PO-wise carries the editable Remarks column) ----
+  const RTABLE = (title, sub, headers, rows) => {
+    const head = `<tr>${headers.map(([h]) => `<th>${h}</th>`).join("")}</tr>`;
+    const body = rows.map((r) => `<tr>${r.map((c, i) => `<td class="${headers[i][1] ? "r" : ""}">${c == null ? "" : String(c).replace(/&/g, "&amp;").replace(/</g, "&lt;")}</td>`).join("")}</tr>`).join("");
+    return `<div class="title">${title}</div><div class="sub">${sub}</div><table>${head}${body}</table>`;
+  };
+  const exportReport = () => {
+    const asOn = dmy(TODAY);
+    if (tab === "po") {
+      const H = [["Date"], ["GD Code"], ["PO"], ["Buyer"], ["Description"], ["Invoice No"], ["Qty", 1], ["Boxes", 1], ["Recd", 1], ["Pending", 1], ["Total Vol m³", 1], ["Invoice Value $", 1], ["Remarks"]];
+      const rows = poRows.map((p) => [dmy(p.date), p.it.gd, p.po, buyerById(p.buyerId).brand, p.it.description, joinInv(p.invoices), p.qty, p.ordered, p.recd, p.pending, num(p.volume, 3), usd(p.value), remarks[p.key] || ""]);
+      writeXLS(`Report_37_PO_wise_Buyer_${TODAY}.xls`, RTABLE("Report 37 · Balance Order PO wise (Buyer)", "As on " + asOn + " · Recd = boxes delivered against the PO · Remarks included", H, rows));
+    } else if (tab === "item") {
+      const H = [["Date"], ["GD Code"], ["Description"], ["PO(s)"], ["Invoice No"], ["Qty", 1], ["Vol/Box", 1], ["Total Boxes", 1], ["Recd Boxes", 1], ["Pending Boxes", 1], ["Total Vol m³", 1]];
+      const rows = itemRows.map((p) => [p.date ? dmy(p.date) : "—", p.it.gd, p.it.description, p.pos.join(", "), joinInv(p.invoices), p.qty, num(p.it.volume, 3), p.ordered, p.recd, p.pending, num(p.volume, 3)]);
+      writeXLS(`Report_37_Item_wise_${TODAY}.xls`, RTABLE("Report 37 · Balance Order Item wise", "As on " + asOn, H, rows));
+    } else {
+      const H = [["Date"], ["GD Code"], ["Supplier"], ["Description"], ["Invoice No"], ["Recd Boxes", 1], ["Pending Boxes", 1], ["Total Vol m³", 1], ["Invoice Value ₹", 1]];
+      const rows = supRows.map((p) => [dmy(p.date), p.it.gd, supCode(p.supplierId), p.it.description, joinInv(p.invoices), p.recd, p.pending, num(p.volume, 3), num(p.value)]);
+      writeXLS(`Report_36_Supplier_wise_${TODAY}.xls`, RTABLE("Report 36 · Balance Order Supplier wise", "As on " + asOn, H, rows));
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div><Eyebrow>Stage E · Reports 36–39</Eyebrow><h2 className="font-bold mt-1" style={{ fontSize: 22, color: C.navy }}>Balance register</h2>
         <p style={{ fontSize: 13, color: C.muted }}>Live from the FIFO ledger — PO wise, item wise and supplier wise. Each row carries its invoice number so you can see which invoice cleared which PO. Date &amp; GD code stay frozen.</p></div>
-      <div className="flex gap-1 p-1 rounded-xl" style={{ background: C.navyTint, width: "fit-content" }}>
-        {tabs.map(([k, lbl, I]) => <button key={k} onClick={() => setTab(k)} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition" style={{ fontSize: 13, background: tab === k ? C.card : "transparent", color: tab === k ? C.navy : C.muted, cursor: "pointer" }}><I size={15} /> {lbl}</button>)}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex gap-1 p-1 rounded-xl" style={{ background: C.navyTint, width: "fit-content" }}>
+          {tabs.map(([k, lbl, I]) => <button key={k} onClick={() => setTab(k)} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition" style={{ fontSize: 13, background: tab === k ? C.card : "transparent", color: tab === k ? C.navy : C.muted, cursor: "pointer" }}><I size={15} /> {lbl}</button>)}
+        </div>
+        <Btn icon={Download} onClick={exportReport}>Download {tab === "po" ? "PO wise (buyer)" : tab === "item" ? "Item wise" : "Supplier wise"} · Excel</Btn>
       </div>
 
       {tab === "po" && (
@@ -1472,63 +1482,77 @@ function HistoryView({ items, shipments }) {
 }
 
 /* ===== Documents ===== */
-function Documents() {
+const DOC_GROUPS = [
+  { k: "A", t: "Buyer order", docs: ["1", "2A", "2", "3", "4", "5", "6"] },
+  { k: "B", t: "Supplier packing", docs: ["7A", "7", "8", "9", "10", "11A", "11"] },
+  { k: "C", t: "Pre-shipment", docs: ["12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29"] },
+  { k: "D", t: "Post-shipment", docs: ["30", "31", "32", "33", "34"] },
+  { k: "E", t: "Reports", docs: ["35", "36", "37", "38", "39"] },
+  { k: "F", t: "Banking", docs: ["40"] },
+];
+function Documents({ items, buyerMaster, invoices }) {
+  const [invId, setInvId] = useState(invoices[0]?.id);
   const [open, setOpen] = useState("18");
-  const groups = [
-    { k: "A", t: "Buyer order", docs: [["2A", "Master"], ["2", "Barcode"], ["3", "Packing"], ["4", "Purchase"], ["5", "Sales"], ["6", "Suppliers’ PO"]] },
-    { k: "B", t: "Supplier packing", docs: [["7A", "Master"], ["7", "Packing"], ["8", "Purchase"], ["9", "Sales"], ["10", "E-way (inward)"], ["11A", "Delivery order"], ["11", "Delivery instr."]] },
-    { k: "C", t: "Pre-shipment", docs: [["12", "Boxes & volume"], ["13", "Export value decl."], ["14", "SCOMET"], ["15", "SDF"], ["16", "RoDTEP"], ["17", "Proforma"], ["18", "Custom invoice"], ["19", "Packing list"], ["20", "Packing itemwise"], ["21", "Packaging decl."], ["22", "Letter to CHA"], ["23", "Supplier details"], ["24", "BL annexure"], ["25", "E-invoice"], ["26", "Shipping instr."], ["27", "VGM"], ["28", "Cost sheets"], ["29", "E-way (export)"]] },
-    { k: "D", t: "Post-shipment", docs: [["30", "Letter to buyer"], ["31", "Commercial invoice"], ["32", "Packing"], ["33", "Packaging decl."], ["34", "CWD"]] },
-    { k: "E", t: "Reports", docs: [["35", "Costing"], ["36", "Balance, supplier"], ["37", "Balance, item"], ["38", "Supply details"], ["39", "Balance boxes/vol"]] },
-    { k: "F", t: "Banking", docs: [["40", "Bill regularisation"]] },
-  ];
-  const rendered = { "18": 1, "19": 1, "31": 1 };
+  const [q, setQ] = useState("");
+  const inv = invoices.find((i) => i.id === invId) || invoices[0];
+  if (!inv) return <div className="space-y-5"><div><Eyebrow>Stage A–F · Document set</Eyebrow><h2 className="font-bold mt-1" style={{ fontSize: 22, color: C.navy }}>One dataset, every document</h2></div><Card><div style={{ color: C.faint, fontSize: 13 }}>No invoices yet — create one in Packing &amp; FIFO.</div></Card></div>;
+  const buyer = buyerById(inv.buyerId), done = shipComplete(inv.ship);
+  const ctx = { inv, buyer, items, buyerMaster, invoices, SUPPLIERS, BUYERS, EXPORTER, supCode };
+  const download = (no) => buildDocument(no, ctx);
+  const ql = q.trim().toLowerCase();
+  const match = (no) => !ql || no.toLowerCase().includes(ql) || (DOC_META[no] || "").toLowerCase().includes(ql);
+  const groups = DOC_GROUPS.map((g) => ({ ...g, docs: g.docs.filter(match) })).filter((g) => g.docs.length);
+  const previewHtml = renderDocument(open, ctx);
+  const downloadStage = (g) => g.docs.forEach((no, i) => setTimeout(() => download(no), i * 250));
   return (
     <div className="space-y-5">
       <div><Eyebrow>Stage A–F · Document set</Eyebrow><h2 className="font-bold mt-1" style={{ fontSize: 22, color: C.navy }}>One dataset, every document</h2>
-        <p style={{ fontSize: 13, color: C.muted }}>The full export document set, in both variants (customs / INR and buyer / USD). Click one to preview it filled from the shipment.</p></div>
-      <div className="grid gap-5" style={{ gridTemplateColumns: "300px 1fr" }}>
-        <Card pad={false} style={{ overflow: "hidden", maxHeight: 560, overflowY: "auto" }}>
+        <p style={{ fontSize: 13, color: C.muted }}>All 40 export documents, generated live from the selected invoice — the same PO, dates, buyer, BL, container and quantities flow into every sheet. Pick a document to preview it, then download in Excel.</p></div>
+      <Card>
+        <div className="flex items-end gap-4 flex-wrap">
+          <Field label="Generate documents for invoice">
+            <select style={{ ...smInput, width: 340 }} value={inv.id} onChange={(e) => setInvId(e.target.value)}>{invoices.map((x) => <option key={x.id} value={x.id}>{x.invoiceNo} — {dmy(x.date)} — {buyerById(x.buyerId).brand}</option>)}</select>
+          </Field>
+          <Pill tint={done ? C.tealTint : C.amberTint} color={done ? C.tealDark : C.amberDark}>{done ? "shipment complete" : "shipment pending"}</Pill>
+          <div style={{ marginLeft: "auto", minWidth: 220 }}>
+            <Field label="Search documents"><input style={smInput} value={q} onChange={(e) => setQ(e.target.value)} placeholder="e.g. packing, invoice, VGM, 18" /></Field>
+          </div>
+        </div>
+        {!done && <div className="mt-3 p-2.5 rounded-lg" style={{ background: C.amberTint, fontSize: 12, color: C.amberDark }}>Shipment details are pending — post-shipment fields (BL, vessel, container, S/B) will show as blank on the documents until you fill them via the <b>Invoice</b> tab. Order-stage documents are fully populated now.</div>}
+      </Card>
+      <div className="grid gap-5" style={{ gridTemplateColumns: "320px 1fr" }}>
+        <Card pad={false} style={{ overflow: "hidden", maxHeight: 640, overflowY: "auto" }}>
           {groups.map((g) => (
             <div key={g.k}>
-              <div className="px-4 py-2 flex items-center gap-2" style={{ background: C.brand, color: "#fff", position: "sticky", top: 0 }}><span style={{ fontFamily: MONO, color: C.amber, fontWeight: 700, fontSize: 12 }}>{g.k}</span><span style={{ fontSize: 12.5, fontWeight: 600 }}>{g.t}</span></div>
-              {g.docs.map(([no, nm]) => { const active = open === no; return <button key={no} onClick={() => setOpen(no)} className="w-full text-left px-4 py-2 flex items-center justify-between transition" style={{ borderTop: `1px solid ${C.border}`, background: active ? C.amberTint : C.card, cursor: "pointer" }}>
-                <span style={{ fontSize: 12.5, color: C.navy }}><Code>{no}</Code> &nbsp;{nm}</span>{rendered[no] ? <Pill tint={active ? "#fff" : C.tealTint} color={C.tealDark}>preview</Pill> : <ChevronRight size={13} color={C.faint} />}</button>; })}
+              <div className="px-4 py-2 flex items-center justify-between gap-2" style={{ background: C.brand, color: "#fff", position: "sticky", top: 0, zIndex: 1 }}>
+                <span className="flex items-center gap-2"><span style={{ fontFamily: MONO, color: C.amber, fontWeight: 700, fontSize: 12 }}>{g.k}</span><span style={{ fontSize: 12.5, fontWeight: 600 }}>{g.t}</span></span>
+                <button onClick={() => downloadStage(g)} title="Download all in this stage" style={{ background: "rgba(255,255,255,0.12)", border: "none", borderRadius: 6, color: "#fff", cursor: "pointer", padding: "3px 7px", fontSize: 11, display: "inline-flex", alignItems: "center", gap: 4 }}><Download size={12} /> all</button>
+              </div>
+              {g.docs.map((no) => { const active = open === no; return (
+                <div key={no} onClick={() => setOpen(no)} className="w-full px-4 py-2 flex items-center justify-between transition" style={{ borderTop: `1px solid ${C.border}`, background: active ? C.amberTint : C.card, cursor: "pointer" }}>
+                  <span style={{ fontSize: 12.5, color: C.navy }}><Code>{no}</Code> &nbsp;{DOC_META[no]}</span>
+                  <button onClick={(e) => { e.stopPropagation(); download(no); }} title="Download Excel" style={{ background: "none", border: "none", cursor: "pointer", color: active ? C.amberDark : C.teal, padding: 3, display: "inline-flex" }}><Download size={15} /></button>
+                </div>
+              ); })}
             </div>
           ))}
+          {!groups.length && <div className="p-6 text-center" style={{ color: C.faint, fontSize: 13 }}>No documents match “{q}”.</div>}
         </Card>
-        <Card>{rendered[open] ? <DocPreview which={open} /> :
-          <div className="flex flex-col items-center justify-center text-center" style={{ minHeight: 420, color: C.muted }}><FileText size={34} color={C.faint} /><div className="font-semibold mt-3" style={{ color: C.navy }}>Document {open}</div><div style={{ fontSize: 13, maxWidth: 360 }} className="mt-1">In the full build this is auto-generated from the order and masters, in Excel and PDF. Documents 18, 19 and 31 preview live.</div></div>}</Card>
+        <Card pad={false} style={{ overflow: "hidden" }}>
+          <div className="px-5 py-3 flex items-center justify-between gap-3 flex-wrap" style={{ background: C.canvas, borderBottom: `1px solid ${C.border}` }}>
+            <span className="font-semibold flex items-center gap-2" style={{ color: C.navy, fontSize: 13 }}><FileText size={15} color={C.teal} /> Document {open} · {DOC_META[open]}</span>
+            <div className="flex items-center gap-2">
+              <span style={{ fontSize: 11.5, color: C.faint }}>{inv.invoiceNo} · {dmy(inv.date)}</span>
+              <Btn small icon={Download} onClick={() => download(open)}>Download Excel</Btn>
+            </div>
+          </div>
+          <div style={{ padding: 18, maxHeight: 560, overflow: "auto", background: C.canvas }}>
+            <style>{PREVIEW_CSS}</style>
+            <div className="docprev" style={{ background: "#ffffff", color: "#243b53", padding: "20px 22px", borderRadius: 8, border: "1px solid #d9e1ea", boxShadow: "0 1px 4px rgba(11,44,77,0.08)" }} dangerouslySetInnerHTML={{ __html: previewHtml || `<div class="sub">No preview for this document.</div>` }} />
+            <div className="mt-3 flex items-center gap-2" style={{ fontSize: 11.5, color: C.teal }}><Check size={14} /> Live preview of the Excel output — figures pulled from invoice {inv.invoiceNo}. Highlighted PDF fields (invoice no, dates, BL, container, quantities) are filled from this shipment.</div>
+          </div>
+        </Card>
       </div>
-    </div>
-  );
-}
-function DocPreview({ which }) {
-  const title = which === "19" ? "Packing list" : which === "31" ? "Commercial invoice (USD)" : "Custom invoice (INR)";
-  const usdMode = which === "31";
-  const lines = SEED_ITEMS.slice(0, 4).map((it, i) => ({ ...it, qty: [2000, 900, 300, 600][i] }));
-  const totBoxes = lines.reduce((s, l) => s + Math.ceil(l.qty / l.packing), 0);
-  const totVal = lines.reduce((s, l) => s + l.qty * (usdMode ? l.unitFob100 / 100 : l.unitValue), 0);
-  const totNet = lines.reduce((s, l) => s + Math.ceil(l.qty / l.packing) * l.netPerBox, 0);
-  return (
-    <div style={{ fontSize: 12.5 }}>
-      <div className="flex items-start justify-between pb-3" style={{ borderBottom: `2px solid ${C.navy}` }}>
-        <div><div className="font-bold" style={{ color: C.navy, fontSize: 16 }}>{SHIPMENT.exporter}</div><div style={{ color: C.muted, fontSize: 11.5 }}>IEC <Code>{SHIPMENT.iec}</Code> · GSTIN <Code>{SHIPMENT.gstin}</Code></div></div>
-        <div className="text-right"><div className="font-semibold uppercase" style={{ color: C.amber, fontSize: 11, letterSpacing: 1 }}>{title}</div><div style={{ fontFamily: MONO, color: C.navy, fontSize: 13 }}>{SHIPMENT.invoice}</div><div style={{ color: C.faint, fontSize: 11 }}>{SHIPMENT.date}</div></div>
-      </div>
-      <div className="grid grid-cols-3 gap-3 py-3" style={{ fontSize: 11.5 }}>
-        {[["Buyer", BUYER.name + " (" + BUYER.brand + ")"], ["Container", SHIPMENT.container], ["Vessel", SHIPMENT.vessel], ["Route", SHIPMENT.pol + " → " + SHIPMENT.pod], ["BL", SHIPMENT.bl], ["Marks", SHIPMENT.marks]].map(([k, v]) => <div key={k}><div style={{ color: C.faint }}>{k}</div><div style={{ color: C.ink, fontFamily: /[0-9]/.test(v) && k !== "Buyer" ? MONO : FONT }}>{v}</div></div>)}
-      </div>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead><tr style={{ background: C.navyTint, color: C.navy, textAlign: "left" }}>{["HSN", "Description", "Qty", "Boxes", "Net kg", usdMode ? "Rate $" : "Rate ₹", "Amount"].map((h) => <th key={h} className="px-2 py-1.5 font-semibold" style={{ fontSize: 11 }}>{h}</th>)}</tr></thead>
-        <tbody>
-          {lines.map((l, i) => { const bx = Math.ceil(l.qty / l.packing); const rate = usdMode ? l.unitFob100 / 100 : l.unitValue; return <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
-            <td className="px-2 py-1.5"><Code>{l.hsn}</Code></td><td className="px-2 py-1.5" style={{ color: C.navy }}>{l.description} {l.size}</td><td className="px-2 py-1.5">{l.qty}</td><td className="px-2 py-1.5">{bx}</td><td className="px-2 py-1.5">{num(bx * l.netPerBox)}</td><td className="px-2 py-1.5">{usdMode ? usd(rate) : inr(rate)}</td><td className="px-2 py-1.5" style={{ fontWeight: 600 }}>{usdMode ? usd(l.qty * rate) : inr(l.qty * rate)}</td>
-          </tr>; })}
-          <tr style={{ background: C.amberTint, fontWeight: 700, color: C.navy }}><td className="px-2 py-2" colSpan={3}>Total · {SHIPMENT.terms}</td><td className="px-2 py-2">{totBoxes}</td><td className="px-2 py-2">{num(totNet)}</td><td className="px-2 py-2"></td><td className="px-2 py-2">{usdMode ? usd(totVal) : inr(totVal)}</td></tr>
-        </tbody>
-      </table>
-      <div className="mt-3 flex items-center gap-2" style={{ fontSize: 11.5, color: C.teal }}><Check size={14} /> Generated from the order + masters. {usdMode ? "Buyer variant — USD, GD Watermark codes." : "Customs variant — HSN codes, INR values."}</div>
     </div>
   );
 }
@@ -1605,13 +1629,13 @@ export default function App() {
           {view === "invoice" && <InvoiceTab invoices={invoices} setInvoices={setInvoices} items={items} />}
           {view === "reports" && <Reports items={items} buyerMaster={buyerMaster} invoices={invoices} />}
           {view === "history" && <HistoryView items={items} shipments={SHIPMENTS} />}
-          {view === "docs" && <Documents />}
+          {view === "docs" && <Documents items={items} buyerMaster={buyerMaster} invoices={invoices} />}
         </div>
       </main>
       <footer style={{ borderTop: `1px solid ${C.border}`, background: C.card }}>
         <div style={{ maxWidth: 2000, margin: "0 auto", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <span style={{ fontSize: 12.5, color: C.muted }}>Maintained and Developed By <span style={{ fontWeight: 600, color: C.navy }}>Avita Technologies</span></span>
-          <span style={{ fontFamily: MONO, fontSize: 12.5, color: C.faint }}>V-1.0</span>
+          <span style={{ fontFamily: MONO, fontSize: 12.5, color: C.faint }}>V-1.2</span>
         </div>
       </footer>
     </div>
