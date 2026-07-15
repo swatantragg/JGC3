@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useMemo } from "react";
 import {
   SEED_ITEMS, SEED_BM, SEED_INVOICES, SUPPLIERS, BUYERS,
+  SEED_COSTING, COST_PARAMS,
   invReceipts, computeLedger,
 } from "./data.js";
 
@@ -15,6 +16,8 @@ export function AppProvider({ children }) {
   const [suppliers, setSuppliers] = useState(SUPPLIERS);
   const [buyerMaster, setBuyerMaster] = useState(SEED_BM);
   const [invoices, setInvoices] = useState(SEED_INVOICES);
+  const [costing, setCosting] = useState(SEED_COSTING);
+  const [costParams, setCostParams] = useState(COST_PARAMS);
   const [toasts, setToasts] = useState([]);
 
   const toast = useCallback((msg) => {
@@ -43,11 +46,12 @@ export function AppProvider({ children }) {
     return {
       items, setItems, buyers, setBuyers, suppliers, setSuppliers,
       buyerMaster, setBuyerMaster, invoices, setInvoices,
+      costing, setCosting, costParams, setCostParams,
       receipts, ledger, pendingBoxes, openPos,
       supCode, supById, buyerById, suppliersForItem,
       toast, toasts,
     };
-  }, [items, buyers, suppliers, buyerMaster, invoices, toasts, toast]);
+  }, [items, buyers, suppliers, buyerMaster, invoices, costing, costParams, toasts, toast]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

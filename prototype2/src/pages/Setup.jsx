@@ -1,8 +1,10 @@
 import { useState } from "react";
 import {
   Layers, Globe, Truck, Plus, Check, SlidersHorizontal, GripVertical, Trash2, Search,
+  Users as UsersIcon, ShieldCheck, Clock, UserPlus, KeyRound,
 } from "lucide-react";
 import { useApp } from "../store.jsx";
+import { useAuth, PERM_TREE, ALL_PERMS, ACCESS_PRESETS, accessLabel } from "../auth.jsx";
 import {
   Card, CardHead, Btn, Seg, Field, Input, Select, Pill, Mono, DataTable, Drawer, Modal, EditBtn,
   EditModal, Empty, Note, Info, SearchInput, FormulaPanel, Step,
@@ -176,10 +178,174 @@ function PartyPanel({ title, icon, count, children, form }) {
   );
 }
 
+/* ============================================================
+   Access editor — a preset gets it right in one click; the tree
+   below is only for fine-tuning. Ticking a section ticks all of
+   its sub-areas; unticking clears them.
+   ============================================================ */
+function AccessEditor({ access, onChange }) {
+  const set = new Set(access);
+  const leaves = (n) => (n.children ? n.children.map((c) => c.id) : [n.id]);
+  const toggleLeaf = (id) => {
+    const next = new Set(set);
+    next.has(id) ? next.delete(id) : next.add(id);
+    onChange([...next]);
+  };
+  const toggleNode = (n) => {
+    const ls = leaves(n);
+    const all = ls.every((id) => set.has(id));
+    const next = new Set(set);
+    ls.forEach((id) => (all ? next.delete(id) : next.add(id)));
+    onChange([...next]);
+  };
+  const presetMatch = Object.entries(ACCESS_PRESETS).find(([, p]) => p.perms.length === set.size && p.perms.every((x) => set.has(x)))?.[0];
+
+  return (
+    <div>
+      <div className="row wrap" style={{ gap: 6, marginBottom: 12 }}>
+        {Object.entries(ACCESS_PRESETS).map(([k, p]) => (
+          <button key={k} className={`preset-chip${presetMatch === k ? " on" : ""}`} onClick={() => onChange([...p.perms])}>
+            {presetMatch === k && <Check size={12} strokeWidth={3} />} {p.label}
+            <span className="pc-n">{p.perms.length === ALL_PERMS.length ? "everything" : `${p.perms.length} areas`}</span>
+          </button>
+        ))}
+      </div>
+      <div className="perm-tree">
+        {PERM_TREE.map((n) => {
+          const ls = leaves(n);
+          const on = ls.filter((id) => set.has(id)).length;
+          return (
+            <div key={n.id} className="perm-group">
+              <label className="perm-row head">
+                <input type="checkbox" checked={on === ls.length} ref={(el) => el && (el.indeterminate = on > 0 && on < ls.length)} onChange={() => toggleNode(n)} />
+                <span className="grow">{n.label}</span>
+                {n.children && <span className="perm-count">{on}/{ls.length}</span>}
+              </label>
+              {n.children?.map((c) => (
+                <label key={c.id} className="perm-row sub">
+                  <input type="checkbox" checked={set.has(c.id)} onChange={() => toggleLeaf(c.id)} />
+                  <span className="grow">{c.label}<span className="perm-hint">{c.hint}</span></span>
+                </label>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Users tab (admin only) ---------- */
+function UsersPanel() {
+  const { users, user: me, updateUser, removeUser, addUser, resetUsers } = useAuth();
+  const { toast } = useApp();
+  const [editAccess, setEditAccess] = useState(null); // { email, access }
+  const [draft, setDraft] = useState({ name: "", email: "", password: "", preset: "operations" });
+
+  const pending = users.filter((u) => u.status === "pending");
+  const active = users.filter((u) => u.status === "active");
+
+  const approve = (u) => { updateUser(u.email, { status: "active" }); toast(`${u.name} approved — they can sign in now`); };
+  const decline = (u) => { removeUser(u.email); toast(`Request from ${u.name} declined`); };
+
+  const add = () => {
+    if (!draft.name.trim() || !draft.email.trim() || draft.password.length < 8) { toast("Fill name and email — password needs 8+ characters"); return; }
+    const r = addUser({ name: draft.name.trim(), email: draft.email.trim(), password: draft.password, status: "active", access: [...ACCESS_PRESETS[draft.preset].perms] });
+    if (!r.ok) { toast(r.error); return; }
+    toast(`${draft.name} added with ${ACCESS_PRESETS[draft.preset].label.toLowerCase()}`);
+    setDraft({ name: "", email: "", password: "", preset: "operations" });
+  };
+
+  return (
+    <>
+      {pending.length > 0 && (
+        <Card>
+          <CardHead icon={Clock} title={`${pending.length} request${pending.length === 1 ? "" : "s"} waiting for approval`} />
+          {pending.map((u, i) => (
+            <div key={u.email} className="row" style={{ padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none", justifyContent: "space-between" }}>
+              <div>
+                <div style={{ color: "var(--ink)", fontWeight: 650, fontSize: 13.5 }}>{u.name} <Pill tone="amber">pending</Pill></div>
+                <div style={{ fontSize: 11.5, color: "var(--faint)", marginTop: 2 }}><Mono>{u.email}</Mono> · will get: {accessLabel(u)}</div>
+              </div>
+              <div className="row" style={{ gap: 8 }}>
+                <Btn size="sm" icon={Check} onClick={() => approve(u)}>Approve</Btn>
+                <Btn variant="ghost" size="sm" onClick={() => decline(u)}>Decline</Btn>
+              </div>
+            </div>
+          ))}
+          <div className="card-foot"><Note tone="amber">New sign-up requests land here. Approve to let the person in — you can change what they see any time after.</Note></div>
+        </Card>
+      )}
+
+      <PartyPanel title={`user${active.length === 1 ? "" : "s"} with access`} icon={UsersIcon} count={active.length}
+        form={
+          <>
+            <div style={{ marginBottom: 14 }}><Step n="+" title="Add a user" hint="Pick a bundle — you can fine-tune the areas afterwards with one click." /></div>
+            <div className="stack-sm">
+              <Field label="Name"><Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="e.g. Priya Mehta" /></Field>
+              <Field label="Email"><Input value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} placeholder="priya@jg.com" /></Field>
+              <Field label="Password" hint="At least 8 characters. The user can be given a new one later by editing here."><Input type="password" value={draft.password} onChange={(e) => setDraft({ ...draft, password: e.target.value })} placeholder="••••••••" /></Field>
+              <Field label="What can they see?">
+                <Select value={draft.preset} onChange={(e) => setDraft({ ...draft, preset: e.target.value })}>
+                  {Object.entries(ACCESS_PRESETS).map(([k, p]) => <option key={k} value={k}>{p.label}</option>)}
+                </Select>
+              </Field>
+              <div><Btn icon={UserPlus} disabled={!draft.name || !draft.email} onClick={add}>Add user</Btn></div>
+            </div>
+          </>
+        }>
+        {active.map((u, i) => (
+          <div key={u.email} className="row" style={{ padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none", justifyContent: "space-between" }}>
+            <div>
+              <div className="row" style={{ gap: 7 }}>
+                <span style={{ color: "var(--ink)", fontWeight: 650, fontSize: 13.5 }}>{u.name}</span>
+                {u.role === "admin" ? <Pill tone="teal"><ShieldCheck size={11} /> Admin</Pill> : <Pill>{accessLabel(u)}</Pill>}
+                {u.email === me.email && <Pill tone="green">you</Pill>}
+              </div>
+              <div style={{ fontSize: 11.5, color: "var(--faint)", marginTop: 2 }}><Mono>{u.email}</Mono></div>
+            </div>
+            <div className="row" style={{ gap: 6 }}>
+              {u.role !== "admin" && <Btn variant="ghost" size="sm" icon={KeyRound} onClick={() => setEditAccess({ email: u.email, name: u.name, access: [...u.access] })}>Access</Btn>}
+              {u.role !== "admin" && u.email !== me.email && (
+                <button className="icon-btn bare" title="Remove user" onClick={() => { removeUser(u.email); toast(`${u.name} removed`); }}><Trash2 size={14} /></button>
+              )}
+            </div>
+          </div>
+        ))}
+      </PartyPanel>
+
+      <div className="row wrap" style={{ justifyContent: "space-between", gap: 10 }}>
+        <div className="grow">
+          <Note tone="teal">
+            <b>How access works:</b> the Admin sees everything, always. Everyone else sees only the ticked areas — their menu bar, search and shortcuts shrink to match, so nobody ever meets a page they can't use.
+          </Note>
+        </div>
+        <Btn variant="ghost" size="sm" onClick={() => { resetUsers(); toast("Demo users restored: admin, user1, user2 (pending)"); }}>Reset demo users</Btn>
+      </div>
+
+      {editAccess && (
+        <Modal title={`Access · ${editAccess.name}`} icon={KeyRound} onClose={() => setEditAccess(null)} width={560}
+          footer={<>
+            <span style={{ fontSize: 11.5, color: "var(--muted)" }}>{editAccess.access.length} of {ALL_PERMS.length} areas ticked — changes apply the moment you save.</span>
+            <div className="row" style={{ gap: 8 }}>
+              <Btn variant="ghost" size="sm" onClick={() => setEditAccess(null)}>Cancel</Btn>
+              <Btn size="sm" icon={Check} onClick={() => { updateUser(editAccess.email, { access: editAccess.access }); toast(`Access updated for ${editAccess.name}`); setEditAccess(null); }}>Save access</Btn>
+            </div>
+          </>}>
+          <AccessEditor access={editAccess.access} onChange={(a) => setEditAccess({ ...editAccess, access: a })} />
+        </Modal>
+      )}
+    </>
+  );
+}
+
 /* ============================================================ */
 export default function Setup() {
   const { items, setItems, buyers, setBuyers, suppliers, setSuppliers, supCode, toast } = useApp();
-  const [tab, setTab] = useState("items");
+  const { isAdmin, has, users } = useAuth();
+  const canItems = has("setup.items");
+  const canParties = has("setup.parties");
+  const [tab, setTab] = useState(canItems ? "items" : canParties ? "buyers" : "users");
   const [preset, setPreset] = useState("essentials");
   const [colMgr, setColMgr] = useState(false);
   const [customCols, setCustomCols] = useState(null);
@@ -222,10 +388,15 @@ export default function Setup() {
         <h2 className="h1">Setup</h2>
         <p className="sub">
           Your single source of truth. Set an item, a buyer or a supplier up once and every order, invoice and document downstream reads from it — so placing an order only ever needs a code and a quantity.
+          {isAdmin && <> Under <b>Users</b> you decide who sees which part of the system.</>}
         </p>
       </div>
 
-      <Seg options={[["items", `Items · ${items.length}`, Layers], ["buyers", `Buyers · ${buyers.length}`, Globe], ["suppliers", `Suppliers · ${suppliers.length}`, Truck]]} value={tab} onChange={setTab} />
+      <Seg options={[
+        ...(canItems ? [["items", `Items · ${items.length}`, Layers]] : []),
+        ...(canParties ? [["buyers", `Buyers · ${buyers.length}`, Globe], ["suppliers", `Suppliers · ${suppliers.length}`, Truck]] : []),
+        ...(isAdmin ? [["users", `Users · ${users.length}`, UsersIcon]] : []),
+      ]} value={tab} onChange={setTab} />
 
       {/* ---------------- ITEMS ---------------- */}
       {tab === "items" && (
@@ -349,6 +520,9 @@ export default function Setup() {
           ))}
         </PartyPanel>
       )}
+
+      {/* ---------------- USERS (admin only) ---------------- */}
+      {tab === "users" && isAdmin && <UsersPanel />}
 
       {addItem && <AddItemDrawer onClose={() => setAddItem(false)} />}
       {colMgr && <ColumnManager cols={customCols} onClose={() => setColMgr(false)} onSave={(l) => { setCustomCols(l); setPreset("custom"); setColMgr(false); }} />}

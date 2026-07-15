@@ -2,32 +2,35 @@ import {
   ClipboardList, PackageCheck, Ship, FileText, Boxes, Globe, Truck, ArrowRight, Sparkles, Anchor,
 } from "lucide-react";
 import { useApp } from "../store.jsx";
+import { useAuth } from "../auth.jsx";
 import Rail from "../Rail.jsx";
 import { Card, CardHead, Stat, ActionCard, Pill, Mono, Eyebrow, DataTable, Btn } from "../ui.jsx";
 import { SHIPMENT, SHIPMENTS, dmy, shipComplete, invoiceTotals, usd } from "../data.js";
 
 /* ============================================================
    Home = "what should I do right now", not a wall of numbers.
+   Suggested actions respect the signed-in user's access.
    ============================================================ */
 export default function Home({ go }) {
   const { items, buyers, suppliers, invoices, pendingBoxes, openPos, ledger } = useApp();
+  const { has } = useAuth();
 
   const needsShip = invoices.filter((i) => !shipComplete(i.ship));
   const readyDocs = invoices.filter((i) => shipComplete(i.ship)).length;
 
   /* Next actions, ordered by what actually blocks a shipment */
   const actions = [];
-  if (needsShip.length) actions.push({
+  if (needsShip.length && has("shipment.details")) actions.push({
     icon: Ship, tone: "amber", title: `Add shipment details to ${needsShip[0].invoiceNo}`,
     body: "BL number, vessel, container and port of discharge. Until these are in, the customs invoice and post-shipment papers stay blank.",
     go: "shipments",
   });
-  if (pendingBoxes > 0) actions.push({
+  if (pendingBoxes > 0 && has("shipment.packing")) actions.push({
     icon: PackageCheck, tone: "teal", title: `${pendingBoxes} boxes still to pack`,
     body: `Across ${openPos.size} open purchase order${openPos.size === 1 ? "" : "s"}. Record what each supplier delivers — the oldest order is filled first, automatically.`,
     go: "packing",
   });
-  actions.push({
+  if (has("orders.entry")) actions.push({
     icon: ClipboardList, tone: "green", title: "Enter a new buyer order",
     body: "Pick the buyer, type quantities against a supplier, and the boxes, volume, labels and value are worked out for you.",
     go: "orders",
@@ -74,16 +77,18 @@ export default function Home({ go }) {
       </div>
 
       {/* Next actions */}
-      <div>
-        <div className="row" style={{ justifyContent: "space-between", marginBottom: 9 }}>
-          <Eyebrow>Do this next</Eyebrow>
+      {actions.length > 0 && (
+        <div>
+          <div className="row" style={{ justifyContent: "space-between", marginBottom: 9 }}>
+            <Eyebrow>Do this next</Eyebrow>
+          </div>
+          <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))" }}>
+            {actions.slice(0, 3).map((a) => (
+              <ActionCard key={a.title} icon={a.icon} tone={a.tone} title={a.title} onClick={() => go(a.go)}>{a.body}</ActionCard>
+            ))}
+          </div>
         </div>
-        <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))" }}>
-          {actions.slice(0, 3).map((a) => (
-            <ActionCard key={a.title} icon={a.icon} tone={a.tone} title={a.title} onClick={() => go(a.go)}>{a.body}</ActionCard>
-          ))}
-        </div>
-      </div>
+      )}
 
       {/* Numbers */}
       <div className="grid-4">
@@ -97,7 +102,7 @@ export default function Home({ go }) {
       <div className="split" style={{ gridTemplateColumns: "minmax(0,1.5fr) minmax(0,1fr)" }}>
         <Card>
           <CardHead icon={PackageCheck} title="Recently shipped">
-            <button className="btn btn-quiet btn-sm" onClick={() => go("shipments")}>Full history <ArrowRight size={13} /></button>
+            {has("shipment.details") && <button className="btn btn-quiet btn-sm" onClick={() => go("shipments")}>Full history <ArrowRight size={13} /></button>}
           </CardHead>
           <DataTable columns={recentCols} rows={recent} rowKey={(r, i) => i} />
         </Card>
@@ -110,14 +115,16 @@ export default function Home({ go }) {
               { icon: Truck, label: `${suppliers.length} suppliers`, sub: "Daman · Vapi · Silvassa", to: "setup" },
               { icon: Boxes, label: `${items.length} items`, sub: "Codes, packing, prices, barcodes", to: "setup" },
             ].map((r) => (
-              <button key={r.label} className="action" style={{ padding: 11 }} onClick={() => go(r.to)}>
+              <button key={r.label} className="action" style={{ padding: 11 }} onClick={() => has(["setup.items", "setup.parties"]) && go(r.to)}>
                 <span className="action-i" style={{ background: "var(--teal-bg)", color: "var(--teal-ink)", width: 30, height: 30 }}><r.icon size={15} /></span>
                 <span className="grow"><h5>{r.label}</h5><p>{r.sub}</p></span>
               </button>
             ))}
-            <div style={{ marginTop: 4 }}>
-              <Btn variant="ghost" size="sm" icon={ArrowRight} onClick={() => go("setup")}>Open Setup</Btn>
-            </div>
+            {has(["setup.items", "setup.parties"]) && (
+              <div style={{ marginTop: 4 }}>
+                <Btn variant="ghost" size="sm" icon={ArrowRight} onClick={() => go("setup")}>Open Setup</Btn>
+              </div>
+            )}
           </div>
         </Card>
       </div>

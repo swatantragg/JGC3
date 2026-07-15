@@ -8,13 +8,20 @@ import { DOC_GROUPS, EXPORTER, shipComplete, dmy } from "../data.js";
 
 /* ============================================================
    Documents — 40 export papers, generated live from one invoice.
-   Left: the catalogue, grouped by when in the shipment it is needed.
+   Left: the catalogue, grouped under the client's menu heads.
    Right: a real preview of the Excel that will download.
+   `group` (a DOC_GROUPS key) narrows the page to one menu head —
+   that is how the PO / Suppliers' / Pre- / Post-Shipment Reports
+   navigation entries reuse this same page.
    ============================================================ */
-export default function Documents({ go, jump, clearJump }) {
+export default function Documents({ go, jump, clearJump, group }) {
   const { items, buyers, suppliers, buyerMaster, invoices, buyerById, supCode, toast } = useApp();
+  const groupMeta = group ? DOC_GROUPS.find((g) => g.k === group) : null;
+  const catalogue = groupMeta ? [groupMeta] : DOC_GROUPS;
+  const heading = groupMeta ? groupMeta.t : "Documents";
+
   const [invId, setInvId] = useState(invoices[0]?.id);
-  const [open, setOpen] = useState("18");
+  const [open, setOpen] = useState(groupMeta ? groupMeta.docs[0] : "18");
   const [q, setQ] = useState("");
 
   useEffect(() => { if (jump) { setOpen(jump); setQ(""); clearJump(); } }, [jump, clearJump]);
@@ -24,14 +31,14 @@ export default function Documents({ go, jump, clearJump }) {
   const groups = useMemo(() => {
     const ql = q.trim().toLowerCase();
     const match = (no) => !ql || no.toLowerCase().includes(ql) || (DOC_META[no] || "").toLowerCase().includes(ql);
-    return DOC_GROUPS.map((g) => ({ ...g, docs: g.docs.filter(match) })).filter((g) => g.docs.length);
-  }, [q]);
+    return catalogue.map((g) => ({ ...g, docs: g.docs.filter(match) })).filter((g) => g.docs.length);
+  }, [q, catalogue]);
 
   if (!inv) {
     return (
       <div className="stack">
         <Rail view="documents" go={go} />
-        <div className="page-head"><h2 className="h1">Documents</h2><p className="sub">All 40 export documents, generated from a single invoice.</p></div>
+        <div className="page-head"><h2 className="h1">{heading}</h2><p className="sub">Export documents, generated from a single invoice.</p></div>
         <Card><Empty icon={FileText} title="No invoice to build documents from" action={<Btn icon={ArrowRight} onClick={() => go("packing")}>Record packing first</Btn>}>Documents read their figures from an invoice — create one and every paper fills itself in.</Empty></Card>
       </div>
     );
@@ -42,18 +49,21 @@ export default function Documents({ go, jump, clearJump }) {
   const ctx = { inv, buyer, items, buyerMaster, invoices, SUPPLIERS: suppliers, BUYERS: buyers, EXPORTER, supCode };
 
   const download = (no) => { buildDocument(no, ctx); toast(`Document ${no} · ${DOC_META[no]} downloaded`); };
-  const downloadStage = (g) => { g.docs.forEach((no, i) => setTimeout(() => buildDocument(no, ctx), i * 250)); toast(`Downloading ${g.docs.length} documents from stage ${g.k}`); };
+  const downloadStage = (g) => { g.docs.forEach((no, i) => setTimeout(() => buildDocument(no, ctx), i * 250)); toast(`Downloading ${g.docs.length} documents — ${g.t}`); };
   const previewHtml = renderDocument(open, ctx);
-  const total = DOC_GROUPS.reduce((s, g) => s + g.docs.length, 0);
+  const total = catalogue.reduce((s, g) => s + g.docs.length, 0);
 
   return (
     <div className="stack">
       <Rail view="documents" go={go} />
 
       <div className="page-head">
-        <h2 className="h1">Documents</h2>
+        <h2 className="h1">{heading}</h2>
         <p className="sub">
-          All 40 export documents — {total} sheets once you count the 2A, 7A and 11A masters — generated live from the invoice you pick below. The same PO, dates, buyer, BL, container and quantities flow into every one{" "}
+          {groupMeta
+            ? <>{groupMeta.hint} — {total} document{total === 1 ? "" : "s"}, generated live from the invoice you pick below.</>
+            : <>All 40 export documents — {total} sheets once you count the 2A, 7A and 11A masters — generated live from the invoice you pick below.</>}{" "}
+          The same PO, dates, buyer, BL, container and quantities flow into every one{" "}
           <Info>Nothing is retyped. Change one figure on the invoice and every document changes with it — that is the whole point of the system.</Info>{" "}
           Preview on the right, then download as Excel.
         </p>
@@ -134,11 +144,11 @@ export default function Documents({ go, jump, clearJump }) {
             <span className="stat-i" style={{ width: 30, height: 30 }}><Layers size={15} /></span>
             <div>
               <div style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>Need the whole set?</div>
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>Download every document for {inv.invoiceNo} in one go — {total} Excel files.</div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>Download every {groupMeta ? `${heading} document` : "document"} for {inv.invoiceNo} in one go — {total} Excel files.</div>
             </div>
           </div>
           <Btn variant="dark" icon={Download} onClick={() => {
-            DOC_GROUPS.flatMap((g) => g.docs).forEach((no, i) => setTimeout(() => buildDocument(no, ctx), i * 200));
+            catalogue.flatMap((g) => g.docs).forEach((no, i) => setTimeout(() => buildDocument(no, ctx), i * 200));
             toast(`Downloading all ${total} sheets for ${inv.invoiceNo}`);
           }}>
             Download all {total} sheets
