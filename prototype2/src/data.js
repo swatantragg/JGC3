@@ -350,12 +350,83 @@ export const itemSchema = (suppliers) => [
 export const BUYER_SCHEMA = [{ key: "name", label: "Buyer name" }, { key: "brand", label: "Trading as" }, { key: "country", label: "Country" }, { key: "curr", label: "Currency" }, { key: "shipTo", label: "Ship to (port)" }, { key: "addr", label: "Address" }, { key: "orderNo", label: "Buyer order no." }];
 export const SUP_SCHEMA = [{ key: "name", label: "Name" }, { key: "code", label: "Code" }, { key: "place", label: "Place" }, { key: "gstin", label: "GSTIN" }];
 
-/* ===== Document catalogue, grouped into the six plain-English stages ===== */
+/* ============================================================
+   Costing — a faithful port of Docs/Jaikvin Process/Cost Working.xlsx.
+   Every formula below mirrors the sheet cell-for-cell:
+     I  diff        = new − old                      (=H4-G4)
+     J  diff %      = diff × 100 ÷ old               (=I4*100/G4)
+     K  per box     = new × pcs/box                  (=H4*F4)
+     L  sheets/box  = RoundUp( pcs/box ÷ 125 )       (=ROUNDUP(F4/125,))
+     M  barcode/box = sheets × ₹/sheet               (=L4*$M$3)
+     N  transport   = RoundUp( ₹/FCL ÷ boxes/FCL )   (=ROUNDUP($N$3/O4,))
+     P  other/box   = Round( ₹/FCL ÷ boxes/FCL )     (=ROUND($P$3/O4,))
+     Q  total/box   = K + M + N + P                  (=K4+M4+N4+P4)
+     R  cost/pc     = total/box ÷ pcs/box            (=Q4/F4)
+     T  FOB cost $  = cost/pc ÷ exchange rate        (=R4/$T$3)
+     W  FOB diff    = sell now − sell old            (=U4-V4)
+     X  FOB diff %  = diff × 100 ÷ old               (=W4*100/V4)
+     Z  profit/pc ₹ = sell now × realisation − cost  (=(U4*$Z$3)-R4)
+     AA profit %    = profit × 100 ÷ cost/pc         (=Z4*100/R4)
+   ============================================================ */
+export const COST_PARAMS = {
+  barcodeSheet: 20,   // M3 — barcode printing, ₹ per sheet of 125 stickers
+  transportFcl: 15000, // N3 — inland transport, ₹ per container
+  otherFcl: 50000,    // P3 — clearing & other charges, ₹ per container
+  exRate: 90,         // T3 — ₹/$ used to express our cost in USD
+  realRate: 94.5,     // Z3 — ₹/$ we actually realise on the FOB price
+};
+
+// The four sample rows from the client's sheet, kept verbatim so the
+// prototype's numbers can be tallied against the Excel line by line.
+export const SEED_COSTING = [
+  { id: "c1", gd: "PP-1509", code: "PP-1509", dia: "15", len: "225", unit: 10, box: 400, priceOld: 8.46, priceNew: 9.5, boxesFcl: 600, fobNow: 0.072, fobOld: 0.06 },
+  { id: "c2", gd: "PP-1515", code: "PP-1515", dia: "15", len: "375", unit: 10, box: 200, priceOld: 12.42, priceNew: 14.4, boxesFcl: 600, fobNow: 0.22, fobOld: 0.18 },
+  { id: "c3", gd: "PP-1518", code: "PP-1518", dia: "15", len: "457", unit: 10, box: 200, priceOld: 14.04, priceNew: 16.74, boxesFcl: 588, fobNow: 0.24, fobOld: 0.2 },
+  { id: "c4", gd: "PE-1518-PH", code: "90441400", dia: '1/2"', len: "450", unit: 10, box: 200, priceOld: 14.04, priceNew: 16.74, boxesFcl: 588, fobNow: 0.24, fobOld: 0.2 },
+];
+
+export function computeCosting(l, p) {
+  const old = Number(l.priceOld) || 0, cur = Number(l.priceNew) || 0;
+  const box = Number(l.box) || 0, bf = Number(l.boxesFcl) || 0;
+  const diff = cur - old, diffPct = old ? (diff * 100) / old : 0;
+  const perBox = cur * box;
+  const sheets = box ? Math.ceil(box / 125) : 0;
+  const barcodeBox = sheets * (Number(p.barcodeSheet) || 0);
+  const transportBox = bf ? Math.ceil((Number(p.transportFcl) || 0) / bf) : 0;
+  const otherBox = bf ? Math.round((Number(p.otherFcl) || 0) / bf) : 0;
+  const totalBox = perBox + barcodeBox + transportBox + otherBox;
+  const perPc = box ? totalBox / box : 0;
+  const fobCost = Number(p.exRate) ? perPc / Number(p.exRate) : 0;
+  const fobNow = Number(l.fobNow) || 0, fobOld = Number(l.fobOld) || 0;
+  const fobDiff = fobNow - fobOld, fobPct = fobOld ? (fobDiff * 100) / fobOld : 0;
+  const profitPc = fobNow * (Number(p.realRate) || 0) - perPc;
+  const profitPct = perPc ? (profitPc * 100) / perPc : 0;
+  return { diff, diffPct, perBox, sheets, barcodeBox, transportBox, otherBox, totalBox, perPc, fobCost, fobDiff, fobPct, profitPc, profitPct };
+}
+
+export const COSTING_FORMULAS = [
+  ["Price difference (₹)", "New price − old price"],
+  ["Difference %", "Difference × 100 ÷ old price"],
+  ["Purchase / box (₹)", "New price × pcs per box"],
+  ["Barcode sheets / box", "RoundUp ( pcs per box ÷ 125 )"],
+  ["Barcode cost / box (₹)", "Sheets × ₹ per sheet"],
+  ["Transport / box (₹)", "RoundUp ( transport ₹/FCL ÷ boxes per FCL )"],
+  ["Other charges / box (₹)", "Round ( other ₹/FCL ÷ boxes per FCL )"],
+  ["Total cost / box (₹)", "Purchase + barcodes + transport + other"],
+  ["Cost / pc (₹)", "Total cost per box ÷ pcs per box"],
+  ["Our cost, FOB ($)", "Cost per pc ÷ exchange rate ₹/$"],
+  ["FOB rise ($ · %)", "Sell now − sell old · ×100 ÷ old"],
+  ["Profit / pc (₹)", "Sell now × realisation ₹/$ − cost per pc"],
+  ["Profit %", "Profit per pc × 100 ÷ cost per pc"],
+];
+
+/* ===== Document catalogue, grouped under the client's menu heads =====
+   Grouping follows Docs/Jaikvin Process/Menu Bar.xlsx — each key `k`
+   matches a navigation entry, so every paper lives under its menu. */
 export const DOC_GROUPS = [
-  { k: "A", t: "Buyer order", hint: "Raised when the buyer places an order", docs: ["1", "2A", "2", "3", "4", "5", "6"] },
-  { k: "B", t: "Supplier packing", hint: "Raised when suppliers deliver boxes", docs: ["7A", "7", "8", "9", "10", "11A", "11"] },
-  { k: "C", t: "Pre-shipment", hint: "Everything customs needs before loading", docs: ["12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29"] },
-  { k: "D", t: "Post-shipment", hint: "Sent after the container sails", docs: ["30", "31", "32", "33", "34"] },
-  { k: "E", t: "Reports", hint: "Balance registers and costing", docs: ["35", "36", "37", "38", "39"] },
-  { k: "F", t: "Banking", hint: "Export bill regularisation", docs: ["40"] },
+  { k: "PO", t: "PO Reports", hint: "Raised when the buyer places an order", docs: ["1", "2A", "2", "3", "4", "5", "6"] },
+  { k: "SUP", t: "Suppliers' Reports", hint: "Raised when suppliers deliver boxes", docs: ["7A", "7", "8", "9", "10", "11A", "11"] },
+  { k: "PRE", t: "Pre-Shipment Reports", hint: "Everything customs needs before loading", docs: ["12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "24", "25", "26", "27", "28", "29"] },
+  { k: "POST", t: "Post Shipment Reports", hint: "Sent after the container sails, incl. bill regularisation for the bank", docs: ["30", "31", "32", "33", "34", "40"] },
+  { k: "OTH", t: "Other Reports", hint: "Costing, supplier details and balance registers", docs: ["35", "23", "38", "36", "37", "39"] },
 ];

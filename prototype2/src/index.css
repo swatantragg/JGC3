@@ -245,12 +245,9 @@ textarea {
   gap: 3px;
   flex: 1;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+  /* must stay visible — dropdown menus hang below the bar */
+  overflow: visible;
   height: 100%;
-}
-.nav::-webkit-scrollbar {
-  display: none;
 }
 .nav-sep {
   width: 1px;
@@ -260,23 +257,28 @@ textarea {
   flex-shrink: 0;
 }
 /* Full-height tabs: the active one is underlined by an inset shadow, which
-   survives the horizontal overflow scrolling that a ::after bar would not. */
+   survives the horizontal overflow scrolling that a ::after bar would not.
+   Nine menu heads (client naming) are wide, so tabs are label-only and
+   compact — the pictograms stay in the command palette. */
 .nav-item {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   height: 100%;
-  padding: 0 14px;
+  padding: 0 10px;
   border-radius: var(--r-sm) var(--r-sm) 0 0;
   border: none;
   background: transparent;
   color: var(--nav-ink);
   cursor: pointer;
-  font-size: 14.5px;
+  font-size: 13.5px;
   font-weight: 500;
   white-space: nowrap;
   flex-shrink: 0;
   transition: background 0.12s ease, color 0.12s ease;
+}
+.nav-item > svg {
+  display: none;
 }
 .nav-item:hover {
   background: var(--nav-hover);
@@ -1434,6 +1436,385 @@ textarea {
   display: grid;
   gap: 18px;
   grid-template-columns: 310px minmax(0, 1fr);
+}
+
+/* ============================================================
+   Nav dropdowns — a section with sub-pages opens on hover/focus.
+   The bar itself must not clip them, hence overflow visible.
+   ============================================================ */
+.nav-drop {
+  position: relative;
+  display: flex;
+  height: 100%;
+  flex-shrink: 0;
+}
+.nav-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 264px;
+  padding: 6px;
+  background: var(--card, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 0 var(--r-md, 10px) var(--r-md, 10px) var(--r-md, 10px);
+  box-shadow: var(--shadow-3);
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 80;
+}
+.nav-drop:hover .nav-menu,
+.nav-drop:focus-within .nav-menu {
+  display: flex;
+}
+.nav-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 11px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+.nav-menu-item svg {
+  color: var(--teal);
+  flex-shrink: 0;
+}
+.nav-menu-item:hover {
+  background: var(--surface-2);
+}
+.nav-menu-item.on {
+  background: var(--amber-bg);
+}
+.nav-menu-item .nmi-t {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+.nav-menu-item .nmi-s {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+/* ============================================================
+   Signed-in user chip in the top bar
+   ============================================================ */
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 4px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.uc-ava {
+  width: 27px;
+  height: 27px;
+  border-radius: 8px;
+  background: var(--amber);
+  color: #0b2c4d;
+  font-size: 11.5px;
+  font-weight: 750;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.uc-txt {
+  line-height: 1.1;
+  min-width: 0;
+}
+.uc-n {
+  display: block;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.uc-r {
+  display: block;
+  color: #9fc0d8;
+  font-size: 9.5px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+.user-chip .icon-btn.bare {
+  color: #b7c9d9;
+}
+
+/* ============================================================
+   Login screen
+   ============================================================ */
+.login {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  background: var(--bg, var(--surface-2));
+}
+.login-brand {
+  background: linear-gradient(160deg, var(--brand) 0%, var(--brand-2) 70%);
+  color: #cfe0ee;
+  padding: 56px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  justify-content: center;
+}
+.login-brand h1 {
+  color: #fff;
+  font-size: clamp(28px, 3.2vw, 42px);
+  line-height: 1.12;
+  letter-spacing: -0.5px;
+  margin: 0;
+}
+.login-brand p {
+  font-size: 14.5px;
+  line-height: 1.6;
+  max-width: 480px;
+  margin: 0;
+}
+.login-points {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+  max-width: 460px;
+}
+.login-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  gap: 18px;
+}
+.login-card {
+  width: min(430px, 100%);
+  background: var(--card, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2);
+  padding: 30px 30px 22px;
+}
+.login-card h2 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  color: var(--ink);
+}
+.login-in {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.login-in > svg {
+  color: var(--faint);
+  flex-shrink: 0;
+}
+.login-in .input {
+  flex: 1;
+}
+.login-switch {
+  display: block;
+  margin: 14px auto 0;
+  background: none;
+  border: none;
+  color: var(--teal-ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.login-demo {
+  margin-top: 18px;
+  border-top: 1px dashed var(--border);
+  padding-top: 14px;
+}
+.login-demo-t {
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 8px;
+}
+.login-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  cursor: pointer;
+  color: var(--ink);
+  font-size: 12.5px;
+}
+.login-chip:hover {
+  border-color: var(--teal);
+  background: var(--teal-bg);
+}
+.lc-ava {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.lc-s {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+}
+.login-foot {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+@media (max-width: 900px) {
+  .login {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .login-brand {
+    display: none;
+  }
+}
+
+/* ============================================================
+   Access editor (Setup → Users)
+   ============================================================ */
+.preset-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 99px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.preset-chip:hover {
+  border-color: var(--teal);
+}
+.preset-chip.on {
+  background: var(--teal-bg);
+  border-color: var(--teal);
+  color: var(--teal-ink);
+}
+.preset-chip .pc-n {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.perm-tree {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 10px);
+  overflow: hidden;
+}
+.perm-group + .perm-group {
+  border-top: 1px solid var(--border);
+}
+.perm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--ink);
+}
+.perm-row:hover {
+  background: var(--surface-2);
+}
+.perm-row.head {
+  font-weight: 650;
+  background: var(--surface-2);
+}
+.perm-row.sub {
+  padding-left: 38px;
+  font-weight: 500;
+}
+.perm-row input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--teal);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.perm-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--faint);
+  font-weight: 400;
+}
+.perm-count {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+/* Item picker rows inside the costing drawer */
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 9px 14px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.pick-row:hover {
+  background: var(--surface-2);
+}
+.pick-row.on {
+  background: var(--teal-bg);
+}
+
+/* Tighten the bar in steps before it has to fall back to scrolling. */
+@media (max-width: 1700px) {
+  .topnav-right .pill {
+    display: none;
+  }
+}
+@media (max-width: 1460px) {
+  .brand > div:last-child {
+    display: none;
+  }
+  .nav-item {
+    font-size: 12.5px;
+    padding: 0 8px;
+  }
+}
+@media (max-width: 1320px) {
+  .nav-item {
+    font-size: 12px;
+    padding: 0 6px;
+  }
+}
+@media (max-width: 1240px) {
+  .nav-item {
+    font-size: 11.5px;
+    padding: 0 5px;
+  }
 }
 
 @media (max-width: 1180px) {

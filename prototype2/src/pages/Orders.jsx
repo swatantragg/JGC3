@@ -298,7 +298,7 @@ export default function Orders({ go }) {
 
       <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
         <div className="page-head" style={{ margin: 0 }}>
-          <h2 className="h1">Orders</h2>
+          <h2 className="h1">Purchase Orders</h2>
           <p className="sub">Everything the buyer has asked for. Enter an order once — boxes, volume, labels, sheets and value are derived from the item master, so nothing is typed twice.</p>
         </div>
         <Btn size="lg" icon={Plus} onClick={() => setDrawer(true)}>New buyer order</Btn>

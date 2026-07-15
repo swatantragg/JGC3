@@ -1,19 +1,24 @@
 import { useState, useMemo } from "react";
-import { BarChart3, ClipboardList, Layers, Truck, Download, Boxes, Check } from "lucide-react";
+import { BarChart3, ClipboardList, Layers, Truck, Download, Boxes, Check, Calculator } from "lucide-react";
 import { useApp } from "../store.jsx";
+import { useAuth } from "../auth.jsx";
 import Rail from "../Rail.jsx";
 import { Card, CardHead, Btn, Seg, Pill, Mono, DataTable, Input, Note, Info, Empty, Stat } from "../ui.jsx";
 import { writeXLS } from "../docs.js";
 import { balanceData, joinInv, dmy, num, inr, usd, TODAY } from "../data.js";
+import Costing from "./Costing.jsx";
 
 /* ============================================================
-   Reports — the balance register, live from the packing ledger.
-   Three questions, three tabs: which PO is short, which item is short,
-   which supplier still owes us.
+   Reports — the balance register, live from the packing ledger,
+   plus the Costing sheet. Tabs the user has no access to simply
+   do not render.
    ============================================================ */
-export default function Reports({ go }) {
+export default function Reports({ go, openDoc }) {
   const { items, buyerMaster, invoices, supCode, buyerById } = useApp();
-  const [tab, setTab] = useState("po");
+  const { has } = useAuth();
+  const canBalance = has("reports.balance");
+  const canCosting = has("reports.costing");
+  const [tab, setTab] = useState(canBalance ? "po" : "costing");
   const [remarks, setRemarks] = useState({});
   const setRem = (k, v) => setRemarks((p) => ({ ...p, [k]: v }));
 
@@ -124,43 +129,78 @@ export default function Reports({ go }) {
   const totalRecd = itemRows.reduce((s, r) => s + r.recd, 0);
   const totalOrdered = itemRows.reduce((s, r) => s + r.ordered, 0);
 
+  const segOptions = [
+    ...(canBalance ? [["po", "By purchase order", ClipboardList], ["item", "By item", Layers], ["supplier", "By supplier", Truck]] : []),
+    ...(canCosting ? [["costing", "Costing", Calculator]] : []),
+  ];
+
   return (
     <div className="stack">
       <Rail view="reports" go={go} />
 
       <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
         <div className="page-head" style={{ margin: 0 }}>
-          <h2 className="h1">Reports</h2>
+          <h2 className="h1">Other Reports</h2>
           <p className="sub">
-            The balance register, rebuilt from scratch every time you open it.{" "}
-            <Info>Nothing is stored. Reports 36–39 are recomputed from the orders and the packing invoices, so they can never drift out of sync with reality.</Info>{" "}
-            Ask it three questions: which order is short, which item is short, which supplier still owes us.
+            {tab === "costing" ? (
+              <>The Cost Working sheet, live. Type an item's prices once and the landed cost, FOB and profit are worked out with the exact formulas from the Excel — this is the go / no-go sheet before production.</>
+            ) : (
+              <>
+                The balance register, rebuilt from scratch every time you open it.{" "}
+                <Info>Nothing is stored. Reports 36–39 are recomputed from the orders and the packing invoices, so they can never drift out of sync with reality.</Info>{" "}
+                Ask it three questions: which order is short, which item is short, which supplier still owes us.
+              </>
+            )}
           </p>
         </div>
-        <Btn size="lg" icon={Download} onClick={exportReport}>Download this report</Btn>
+        {tab !== "costing" && <Btn size="lg" icon={Download} onClick={exportReport}>Download this report</Btn>}
       </div>
 
-      <div className="grid-4">
-        <Stat icon={Boxes} value={totalOrdered} label="Boxes ordered" sub="Across every open PO" />
-        <Stat icon={Check} tone="green" value={totalRecd} label="Boxes received" sub={`${totalOrdered ? Math.round((totalRecd / totalOrdered) * 100) : 0}% of the book`} />
-        <Stat icon={BarChart3} tone={totalPending ? "amber" : "green"} value={totalPending} label="Boxes pending" sub="Still owed by suppliers" />
-        <Stat icon={Truck} value={supRows.length} label="Supplier · item lines" sub="Delivered so far" />
-      </div>
+      {segOptions.length > 1 && (
+        <div className="row wrap" style={{ justifyContent: "space-between" }}>
+          <Seg options={segOptions} value={tab} onChange={setTab} />
+          {tab !== "costing" && <Pill tone="teal">Report {cfg.doc}</Pill>}
+        </div>
+      )}
 
-      <div className="row wrap" style={{ justifyContent: "space-between" }}>
-        <Seg options={[["po", "By purchase order", ClipboardList], ["item", "By item", Layers], ["supplier", "By supplier", Truck]]} value={tab} onChange={setTab} />
-        <Pill tone="teal">Report {cfg.doc}</Pill>
-      </div>
+      {tab === "costing" ? (
+        <Costing />
+      ) : (
+        <>
+          <div className="grid-4">
+            <Stat icon={Boxes} value={totalOrdered} label="Boxes ordered" sub="Across every open PO" />
+            <Stat icon={Check} tone="green" value={totalRecd} label="Boxes received" sub={`${totalOrdered ? Math.round((totalRecd / totalOrdered) * 100) : 0}% of the book`} />
+            <Stat icon={BarChart3} tone={totalPending ? "amber" : "green"} value={totalPending} label="Boxes pending" sub="Still owed by suppliers" />
+            <Stat icon={Truck} value={supRows.length} label="Supplier · item lines" sub="Delivered so far" />
+          </div>
 
-      <Card>
-        <CardHead icon={BarChart3} title={cfg.title}>
-          <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Date &amp; GD code stay frozen while you scroll</span>
-        </CardHead>
-        {cfg.rows.length
-          ? <DataTable columns={cfg.cols} rows={cfg.rows} rowKey={cfg.key} freeze={2} maxHeight={520} />
-          : <Empty icon={BarChart3} title="Nothing to report yet">Record a packing invoice and the balance register fills in.</Empty>}
-        <div className="card-foot"><Note tone="teal">{cfg.foot}</Note></div>
-      </Card>
+          <Card>
+            <CardHead icon={BarChart3} title={cfg.title}>
+              <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Date &amp; GD code stay frozen while you scroll</span>
+            </CardHead>
+            {cfg.rows.length
+              ? <DataTable columns={cfg.cols} rows={cfg.rows} rowKey={cfg.key} freeze={2} maxHeight={520} />
+              : <Empty icon={BarChart3} title="Nothing to report yet">Record a packing invoice and the balance register fills in.</Empty>}
+            <div className="card-foot"><Note tone="teal">{cfg.foot}</Note></div>
+          </Card>
+
+          {openDoc && (
+            <Card pad>
+              <div className="row wrap" style={{ gap: 12, justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>Also under Other Reports</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>Preview and download from the documents library — built from the same invoice data.</div>
+                </div>
+                <div className="row wrap" style={{ gap: 8 }}>
+                  {[["35", "Costing (document)"], ["23", "Supplier details"], ["38", "Supply details item · supplier wise"], ["39", "Balance boxes & volume"]].map(([no, label]) => (
+                    <Btn key={no} variant="ghost" size="sm" onClick={() => openDoc(no)}>{no} · {label}</Btn>
+                  ))}
+                </div>
+              </div>
+            </Card>
+          )}
+        </>
+      )}
     </div>
   );
 }
