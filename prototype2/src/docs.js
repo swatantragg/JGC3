@@ -57,7 +57,7 @@ function supFor(ctx, id) { return ctx.SUPPLIERS.find((s) => s.id === id) || {}; 
 // Shipment lines (from the selected invoice) with every derived figure a document may need
 function L(ctx) {
   const ex = exRate(ctx);
-  let sr = marksStart(ctx);
+  let sr = Number(ctx.inv.serialStart) || marksStart(ctx);
   return ctx.inv.lines.map((l) => {
     const it = ctx.items.find((x) => x.id === l.itemId) || l.item || {};
     const boxes = Number(l.boxes) || 0, packing = Number(it.packing) || 0;
@@ -336,23 +336,42 @@ B["9"] = (ctx) => {
   const foot = (rows) => [{ v: `TOTAL · Rate @ Rs. ${exRate(ctx)}`, span: 10 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1 }, { v: sum(rows, "boxes"), r: 1 }, { v: "" }, { v: usd(sum(rows, "fobTotal")), r: 1 }, { v: num(sum(rows, "rbiTotal")), r: 1 }];
   return { name: "Sales_9", html: supplierTable(ctx, cols, foot, "9 · SALES (Supplier)", `PO NO : ${poHeaderList(ctx)} · Rate @ Rs. ${exRate(ctx)}`) };
 };
-B["10"] = (ctx) => {
-  const lines = L(ctx), s = ctx.inv.ship || {};
-  const bySup = {}; lines.forEach((x) => { (bySup[x.supId] = bySup[x.supId] || []).push(x); });
-  const blocks = Object.entries(bySup).map(([sid, arr]) => {
-    const sp = supFor(ctx, sid);
-    const qty = sum(arr, "pieces"), taxable = sum(arr, "valTotal"), igst = taxable * 0.18;
-    return `<div class="title">E-WAY BILL (Inward / Purchase)</div>
+// Resolve the transport (transporter name + vehicle no) for a supplier on this
+// invoice — from the shipment vehicle details, falling back to the packing pick.
+function transportInfo(ctx, sid) {
+  const v = (ctx.inv.vehicles || {})[sid] || {};
+  let name = v.transportName || "", veh = v.vehicleNo || "";
+  if (!name) {
+    const tid = v.transportId || (ctx.inv.packingTransports || {})[sid];
+    const t = (ctx.transports || []).find((x) => x.id === tid);
+    name = t?.name || ""; if (!v.vehicleNo && t) veh = veh || "";
+  }
+  return { name: name || "—", veh: veh || "—" };
+}
+// One supplier's inward e-way block, with the transport detail beneath it.
+function eway10Block(ctx, sid, arr) {
+  const sp = supFor(ctx, sid), tr = transportInfo(ctx, sid);
+  const qty = sum(arr, "pieces"), taxable = sum(arr, "valTotal"), igst = taxable * 0.18;
+  return `<div class="title">E-WAY BILL (Inward / Purchase) — ${esc(sp.code || sp.name)}</div>
     <table style="width:100%"><tr><td class="k">Transaction Type</td><td>Inward — Supply</td><td class="k">Document</td><td>Tax Invoice</td><td class="k">Date</td><td>${ddmm(ctx.inv.date)}</td></tr></table>
     <table style="width:100%"><tr><td class="sec" colspan="2">Bill From / Despatch From</td><td class="sec" colspan="2">Bill To / Ship To</td></tr>
       <tr><td class="k">Name</td><td>${esc(sp.name)}</td><td class="k">Name</td><td>${esc(ctx.EXPORTER.name)}</td></tr>
       <tr><td class="k">GSTIN</td><td>${esc(sp.gstin)}</td><td class="k">GSTIN</td><td>${esc(ctx.EXPORTER.gstin)}</td></tr>
       <tr><td class="k">Place</td><td>${esc(sp.place)}</td><td class="k">Place</td><td>Village Khopta, JNPT, Raigad 410206</td></tr></table>
     <table><tr><th>Product</th><th>HSN</th><th>Qty</th><th>Unit</th><th>Taxable Value ₹</th><th>IGST %</th><th>IGST ₹</th><th>Total ₹</th></tr>
-      <tr><td>${esc(sp.name)} goods</td><td>${esc(arr[0].it.hsn)}</td><td class="r">${qty.toLocaleString("en-IN")}</td><td class="c">PCS</td><td class="r">${num(taxable)}</td><td class="c">18%</td><td class="r">${num(igst)}</td><td class="r">${num(taxable + igst)}</td></tr></table>`;
-  }).join("<br>");
-  return { name: "Eway_Purchase_10", html: blocks };
-};
+      <tr><td>${esc(sp.name)} goods</td><td>${esc(arr[0].it.hsn)}</td><td class="r">${qty.toLocaleString("en-IN")}</td><td class="c">PCS</td><td class="r">${num(taxable)}</td><td class="c">18%</td><td class="r">${num(igst)}</td><td class="r">${num(taxable + igst)}</td></tr></table>
+    <table style="width:100%"><tr><td class="sec" colspan="4">Transport Detail — ${esc(sp.code || sp.name)}</td></tr>
+      <tr><td class="k">Transporter</td><td class="b">${esc(tr.name)}</td><td class="k">Vehicle No.</td><td class="b">${esc(tr.veh)}</td></tr></table>`;
+}
+// Supplier-wise e-way documents (one per supplier) — for the split download.
+export function ewaySupplierDocs(ctx) {
+  const lines = L(ctx), bySup = {}; lines.forEach((x) => { (bySup[x.supId] = bySup[x.supId] || []).push(x); });
+  return Object.entries(bySup).map(([sid, arr]) => {
+    const sp = supFor(ctx, sid);
+    return { supplierId: sid, code: sp.code || sid, name: sp.name || sid, html: eway10Block(ctx, sid, arr) };
+  });
+}
+B["10"] = (ctx) => ({ name: "Eway_Purchase_10", html: ewaySupplierDocs(ctx).map((d) => d.html).join("<br>") });
 B["11A"] = (ctx) => {
   const s = ctx.inv.ship || {};
   const html = `<div class="title">DELIVERY ORDER (D.O.)</div>${exporterBlock(ctx)}<br>
@@ -449,22 +468,33 @@ B["16"] = (ctx) => {
     3. We undertake to preserve and make available relevant documents for audit per the Customs Audit Regulations, 2018.</p>${declBlock(ctx)}`;
   return { name: "RoDTEP_Declaration_16", html };
 };
+// Proforma groups items by FOB basis (per piece / per 100 / customize). The GD
+// code and Box columns are intentionally left off this download format.
+const fobModeOf = (it) => it?.fobMode || "100";
+const modeLabel = (m) => (m === "piece" ? "Per piece" : m === "custom" ? "Customize" : "Per 100 pieces");
 B["17"] = (ctx) => {
   const rows = L(ctx);
-  const cols = [
-    { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Len (MM)", c: 1, f: (r) => esc(r.it.length) },
-    { h: "Pieces", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") }, { h: "Boxes", r: 1, f: (r) => r.boxes },
-    { h: "Rate $/pc", r: 1, f: (r) => usdp(r.fobPc) }, { h: "Total Value $", r: 1, f: (r) => usd(r.fobTotal) },
-  ];
-  const foot = [{ v: `TOTAL · ${sum(rows, "boxes")} boxes`, span: 4 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1 }, { v: sum(rows, "boxes"), r: 1 }, { v: "" }, { v: usd(sum(rows, "fobTotal")), r: 1 }];
+  const order = ["piece", "100", "custom"];
+  const g = {}; rows.forEach((r) => { const m = fobModeOf(r.it); (g[m] = g[m] || []).push(r); });
+  const groups = order.filter((m) => g[m]?.length);
+  const head = `<tr><th>Code</th><th>Size</th><th>Len (MM)</th><th>Pieces</th><th>Rate $</th><th>Total Value $</th></tr>`;
+  const section = (m) => {
+    const arr = g[m], per100 = m === "100";
+    const body = arr.map((r) => {
+      const rate = per100 ? r.fobPc * 100 : r.fobPc;
+      return `<tr><td>${esc(r.it.code)}</td><td class="c">${esc(r.it.size)}</td><td class="c">${esc(r.it.length)}</td><td class="r">${r.pieces.toLocaleString("en-IN")}</td><td class="r">${per100 ? usd(rate) + "/100" : usdp(rate) + "/pc"}</td><td class="r">${usd(r.fobTotal)}</td></tr>`;
+    }).join("");
+    return `<tr class="sec"><td colspan="6">${modeLabel(m)}</td></tr>${head}${body}<tr class="sec"><td colspan="3">Subtotal — ${modeLabel(m)}</td><td class="r">${sum(arr, "pieces").toLocaleString("en-IN")}</td><td></td><td class="r">${usd(sum(arr, "fobTotal"))}</td></tr>`;
+  };
+  const grand = `<tr class="tot"><td colspan="3">TOTAL</td><td class="r">${sum(rows, "pieces").toLocaleString("en-IN")}</td><td></td><td class="r">${usd(sum(rows, "fobTotal"))}</td></tr>`;
   const html = `<div class="title">17 · PROFORMA INVOICE (Buyer)</div>
     <table style="width:100%"><tr><td style="width:52%">${exporterBlock(ctx)}</td>
     <td><table style="width:100%"><tr><td class="k">PO No.</td><td class="b">${esc(ctx.buyer.orderNo)}</td></tr>
     <tr><td class="k">Date</td><td class="b">${ddmm(ctx.inv.date)}</td></tr>
     <tr><td class="k">Deliver To</td><td>${esc(ctx.buyer.name)} T/A ${esc(ctx.buyer.brand)}<br>${esc(ctx.buyer.addr || "")}</td></tr>
     <tr><td class="k">Terms</td><td>${esc(ctx.inv.ship?.terms || "FOB MUMBAI")}</td></tr></table></td></tr></table>
-    ${tableOf(cols, rows, foot)}
-    <p class="sub">Freight to collect / payable at destination. Delivery ${dmy(ctx.inv.date)}.</p>`;
+    <table>${groups.map(section).join("")}${grand}</table>
+    <p class="sub">Freight to collect / payable at destination. Delivery ${dmy(ctx.inv.date)}. Items grouped by pricing basis.</p>`;
   return { name: "Proforma_Invoice_17", html };
 };
 B["18"] = (ctx) => {
@@ -482,11 +512,11 @@ B["18"] = (ctx) => {
     <p class="sub">Declaration: We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct. SUPPLY MEANT FOR EXPORT WITH PAYMENT OF INTEGRATED TAX. We intend to claim rewards under RoDTEP. — For ${esc(ctx.EXPORTER.name)}</p>`;
   return { name: "Custom_Invoice_18", html };
 };
-function packingListDoc(ctx, title, no) {
+function packingListDoc(ctx, title, no, boxLabel = "Boxes") {
   const rows = L(ctx), s = ctx.inv.ship || {};
   const cols = [
     { h: "Sr No / Marks", c: 1, f: (r) => r.range }, { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) },
-    { h: "Description", f: (r) => esc(r.it.description) }, { h: "Qty Pcs", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") }, { h: "Boxes", r: 1, f: (r) => r.boxes },
+    { h: "Description", f: (r) => esc(r.it.description) }, { h: "Qty Pcs", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") }, { h: boxLabel, r: 1, f: (r) => r.boxes },
     { h: "Net Wt kg", r: 1, f: (r) => num(r.netTotal) }, { h: "Gross Wt kg", r: 1, f: (r) => num(r.grossTotal) }, { h: "Volume m³", r: 1, f: (r) => num(r.volTotal, 2) },
   ];
   const foot = [{ v: "TOTAL", span: 4 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1 }, { v: sum(rows, "boxes"), r: 1 }, { v: num(sum(rows, "netTotal")), r: 1 }, { v: num(sum(rows, "grossTotal")), r: 1 }, { v: num(sum(rows, "volTotal"), 2), r: 1 }];
@@ -495,7 +525,7 @@ function packingListDoc(ctx, title, no) {
     <tr><td class="k">Marks</td><td>${esc(s.marks || "—")}</td><td class="k">Packages</td><td>${esc(s.pkgs || "—")}</td></tr></table>`;
   return `${masthead(ctx, title)}${shipRow}${tableOf(cols, rows, foot)}`;
 }
-B["19"] = (ctx) => ({ name: "Packing_List_19", html: packingListDoc(ctx, "19 · PACKING LIST", "19") });
+B["19"] = (ctx) => ({ name: "Packing_List_19", html: packingListDoc(ctx, "19 · PACKING LIST", "19", "Packages") });
 B["20"] = (ctx) => {
   const rows = L(ctx);
   const cols = [
@@ -804,6 +834,13 @@ export function buildDocument(no, ctx, report) {
   writeXLS(fnameFor(no, out.name, ctx), out.html);
 }
 export function hasBuilder(no) { return !!B[no] || ["36", "37", "38", "39"].includes(no); }
+
+// Download the inward e-way bill for a single supplier (the split-by-supplier flow).
+export function downloadEwaySupplier(ctx, supplierId) {
+  const d = ewaySupplierDocs(ctx).find((x) => x.supplierId === supplierId);
+  if (!d) return;
+  writeXLS(`Eway_10_${d.code}_${ctx.inv.invoiceNo.replace(/\//g, "-")}.xls`, d.html);
+}
 
 // Return the document's inner HTML (for an on-screen live preview) without downloading.
 export function renderDocument(no, ctx, report) {

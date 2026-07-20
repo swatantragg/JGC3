@@ -1,104 +1,99 @@
-import { useState } from "react";
-import { Ship, FileText, History, Pencil, ChevronRight, AlertTriangle, ArrowRight, Anchor } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Ship, FileText, History, Pencil, ChevronRight, AlertTriangle, ArrowRight, Anchor, Truck, Container } from "lucide-react";
 import { useApp } from "../store.jsx";
-import Rail from "../Rail.jsx";
 import InvoiceModal from "../InvoiceModal.jsx";
-import { Card, CardHead, Btn, Seg, Pill, Mono, DataTable, Empty, Note, EditModal, Info, Stat } from "../ui.jsx";
-import { SHIPMENTS, SHIP_FIELDS, SHIP_REQUIRED, shipComplete, invoiceTotals, dmy, num, usd } from "../data.js";
+import ShipmentWizard from "../ShipmentWizard.jsx";
+import InvoiceEditModal from "../InvoiceEditModal.jsx";
+import { Card, CardHead, Btn, Seg, Pill, Mono, DataTable, Empty, Note, Stat } from "../ui.jsx";
+import { SHIPMENTS, invoiceTotals, invoiceStatus, INV_STATUS_TONE, dmy, num, usd } from "../data.js";
 
 /* ============================================================
-   Shipments — the single place where an invoice becomes a shipment.
-   Fill four fields once (BL, vessel, container, port) and all 40
-   documents render fully populated.
+   Shipments — an invoice moves through three gated steps
+   (vehicle → container → BL). The status column tracks it:
+   Ready to dispatch → Dispatched → Ready to Ship → Shipped.
    ============================================================ */
-export default function Shipments({ go }) {
-  const { items, invoices, setInvoices, buyerById, toast } = useApp();
+export default function Shipments({ go, focus, clearFocus }) {
+  const { items, invoices, buyerById } = useApp();
   const [tab, setTab] = useState("invoices");
-  const [openId, setOpenId] = useState(null);
-  const [editId, setEditId] = useState(null);
+  const [openId, setOpenId] = useState(null);   // invoice modal
+  const [wizId, setWizId] = useState(null);      // shipment wizard
+  const [editId, setEditId] = useState(null);    // edit/delete invoice
+
+  // Deep-link from the dashboard: open the invoice that was clicked
+  useEffect(() => {
+    if (focus?.invId) { setOpenId(focus.invId); clearFocus && clearFocus(); }
+  }, [focus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openInv = invoices.find((i) => i.id === openId);
+  const wizInv = invoices.find((i) => i.id === wizId);
   const editInv = invoices.find((i) => i.id === editId);
 
-  const ready = invoices.filter((i) => shipComplete(i.ship));
-  const pending = invoices.filter((i) => !shipComplete(i.ship));
   const totalFob = invoices.reduce((s, i) => s + invoiceTotals(i, items).buyerAmt, 0);
+  const byStatus = (st) => invoices.filter((i) => invoiceStatus(i) === st).length;
 
-  const missing = (inv) => SHIP_REQUIRED.filter((k) => !inv.ship?.[k]).length;
-
-  const rows = invoices.map((inv) => ({ inv, t: invoiceTotals(inv, items), buyer: buyerById(inv.buyerId), done: shipComplete(inv.ship) }));
-
+  const rows = invoices.map((inv) => ({ inv, t: invoiceTotals(inv, items), buyer: buyerById(inv.buyerId), status: invoiceStatus(inv) }));
   const history = SHIPMENTS.flatMap((s) => s.lines.map((l) => ({ ...l, ...s }))).sort((a, b) => new Date(b.date) - new Date(a.date));
 
   return (
     <div className="stack">
-      <Rail view="shipments" go={go} />
 
       <div className="page-head">
-        <h2 className="h1">Shipments</h2>
+        <h2 className="h1">Shipment details</h2>
         <p className="sub">
-          Each packing invoice becomes a shipment once you add four things: <b>BL number, vessel, container and port of discharge</b>.{" "}
-          <Info>These four fields are the only ones that gate the customs invoice (18) and the post-shipment set (30–34). Everything else on the shipment form is optional and pre-filled with your usual values.</Info>{" "}
-          Fill them once, here — never again.
+          Open an invoice and fill three gated steps — <b>vehicle details</b> (supplier-wise), <b>container details</b>, then <b>BL &amp; shipping</b>.
+          Each unlocks the next, and the status moves from <b>Ready to dispatch</b> → <b>Dispatched</b> → <b>Ready to Ship</b> → <b>Shipped</b>.
         </p>
       </div>
 
       <div className="grid-4">
-        <Stat icon={FileText} value={invoices.length} label="Invoices raised" sub="Across all buyers" />
-        <Stat icon={Ship} tone="green" value={ready.length} label="Ready to ship" sub="Shipment details complete" />
-        <Stat icon={AlertTriangle} tone={pending.length ? "amber" : "green"} value={pending.length} label="Awaiting details" sub={pending.length ? `${missing(pending[0])} field(s) missing on ${pending[0].invoiceNo}` : "Nothing outstanding"} />
-        <Stat icon={Anchor} value={usd(totalFob)} label="FOB value" sub="Total invoiced" />
+        <Stat icon={FileText} value={invoices.length} label="Invoices" sub="Across all buyers" />
+        <Stat icon={Truck} tone={byStatus("Dispatched") ? "amber" : undefined} value={byStatus("Dispatched")} label="Dispatched" sub="Vehicle details in" />
+        <Stat icon={Container} value={byStatus("Ready to Ship")} label="Ready to Ship" sub="Container details in" />
+        <Stat icon={Ship} tone="green" value={byStatus("Shipped")} label="Shipped" sub={usd(totalFob) + " FOB total"} />
       </div>
 
       <Seg options={[["invoices", "Invoices", FileText], ["history", "Shipped history", History]]} value={tab} onChange={setTab} />
 
       {tab === "invoices" && (
-        <>
-          {pending.length > 0 && (
-            <Note tone="amber" icon={AlertTriangle}>
-              <b>{pending.length} invoice{pending.length === 1 ? "" : "s"} cannot produce customs paperwork yet.</b>{" "}
-              Add the shipment details and the documents fill themselves in.
-            </Note>
+        <Card>
+          <CardHead icon={FileText} title={`${invoices.length} invoice${invoices.length === 1 ? "" : "s"}`}>
+            <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Click a row to open · edit shipment to advance the status</span>
+          </CardHead>
+          {invoices.length ? (
+            <DataTable
+              onRowClick={(r) => setOpenId(r.inv.id)}
+              columns={[
+                { key: "no", label: "Invoice", render: (r) => <Mono>{r.inv.invoiceNo}</Mono> },
+                { key: "date", label: "Date", render: (r) => <span style={{ color: "var(--muted)" }}>{dmy(r.inv.date)}</span> },
+                { key: "buyer", label: "Buyer", render: (r) => <span style={{ color: "var(--ink)", fontWeight: 500 }}>{r.buyer.brand}</span> },
+                { key: "boxes", label: "Boxes", align: "r", strong: true, render: (r) => r.t.boxes },
+                { key: "vol", label: "Volume m³", align: "r", render: (r) => num(r.t.volume, 3) },
+                { key: "fob", label: "FOB $", align: "r", strong: true, render: (r) => usd(r.t.buyerAmt) },
+                { key: "container", label: "Container", render: (r) => r.inv.ship?.container ? <Mono>{r.inv.ship.container}</Mono> : <span style={{ color: "var(--faint)" }}>—</span> },
+                { key: "status", label: "Status", render: (r) => <Pill tone={INV_STATUS_TONE[r.status] || ""}>{r.status}</Pill> },
+                {
+                  key: "act", label: "", align: "r", render: (r) => (
+                    <span className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
+                      <button className="btn btn-quiet btn-sm" onClick={(e) => { e.stopPropagation(); setWizId(r.inv.id); }}><Ship size={13} /> Shipment</button>
+                      <button className="btn btn-quiet btn-sm" onClick={(e) => { e.stopPropagation(); setEditId(r.inv.id); }}><Pencil size={13} /> Edit</button>
+                    </span>
+                  ),
+                },
+                { key: "go", label: "", align: "r", render: () => <ChevronRight size={15} style={{ color: "var(--faint)" }} /> },
+              ]}
+              rows={rows} rowKey={(r) => r.inv.id}
+            />
+          ) : (
+            <Empty icon={FileText} title="No invoices yet" action={<Btn icon={ArrowRight} onClick={() => go("packing")}>Go to packing</Btn>}>
+              Invoices are created when you record what a supplier packed.
+            </Empty>
           )}
-          <Card>
-            <CardHead icon={FileText} title={`${invoices.length} invoice${invoices.length === 1 ? "" : "s"}`}>
-              <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Click a row to open · buyer &amp; supplier views inside</span>
-            </CardHead>
-            {invoices.length ? (
-              <DataTable
-                onRowClick={(r) => setOpenId(r.inv.id)}
-                columns={[
-                  { key: "no", label: "Invoice", render: (r) => <Mono>{r.inv.invoiceNo}</Mono> },
-                  { key: "date", label: "Date", render: (r) => <span style={{ color: "var(--muted)" }}>{dmy(r.inv.date)}</span> },
-                  { key: "buyer", label: "Buyer", render: (r) => <span style={{ color: "var(--ink)", fontWeight: 500 }}>{r.buyer.name} <span style={{ color: "var(--faint)" }}>· {r.buyer.brand}</span></span> },
-                  { key: "boxes", label: "Boxes", align: "r", strong: true, render: (r) => r.t.boxes },
-                  { key: "vol", label: "Volume m³", align: "r", render: (r) => num(r.t.volume, 3) },
-                  { key: "fob", label: "FOB value $", align: "r", strong: true, render: (r) => usd(r.t.buyerAmt) },
-                  { key: "container", label: "Container", render: (r) => r.inv.ship?.container ? <Mono>{r.inv.ship.container}</Mono> : <span style={{ color: "var(--faint)" }}>—</span> },
-                  { key: "status", label: "Status", render: (r) => r.done ? <Pill tone="green">ready to ship</Pill> : <Pill tone="amber">{missing(r.inv)} field(s) missing</Pill> },
-                  {
-                    key: "act", label: "", align: "r", render: (r) => (
-                      <button className="btn btn-quiet btn-sm" onClick={(e) => { e.stopPropagation(); setEditId(r.inv.id); }}>
-                        <Pencil size={13} /> {r.done ? "Edit" : "Add details"}
-                      </button>
-                    ),
-                  },
-                  { key: "go", label: "", align: "r", render: () => <ChevronRight size={15} style={{ color: "var(--faint)" }} /> },
-                ]}
-                rows={rows} rowKey={(r) => r.inv.id}
-              />
-            ) : (
-              <Empty icon={FileText} title="No invoices yet" action={<Btn icon={ArrowRight} onClick={() => go("packing")}>Go to packing</Btn>}>
-                Invoices are created when you record what a supplier packed.
-              </Empty>
-            )}
-            {invoices.length > 0 && (
-              <div className="card-foot">
-                <Note tone="teal">Once an invoice shows <b>ready to ship</b>, open <b>Documents</b> and every one of the 40 papers is populated from it — same PO, dates, BL, container and quantities on every sheet.</Note>
-              </div>
-            )}
-          </Card>
-        </>
+          {invoices.length > 0 && (
+            <div className="card-foot">
+              <Note tone="teal">Fill the three shipment steps and every one of the 40 papers is populated from this invoice — same PO, dates, BL, container and quantities on every sheet.</Note>
+            </div>
+          )}
+        </Card>
       )}
 
       {tab === "history" && (
@@ -118,19 +113,12 @@ export default function Shipments({ go }) {
             ]}
             rows={history} rowKey={(r, i) => i}
           />
-          <div className="card-foot">
-            <Note tone="teal">Pulled from the customs invoice, the commercial invoice &amp; CWD, and the balance register — one source, three documents.</Note>
-          </div>
         </Card>
       )}
 
-      {openInv && <InvoiceModal inv={openInv} onClose={() => setOpenId(null)} onEditShip={() => { setEditId(openInv.id); setOpenId(null); }} />}
-      {editInv && (
-        <EditModal title={`Shipment details · ${editInv.invoiceNo}`} schema={SHIP_FIELDS} value={editInv.ship}
-          note="BL number, vessel, container and port of discharge are the four that unlock the customs invoice. The rest are optional."
-          onClose={() => setEditId(null)}
-          onSave={(f) => { setInvoices(invoices.map((x) => (x.id === editId ? { ...x, ship: f } : x))); setEditId(null); toast(`Shipment details saved for ${editInv.invoiceNo}`); }} />
-      )}
+      {openInv && <InvoiceModal inv={openInv} onClose={() => setOpenId(null)} onEditShip={() => { setWizId(openInv.id); setOpenId(null); }} />}
+      {wizInv && <ShipmentWizard inv={wizInv} onClose={() => setWizId(null)} />}
+      {editInv && <InvoiceEditModal inv={editInv} onClose={() => setEditId(null)} />}
     </div>
   );
 }

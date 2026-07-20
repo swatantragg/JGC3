@@ -1,15 +1,14 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
-  Plus, Download, ClipboardList, Layers, Truck, Search, Check, ChevronRight, Calendar,
+  Plus, Download, ClipboardList, Layers, Truck, Search, Check, ChevronRight, Calendar, Boxes, Pencil, Trash2,
 } from "lucide-react";
 import { useApp } from "../store.jsx";
-import Rail from "../Rail.jsx";
 import {
   Card, CardHead, Btn, Seg, Field, Input, Select, Pill, Mono, DataTable, Modal, Drawer, Step,
   Empty, Note, Info, FormulaPanel, SearchInput,
 } from "../ui.jsx";
 import {
-  TODAY, dmy, num, inr, usd, usdp, deriveBuyer, buildSupplierMaster, buildPoList,
+  TODAY, dmy, num, inr, usd, usdp, deriveBuyer, buildSupplierMaster, buildPoList, buildItemOrderDetail,
   downloadCSV, BM_HEAD, bmRaw, SM7_HEAD, sm7Raw, BUYER_FORMULAS, SUPPLIER_FORMULAS,
 } from "../data.js";
 
@@ -37,7 +36,7 @@ const Progress = ({ done, total }) => {
    ============================================================ */
 function NewOrderDrawer({ onClose }) {
   const { items, buyers, buyerMaster, setBuyerMaster, suppliersForItem, toast } = useApp();
-  const [rbi, setRbi] = useState("83.50");
+  const rbi = "83.50"; // RBI reference rate now belongs to Record packing, not order entry
   const [po, setPo] = useState("03540");
   const [date, setDate] = useState(TODAY);
   const [buyerId, setBuyerId] = useState(buyers[0].id);
@@ -76,14 +75,11 @@ function NewOrderDrawer({ onClose }) {
       </>}>
       <div className="stack">
         <section>
-          <Step n="1" title="Who is this order for?" hint="Buyer, PO number, order date and the day’s RBI rate." />
-          <div className="grid-2" style={{ gridTemplateColumns: "minmax(0,1.4fr) repeat(3, minmax(0,1fr))" }}>
+          <Step n="1" title="Who is this order for?" hint="Buyer, PO number and order date. The RBI rate is now captured later, at Record packing." />
+          <div className="grid-3">
             <Field label="Buyer"><Select value={buyerId} onChange={(e) => setBuyerId(e.target.value)}>{buyers.map((b) => <option key={b.id} value={b.id}>{b.name} — {b.brand}</option>)}</Select></Field>
             <Field label="PO number"><Input value={po} onChange={(e) => setPo(e.target.value)} /></Field>
             <Field label="Order date"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
-            <Field label="RBI rate ₹/$" hint="The Reserve Bank reference rate on the order date. Used to convert the FOB value into rupees for the customs paperwork.">
-              <Input className="rate" type="number" value={rbi} onChange={(e) => setRbi(e.target.value)} />
-            </Field>
           </div>
         </section>
 
@@ -156,15 +152,66 @@ function NewOrderDrawer({ onClose }) {
 }
 
 /* ============================================================
+   Edit / delete a purchase order (its buyer-master rows)
+   ============================================================ */
+function PoEditModal({ po, onClose }) {
+  const { buyerMaster, setBuyerMaster, deletePo, items, toast } = useApp();
+  const [poNo, setPoNo] = useState(po.po);
+  const [rowsD, setRowsD] = useState(po.rows.map((r) => ({ id: r.id, qty: r.qty, date: r.date, itemId: r.itemId })));
+  const [confirm, setConfirm] = useState(false);
+
+  const setQty = (id, v) => setRowsD((p) => p.map((r) => (r.id === id ? { ...r, qty: Number(v) || 0 } : r)));
+  const save = () => {
+    setBuyerMaster(buyerMaster.map((r) => {
+      const e = rowsD.find((x) => x.id === r.id);
+      return r.po === po.po ? { ...r, po: poNo, qty: e ? e.qty : r.qty } : r;
+    }));
+    toast(`PO ${poNo} updated`);
+    onClose();
+  };
+  const remove = () => { deletePo(po.po); toast(`PO ${po.po} deleted`); onClose(); };
+
+  return (
+    <Modal title={`Edit purchase order ${po.po}`} icon={Pencil} onClose={onClose}
+      footer={<>
+        {confirm
+          ? <span className="row" style={{ gap: 8 }}><span style={{ fontSize: 12.5, color: "var(--amber-ink)" }}>Delete PO {po.po} and all its lines?</span><Btn variant="danger" size="sm" icon={Trash2} onClick={remove}>Confirm delete</Btn><Btn variant="ghost" size="sm" onClick={() => setConfirm(false)}>Keep</Btn></span>
+          : <Btn variant="ghost" size="sm" icon={Trash2} onClick={() => setConfirm(true)}>Delete PO</Btn>}
+        <div className="row" style={{ gap: 8 }}>
+          <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
+          <Btn size="sm" icon={Check} onClick={save}>Save changes</Btn>
+        </div>
+      </>}>
+      <div className="grid-3" style={{ marginBottom: 14 }}>
+        <Field label="PO number"><Input value={poNo} onChange={(e) => setPoNo(e.target.value)} /></Field>
+      </div>
+      <table className="tbl">
+        <thead><tr><th>Item</th><th className="r">Pieces</th></tr></thead>
+        <tbody>
+          {rowsD.map((r) => {
+            const it = items.find((x) => x.id === r.itemId) || {};
+            return <tr key={r.id}><td><Mono>{it.gd}</Mono> <span style={{ color: "var(--ink)" }}>{it.description}</span></td>
+              <td className="r"><Input className="input-sm num-in" style={{ width: 110 }} type="number" min="0" value={r.qty} onChange={(e) => setQty(r.id, e.target.value)} /></td></tr>;
+          })}
+        </tbody>
+      </table>
+    </Modal>
+  );
+}
+
+/* ============================================================
    PO detail modal
    ============================================================ */
-function PoModal({ po, onClose }) {
+function PoModal({ po, onClose, onEdit }) {
   const { supCode, buyerById } = useApp();
   return (
     <Modal title={`Purchase order ${po.po}`} icon={ClipboardList} onClose={onClose} width={880}
       footer={<>
         <span style={{ fontSize: 12, color: "var(--muted)" }}>{buyerById(po.buyerId).name} · ordered {dmy(po.date)} · {po.completed}/{po.ordered} boxes received</span>
-        <Btn variant="teal" size="sm" icon={Download} onClick={() => downloadCSV(`PO_${po.po}.csv`, BM_HEAD, po.rows.map(bmRaw))}>Download this PO</Btn>
+        <div className="row" style={{ gap: 8 }}>
+          <Btn variant="ghost" size="sm" icon={Pencil} onClick={onEdit}>Edit / delete</Btn>
+          <Btn variant="teal" size="sm" icon={Download} onClick={() => downloadCSV(`PO_${po.po}.csv`, BM_HEAD, po.rows.map(bmRaw))}>Download this PO</Btn>
+        </div>
       </>}>
       <DataTable
         columns={[
@@ -274,12 +321,13 @@ function supplierColumns(full, rbi) {
 }
 
 /* ============================================================ */
-export default function Orders({ go }) {
+export default function Orders({ go, focus, clearFocus }) {
   const { items, buyers, suppliers, buyerMaster, receipts, supCode, buyerById } = useApp();
   const [tab, setTab] = useState("po");
   const [full, setFull] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const [selPo, setSelPo] = useState(null);
+  const [editPo, setEditPo] = useState(null);
 
   const [from, setFrom] = useState("2025-01-01");
   const [to, setTo] = useState(TODAY);
@@ -289,12 +337,20 @@ export default function Orders({ go }) {
   const poList = useMemo(() => buildPoList(buyerMaster, items, receipts), [buyerMaster, items, receipts]);
   const lines = useMemo(() => buyerMaster.filter((r) => r.date >= from && r.date <= to).sort((a, b) => new Date(b.date) - new Date(a.date)), [buyerMaster, from, to]);
   const sm = useMemo(() => buildSupplierMaster(buyerMaster, sup, from, to, supRbi), [buyerMaster, sup, from, to, supRbi]);
+  const itemDetail = useMemo(() => buildItemOrderDetail(buyerMaster, items), [buyerMaster, items]);
+
+  // Deep-link from the dashboard: open the PO that was clicked
+  useEffect(() => {
+    if (focus?.po) { const p = poList.find((x) => x.po === focus.po); if (p) setSelPo(p); clearFocus && clearFocus(); }
+  }, [focus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep the open PO modal in sync with edits
+  const selPoLive = selPo && poList.find((p) => p.po === selPo.po);
 
   const viewToggle = <Seg options={[["simple", "Simple"], ["full", "Full sheet"]]} value={full ? "full" : "simple"} onChange={(v) => setFull(v === "full")} />;
 
   return (
     <div className="stack">
-      <Rail view="orders" go={go} />
 
       <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
         <div className="page-head" style={{ margin: 0 }}>
@@ -306,10 +362,10 @@ export default function Orders({ go }) {
 
       <div className="row wrap" style={{ justifyContent: "space-between" }}>
         <Seg
-          options={[["po", "By purchase order", ClipboardList], ["lines", "Order lines", Layers], ["supplier", "Supplier summary", Truck]]}
+          options={[["po", "By purchase order", ClipboardList], ["itemdetail", "By item (order detail)", Boxes], ["lines", "Order lines", Layers], ["supplier", "Supplier summary", Truck]]}
           value={tab} onChange={setTab}
         />
-        {tab !== "po" && viewToggle}
+        {tab !== "po" && tab !== "itemdetail" && viewToggle}
       </div>
 
       {/* ---------- By PO ---------- */}
@@ -331,7 +387,7 @@ export default function Orders({ go }) {
                   { key: "prog", label: "Delivered", render: (p) => <Progress done={p.completed} total={p.ordered} /> },
                   { key: "pen", label: "Boxes pending", align: "r", render: (p) => <span style={{ fontWeight: 700, color: p.pending ? "var(--amber-ink)" : "var(--green-ink)" }}>{p.pending || "—"}</span> },
                   { key: "done", label: "Received", align: "r", render: (p) => <span>{p.completed} <span style={{ color: "var(--faint)" }}>/ {p.ordered}</span></span> },
-                  { key: "sup", label: "Suppliers", render: (p) => <span className="row" style={{ gap: 4 }}>{p.suppliers.map((s) => <Pill key={s}>{supCode(s)}</Pill>)}</span> },
+                  { key: "sup", label: "Suppliers (pending)", render: (p) => p.openSuppliers.length ? <span className="row" style={{ gap: 4 }}>{p.openSuppliers.map((s) => <Pill key={s}>{supCode(s)}</Pill>)}</span> : <Pill tone="green"><Check size={11} /> all delivered</Pill> },
                   { key: "vol", label: "Volume m³", align: "r", render: (p) => num(p.volume, 3) },
                   { key: "go", label: "", align: "r", render: () => <ChevronRight size={15} style={{ color: "var(--faint)" }} /> },
                 ]}
@@ -342,6 +398,46 @@ export default function Orders({ go }) {
               </div>
             </Card>
           )}
+        </>
+      )}
+
+      {/* ---------- By item · order detail (doc 37) ---------- */}
+      {tab === "itemdetail" && (
+        <>
+          <Card pad>
+            <div className="row wrap" style={{ gap: 12, justifyContent: "space-between", alignItems: "center" }}>
+              <Note tone="teal">One row per item, a column per PO holding that PO's ordered pieces — then total pieces, boxes, volume and net weight. This is the balance-order item-wise sheet (37).</Note>
+              <Btn variant="teal" icon={Download} disabled={!itemDetail.rows.length}
+                onClick={() => downloadCSV(`Balance_Order_Item_wise_${TODAY}.csv`,
+                  ["GD Code", "Code", "Size", "Length", "Packing", ...itemDetail.pos, "Total Pcs", "Boxes", "Vol/Box", "Total Vol m³", "Net Wt kg"],
+                  itemDetail.rows.map((r) => [r.it.gd, r.it.code, r.it.size, r.it.length, r.packing, ...itemDetail.pos.map((po) => r.perPo[po] || 0), r.qty, r.boxes, num(r.volPerBox, 3), num(r.totalVol, 2), num(r.netTotal)]))}>
+                Download 37
+              </Btn>
+            </div>
+          </Card>
+          <Card>
+            <CardHead icon={Boxes} title={`${itemDetail.rows.length} item${itemDetail.rows.length === 1 ? "" : "s"} · ${itemDetail.pos.length} PO column(s)`} />
+            {itemDetail.rows.length ? (
+              <DataTable
+                freeze={2}
+                maxHeight={520}
+                columns={[
+                  { key: "gd", w: 92, label: "GD code", render: (r) => <Mono>{r.it.gd}</Mono> },
+                  { key: "code", w: 84, label: "Code", render: (r) => <Mono>{r.it.code}</Mono> },
+                  { key: "size", label: "Size", render: (r) => r.it.size },
+                  { key: "len", label: "Length", render: (r) => r.it.length },
+                  { key: "pack", label: "Packing", align: "r", render: (r) => r.packing },
+                  ...itemDetail.pos.map((po) => ({ key: "po_" + po, label: po, align: "r", render: (r) => r.perPo[po] ? r.perPo[po].toLocaleString("en-IN") : <span style={{ color: "var(--faint)" }}>—</span> })),
+                  { key: "qty", label: "Total pcs", align: "r", strong: true, render: (r) => r.qty.toLocaleString("en-IN") },
+                  { key: "boxes", label: "Boxes", align: "r", strong: true, render: (r) => r.boxes },
+                  { key: "vb", label: "Vol/box", align: "r", render: (r) => num(r.volPerBox, 3) },
+                  { key: "tv", label: "Total vol m³", align: "r", render: (r) => num(r.totalVol, 2) },
+                  { key: "net", label: "Net wt kg", align: "r", render: (r) => num(r.netTotal) },
+                ]}
+                rows={itemDetail.rows} rowKey={(r) => r.it.id}
+              />
+            ) : <Empty icon={Boxes} title="No orders yet">Add a buyer order to see the item-wise order detail.</Empty>}
+          </Card>
         </>
       )}
 
@@ -399,7 +495,8 @@ export default function Orders({ go }) {
       )}
 
       {drawer && <NewOrderDrawer onClose={() => setDrawer(false)} />}
-      {selPo && <PoModal po={selPo} onClose={() => setSelPo(null)} />}
+      {selPo && selPoLive && <PoModal po={selPoLive} onClose={() => setSelPo(null)} onEdit={() => { setEditPo(selPoLive); setSelPo(null); }} />}
+      {editPo && <PoEditModal po={editPo} onClose={() => setEditPo(null)} />}
     </div>
   );
 }

@@ -2,7 +2,6 @@ import { useState, useMemo } from "react";
 import { BarChart3, ClipboardList, Layers, Truck, Download, Boxes, Check, Calculator } from "lucide-react";
 import { useApp } from "../store.jsx";
 import { useAuth } from "../auth.jsx";
-import Rail from "../Rail.jsx";
 import { Card, CardHead, Btn, Seg, Pill, Mono, DataTable, Input, Note, Info, Empty, Stat } from "../ui.jsx";
 import { writeXLS } from "../docs.js";
 import { balanceData, joinInv, dmy, num, inr, usd, TODAY } from "../data.js";
@@ -136,7 +135,6 @@ export default function Reports({ go, openDoc }) {
 
   return (
     <div className="stack">
-      <Rail view="reports" go={go} />
 
       <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
         <div className="page-head" style={{ margin: 0 }}>

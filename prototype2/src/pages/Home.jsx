@@ -1,133 +1,120 @@
-import {
-  ClipboardList, PackageCheck, Ship, FileText, Boxes, Globe, Truck, ArrowRight, Sparkles, Anchor,
-} from "lucide-react";
+import { Boxes, Ship, ClipboardList, Container } from "lucide-react";
 import { useApp } from "../store.jsx";
-import { useAuth } from "../auth.jsx";
-import Rail from "../Rail.jsx";
-import { Card, CardHead, Stat, ActionCard, Pill, Mono, Eyebrow, DataTable, Btn } from "../ui.jsx";
-import { SHIPMENT, SHIPMENTS, dmy, shipComplete, invoiceTotals, usd } from "../data.js";
+import { Card, CardHead, Pill, Mono, DataTable, Empty } from "../ui.jsx";
+import {
+  buildBalanceMatrix, invoiceTotals, invoiceStatus, INV_STATUS_TONE,
+  dmy, num,
+} from "../data.js";
 
 /* ============================================================
-   Home = "what should I do right now", not a wall of numbers.
-   Suggested actions respect the signed-in user's access.
+   Dashboard — a live rebuild of the client's "Balance Orders,
+   Boxes & Volume" sheet (doc 39): suppliers down the side, every
+   open PO across the top, pending boxes & volume in each cell, a
+   TOTAL row (sheet line 17) and estimated containers. Below it, a
+   live invoice table with the dispatch → ship status. Clicking a
+   PO or an invoice jumps straight to it.
    ============================================================ */
 export default function Home({ go }) {
-  const { items, buyers, suppliers, invoices, pendingBoxes, openPos, ledger } = useApp();
-  const { has } = useAuth();
+  const { items, suppliers, buyerMaster, invoices, buyerById, supCode } = useApp();
 
-  const needsShip = invoices.filter((i) => !shipComplete(i.ship));
-  const readyDocs = invoices.filter((i) => shipComplete(i.ship)).length;
+  const M = buildBalanceMatrix(buyerMaster, invoices, items, suppliers);
+  const cntr = (vol) => (vol > 0 ? (vol / M.cntrVol).toFixed(2) : "—");
 
-  /* Next actions, ordered by what actually blocks a shipment */
-  const actions = [];
-  if (needsShip.length && has("shipment.details")) actions.push({
-    icon: Ship, tone: "amber", title: `Add shipment details to ${needsShip[0].invoiceNo}`,
-    body: "BL number, vessel, container and port of discharge. Until these are in, the customs invoice and post-shipment papers stay blank.",
-    go: "shipments",
-  });
-  if (pendingBoxes > 0 && has("shipment.packing")) actions.push({
-    icon: PackageCheck, tone: "teal", title: `${pendingBoxes} boxes still to pack`,
-    body: `Across ${openPos.size} open purchase order${openPos.size === 1 ? "" : "s"}. Record what each supplier delivers — the oldest order is filled first, automatically.`,
-    go: "packing",
-  });
-  if (has("orders.entry")) actions.push({
-    icon: ClipboardList, tone: "green", title: "Enter a new buyer order",
-    body: "Pick the buyer, type quantities against a supplier, and the boxes, volume, labels and value are worked out for you.",
-    go: "orders",
-  });
-
-  const recent = SHIPMENTS
-    .flatMap((s) => s.lines.map((l) => ({ ...l, shipId: s.shipId, date: s.date })))
-    .sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5);
-
-  const recentCols = [
-    { key: "item", label: "Item", render: (r) => { const it = items.find((x) => x.id === r.itemId); return <span><Mono>{it.gd}</Mono> <span style={{ color: "var(--ink)" }}>{it.description}</span></span>; } },
-    { key: "boxes", label: "Boxes", align: "r", strong: true },
-    { key: "po", label: "Cleared PO", render: (r) => <Pill tone="amber">PO {r.po}</Pill> },
-    { key: "shipId", label: "Shipment", render: (r) => <Mono>{r.shipId}</Mono> },
-    { key: "date", label: "Date", render: (r) => <span style={{ color: "var(--muted)" }}>{dmy(r.date)}</span> },
+  /* ---- Invoice table (dispatch → ship status) ---- */
+  const invRows = invoices.map((inv) => ({ inv, t: invoiceTotals(inv, items), buyer: buyerById(inv.buyerId), status: invoiceStatus(inv) }));
+  const invCols = [
+    { key: "no", label: "Invoice", render: (r) => <Mono>{r.inv.invoiceNo}</Mono> },
+    { key: "date", label: "Date", render: (r) => <span style={{ color: "var(--muted)" }}>{dmy(r.inv.date)}</span> },
+    { key: "buyer", label: "Buyer", render: (r) => r.buyer.brand },
+    { key: "boxes", label: "Boxes", align: "r", strong: true, render: (r) => r.t.boxes },
+    { key: "vol", label: "Volume m³", align: "r", render: (r) => num(r.t.volume, 3) },
+    { key: "container", label: "Container", render: (r) => r.inv.ship?.container ? <Mono>{r.inv.ship.container}</Mono> : <span style={{ color: "var(--faint)" }}>—</span> },
+    { key: "status", label: "Status", render: (r) => <Pill tone={INV_STATUS_TONE[r.status] || ""}>{r.status}</Pill> },
   ];
-
-  const totalFob = invoices.reduce((s, i) => s + invoiceTotals(i, items).buyerAmt, 0);
 
   return (
     <div className="stack">
-      {/* Hero */}
-      <div className="hero">
-        <div className="hero-ghost">2001–2421</div>
-        <div className="row" style={{ gap: 8 }}>
-          <Sparkles size={14} style={{ color: "var(--amber)" }} />
-          <span className="eyebrow" style={{ color: "#9fc0d8" }}>Jaikvin Global · Export operations</span>
-        </div>
-        <h2>Enter once. Generate everything.<br />Always balanced.</h2>
-        <div className="row wrap" style={{ gap: 8, marginTop: 18 }}>
-          {[["Invoice", SHIPMENT.invoice], ["Container", SHIPMENT.container], ["Route", `${SHIPMENT.pol} → ${SHIPMENT.pod}`], ["Marks", SHIPMENT.marks]].map(([k, v]) => (
-            <span key={k} className="chip"><span className="ck">{k}</span><span className="cv">{v}</span></span>
-          ))}
-        </div>
+      <div className="page-head">
+        <h2 className="h1">Dashboard</h2>
+        <p className="sub">Balance orders — boxes &amp; volume still owed, supplier by supplier, across every open purchase order. Click a PO to open it, or an invoice below to open the shipment.</p>
       </div>
 
-      {/* The whole system, in one line */}
-      <div>
-        <div className="row" style={{ justifyContent: "space-between", marginBottom: 9 }}>
-          <Eyebrow>How the work flows</Eyebrow>
-          <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Click any step to jump straight in</span>
-        </div>
-        <Rail view="home" go={go} />
-      </div>
-
-      {/* Next actions */}
-      {actions.length > 0 && (
-        <div>
-          <div className="row" style={{ justifyContent: "space-between", marginBottom: 9 }}>
-            <Eyebrow>Do this next</Eyebrow>
+      <Card>
+        <CardHead icon={Boxes} title="Balance orders · boxes & volume">
+          <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Pending only · click a PO header to open it</span>
+        </CardHead>
+        {M.rows.length ? (
+          <div className="tbl-wrap">
+            <table className="matrix">
+              <thead>
+                <tr>
+                  <th rowSpan={2} className="mx-sup">Supplier</th>
+                  {M.pos.map((po) => (
+                    <th key={po} colSpan={2} className="mx-po" onClick={() => go("orders", { po })} title={`Open PO ${po}`}>
+                      <span className="mx-poname">PO {po}</span>
+                      <span className="mx-podate">{dmy(M.poDate[po])}</span>
+                    </th>
+                  ))}
+                  <th colSpan={2} className="mx-tot">TOTAL</th>
+                  <th rowSpan={2} className="mx-tot">CNTRS</th>
+                </tr>
+                <tr>
+                  {M.pos.map((po) => [
+                    <th key={po + "b"} className="mx-sub">BOX</th>,
+                    <th key={po + "v"} className="mx-sub">VOL</th>,
+                  ])}
+                  <th className="mx-sub mx-tot">BOX</th>
+                  <th className="mx-sub mx-tot">VOL</th>
+                </tr>
+              </thead>
+              <tbody>
+                {M.rows.map((r) => (
+                  <tr key={r.supplier.id}>
+                    <td className="mx-sup"><Pill>{r.supplier.code}</Pill> <span style={{ color: "var(--ink)" }}>{r.supplier.name}</span></td>
+                    {M.pos.map((po) => [
+                      <td key={po + "b"} className="r">{r.cells[po].boxes || "—"}</td>,
+                      <td key={po + "v"} className="r mx-vol">{r.cells[po].vol ? num(r.cells[po].vol, 2) : "—"}</td>,
+                    ])}
+                    <td className="r strong">{r.totBox}</td>
+                    <td className="r strong">{num(r.totVol, 2)}</td>
+                    <td className="r">{cntr(r.totVol)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td className="mx-sup">TOTAL</td>
+                  {M.pos.map((po) => [
+                    <td key={po + "b"} className="r">{M.totals.cells[po].boxes || "—"}</td>,
+                    <td key={po + "v"} className="r mx-vol">{M.totals.cells[po].vol ? num(M.totals.cells[po].vol, 2) : "—"}</td>,
+                  ])}
+                  <td className="r">{M.totals.totBox}</td>
+                  <td className="r">{num(M.totals.totVol, 2)}</td>
+                  <td className="r">{cntr(M.totals.totVol)}</td>
+                </tr>
+              </tfoot>
+            </table>
           </div>
-          <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))" }}>
-            {actions.slice(0, 3).map((a) => (
-              <ActionCard key={a.title} icon={a.icon} tone={a.tone} title={a.title} onClick={() => go(a.go)}>{a.body}</ActionCard>
-            ))}
+        ) : (
+          <Empty icon={Boxes} title="Every order is filled">No boxes are pending across any purchase order.</Empty>
+        )}
+        <div className="card-foot">
+          <div className="row wrap" style={{ gap: 18, fontSize: 12, color: "var(--muted)" }}>
+            <span className="row" style={{ gap: 6 }}><Boxes size={13} /> {M.totals.totBox} boxes pending</span>
+            <span className="row" style={{ gap: 6 }}><ClipboardList size={13} /> {M.pos.length} open PO(s)</span>
+            <span className="row" style={{ gap: 6 }}><Container size={13} /> ≈ {M.containers} container(s) · {num(M.totals.totVol, 2)} m³</span>
           </div>
         </div>
-      )}
+      </Card>
 
-      {/* Numbers */}
-      <div className="grid-4">
-        <Stat icon={Boxes} tone={pendingBoxes ? "amber" : "green"} value={pendingBoxes} label="Boxes pending" sub="Oldest order filled first" />
-        <Stat icon={ClipboardList} value={openPos.size} label="Purchase orders open" sub={`${Object.keys(ledger).length} items tracked`} />
-        <Stat icon={FileText} tone="green" value={`${readyDocs}/${invoices.length}`} label="Invoices document-ready" sub="Shipment details complete" />
-        <Stat icon={Ship} value={usd(totalFob)} label="FOB value invoiced" sub={`${invoices.length} invoice${invoices.length === 1 ? "" : "s"} this season`} />
-      </div>
-
-      {/* Recent + who we trade with */}
-      <div className="split" style={{ gridTemplateColumns: "minmax(0,1.5fr) minmax(0,1fr)" }}>
-        <Card>
-          <CardHead icon={PackageCheck} title="Recently shipped">
-            {has("shipment.details") && <button className="btn btn-quiet btn-sm" onClick={() => go("shipments")}>Full history <ArrowRight size={13} /></button>}
-          </CardHead>
-          <DataTable columns={recentCols} rows={recent} rowKey={(r, i) => i} />
-        </Card>
-
-        <Card>
-          <CardHead icon={Anchor} title="Who we trade with" />
-          <div style={{ padding: 16 }} className="stack-sm">
-            {[
-              { icon: Globe, label: `${buyers.length} buyer${buyers.length === 1 ? "" : "s"}`, sub: buyers.map((b) => b.brand).join(" · "), to: "setup" },
-              { icon: Truck, label: `${suppliers.length} suppliers`, sub: "Daman · Vapi · Silvassa", to: "setup" },
-              { icon: Boxes, label: `${items.length} items`, sub: "Codes, packing, prices, barcodes", to: "setup" },
-            ].map((r) => (
-              <button key={r.label} className="action" style={{ padding: 11 }} onClick={() => has(["setup.items", "setup.parties"]) && go(r.to)}>
-                <span className="action-i" style={{ background: "var(--teal-bg)", color: "var(--teal-ink)", width: 30, height: 30 }}><r.icon size={15} /></span>
-                <span className="grow"><h5>{r.label}</h5><p>{r.sub}</p></span>
-              </button>
-            ))}
-            {has(["setup.items", "setup.parties"]) && (
-              <div style={{ marginTop: 4 }}>
-                <Btn variant="ghost" size="sm" icon={ArrowRight} onClick={() => go("setup")}>Open Setup</Btn>
-              </div>
-            )}
-          </div>
-        </Card>
-      </div>
+      <Card>
+        <CardHead icon={Ship} title={`${invoices.length} invoice${invoices.length === 1 ? "" : "s"} · dispatch status`}>
+          <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Click a row to open the shipment</span>
+        </CardHead>
+        {invoices.length
+          ? <DataTable columns={invCols} rows={invRows} rowKey={(r) => r.inv.id} onRowClick={(r) => go("shipments", { invId: r.inv.id })} />
+          : <Empty icon={Ship} title="No invoices yet">Record packing to create the first invoice.</Empty>}
+      </Card>
     </div>
   );
 }

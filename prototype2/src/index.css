@@ -505,6 +505,14 @@ textarea {
   background: var(--surface-2);
   border-color: var(--border-2);
 }
+.btn-danger {
+  background: var(--red);
+  color: #fff;
+  border-color: transparent;
+}
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
 .btn-quiet {
   background: transparent;
   color: var(--muted);
@@ -1116,7 +1124,8 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 22px;
+  padding: 24px;
+  overflow: auto;
   animation: fade 0.14s ease;
 }
 @keyframes fade {
@@ -1124,21 +1133,47 @@ textarea {
     opacity: 0;
   }
 }
-.modal {
+/* Every editing / viewing popup (modal AND guided drawer) is a centred panel
+   covering ~75% of the screen with ~20% larger type. `transform: scale(1.2)`
+   from the centre grows the whole subtree — inline pixel fonts included —
+   while flexbox keeps the layout box centred, so it never drifts off-centre.
+   Declared 62vw × 1.2 ≈ 75vw wide, 62vh × 1.2 ≈ 74vh tall. */
+.modal,
+.drawer {
   background: var(--surface);
   border-radius: var(--r-lg);
-  width: 100%;
-  max-height: 88vh;
+  width: 62vw;
+  max-width: 1180px;
+  height: auto;
+  max-height: 66vh;
   display: flex;
   flex-direction: column;
   box-shadow: var(--shadow-3);
-  animation: pop 0.16s ease;
   overflow: hidden;
+  transform: scale(1.2);
+  transform-origin: center center;
+  animation: pop 0.16s ease;
+}
+@media (max-width: 1100px) {
+  .modal,
+  .drawer {
+    width: 78vw;
+    max-height: 72vh;
+    transform: scale(1.1);
+  }
+}
+@media (max-width: 720px) {
+  .modal,
+  .drawer {
+    width: 94vw;
+    max-height: 84vh;
+    transform: none;
+  }
 }
 @keyframes pop {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.99);
+    transform: scale(1.14);
   }
 }
 .modal-head {
@@ -1174,7 +1209,7 @@ textarea {
   background: var(--surface-2);
 }
 
-/* Right-hand guided sheet */
+/* Guided sheet — now a centred panel, sharing the .modal sizing rule above. */
 .drawer-backdrop {
   position: fixed;
   inset: 0;
@@ -1182,23 +1217,11 @@ textarea {
   backdrop-filter: blur(2px);
   z-index: 60;
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow: auto;
   animation: fade 0.14s ease;
-}
-.drawer {
-  background: var(--surface);
-  width: min(880px, 100%);
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  box-shadow: var(--shadow-3);
-  animation: slide 0.18s cubic-bezier(0.22, 1, 0.36, 1);
-}
-@keyframes slide {
-  from {
-    transform: translateX(30px);
-    opacity: 0.4;
-  }
 }
 
 /* Command palette */
@@ -1859,4 +1882,154 @@ textarea {
   .topnav-inner {
     padding: 0 14px;
   }
+}
+
+/* ============================================================
+   Dashboard matrix (Balance Orders — Boxes & Volume, doc 39)
+   ============================================================ */
+.matrix {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12.5px;
+}
+.matrix th,
+.matrix td {
+  border: 1px solid var(--border);
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+.matrix thead th {
+  background: var(--brand);
+  color: #fff;
+  font-weight: 650;
+  text-align: center;
+  font-size: 11.5px;
+}
+.matrix th.mx-po {
+  cursor: pointer;
+  user-select: none;
+}
+.matrix th.mx-po:hover {
+  background: var(--brand-2, #10406e);
+}
+.matrix .mx-poname {
+  display: block;
+  font-weight: 700;
+}
+.matrix .mx-podate {
+  display: block;
+  font-weight: 400;
+  font-size: 10px;
+  opacity: 0.8;
+}
+.matrix th.mx-sub {
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  background: var(--brand);
+  opacity: 0.92;
+}
+.matrix th.mx-tot,
+.matrix .mx-tot {
+  background: var(--amber-2, #b7791f);
+}
+.matrix td.mx-sup,
+.matrix th.mx-sup {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+.matrix thead th.mx-sup {
+  background: var(--brand);
+}
+.matrix td.mx-sup {
+  color: var(--ink);
+  font-weight: 600;
+}
+.matrix tbody td {
+  color: var(--ink-2, var(--ink));
+  text-align: right;
+  background: var(--surface);
+}
+.matrix td.r {
+  text-align: right;
+}
+.matrix td.mx-vol {
+  color: var(--muted);
+}
+.matrix td.strong {
+  font-weight: 700;
+  color: var(--ink);
+}
+.matrix tbody tr:hover td {
+  background: var(--surface-2);
+}
+.matrix tfoot td {
+  background: var(--surface-3, var(--surface-2));
+  font-weight: 800;
+  color: var(--ink);
+  border-top: 2px solid var(--brand);
+}
+.matrix tfoot td.mx-sup {
+  background: var(--surface-3, var(--surface-2));
+}
+
+/* ============================================================
+   Shipment wizard stepper
+   ============================================================ */
+.wiz-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.wiz-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 10px);
+  background: var(--surface-2);
+  cursor: pointer;
+  text-align: left;
+}
+.wiz-step.on {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 2px var(--teal-bg);
+  background: var(--surface);
+}
+.wiz-step.locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.wiz-ic {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--teal-bg);
+  color: var(--teal-ink);
+  flex-shrink: 0;
+}
+.wiz-t {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.wiz-s {
+  display: block;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink);
+}
+.wiz-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 10px);
+  padding: 14px;
+  background: var(--surface-2);
 }
