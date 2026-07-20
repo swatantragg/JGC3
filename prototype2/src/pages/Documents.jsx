@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
-import { FileText, Download, Check, AlertTriangle, Search, ArrowRight, Layers } from "lucide-react";
+import { FileText, Download, Check, AlertTriangle, Search, ArrowRight, Layers, Ship, Pencil, Truck } from "lucide-react";
 import { useApp } from "../store.jsx";
-import Rail from "../Rail.jsx";
-import { Card, CardHead, Btn, Field, Select, Pill, Mono, Empty, Note, SearchInput, Info } from "../ui.jsx";
-import { buildDocument, DOC_META, renderDocument, PREVIEW_CSS } from "../docs.js";
-import { DOC_GROUPS, EXPORTER, shipComplete, dmy } from "../data.js";
+import ShipmentWizard from "../ShipmentWizard.jsx";
+import { Card, CardHead, Btn, Field, Input, Select, Pill, Mono, Empty, Note, SearchInput, Info } from "../ui.jsx";
+import { buildDocument, DOC_META, renderDocument, PREVIEW_CSS, ewaySupplierDocs, downloadEwaySupplier } from "../docs.js";
+import { DOC_GROUPS, EXPORTER, shipComplete, invoiceStatus, INV_STATUS_TONE, dmy } from "../data.js";
 
 /* ============================================================
    Documents — 40 export papers, generated live from one invoice.
@@ -14,8 +14,50 @@ import { DOC_GROUPS, EXPORTER, shipComplete, dmy } from "../data.js";
    that is how the PO / Suppliers' / Pre- / Post-Shipment Reports
    navigation entries reuse this same page.
    ============================================================ */
+/* Editable shipment-details panel shown atop the Pre-Shipment reports.
+   Writes straight to the store, so every open copy of the invoice — and
+   every document built from it — reflects the change immediately. */
+function PreShipShipPanel({ inv, onWizard }) {
+  const { updateInvoice, toast } = useApp();
+  const [f, setF] = useState({ ...(inv.ship || {}) });
+  useEffect(() => { setF({ ...(inv.ship || {}) }); }, [inv.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const status = invoiceStatus(inv);
+  const F = [
+    ["blNo", "BL No.", "text"], ["blDate", "BL Date", "date"], ["vessel", "Vessel / voyage", "text"],
+    ["container", "Container No.", "text"], ["seal", "Seal No.", "text"], ["pod", "Port of discharge", "text"],
+    ["marks", "Marks & Nos", "text"], ["pkgs", "No & kinds of pkgs", "text"], ["terms", "Terms", "text"],
+    ["netWt", "Nett wt (kg)", "number"], ["grossWt", "Gross wt (kg)", "number"], ["exRate", "Exchange rate ₹/$", "number"],
+  ];
+  return (
+    <Card pad>
+      <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div className="row" style={{ gap: 10 }}>
+          <span className="stat-i" style={{ width: 30, height: 30 }}><Ship size={15} /></span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>Shipment details · {inv.invoiceNo}</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>Editable here — changes reflect in the invoice and every document below.</div>
+          </div>
+        </div>
+        <div className="row" style={{ gap: 8 }}>
+          <Pill tone={INV_STATUS_TONE[status] || ""}>{status}</Pill>
+          <Btn variant="ghost" size="sm" icon={Truck} onClick={onWizard}>3-step shipment</Btn>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 12 }}>
+        {F.map(([k, label, type]) => (
+          <Field key={k} label={label}><Input className="input-sm" type={type} value={f[k] ?? ""} onChange={(e) => set(k, e.target.value)} /></Field>
+        ))}
+      </div>
+      <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+        <Btn size="sm" icon={Check} onClick={() => { updateInvoice(inv.id, { ship: f }); toast(`Shipment details saved for ${inv.invoiceNo}`); }}>Save shipment details</Btn>
+      </div>
+    </Card>
+  );
+}
+
 export default function Documents({ go, jump, clearJump, group }) {
-  const { items, buyers, suppliers, buyerMaster, invoices, buyerById, supCode, toast } = useApp();
+  const { items, buyers, suppliers, buyerMaster, invoices, transports, buyerById, supCode, toast } = useApp();
   const groupMeta = group ? DOC_GROUPS.find((g) => g.k === group) : null;
   const catalogue = groupMeta ? [groupMeta] : DOC_GROUPS;
   const heading = groupMeta ? groupMeta.t : "Documents";
@@ -23,6 +65,7 @@ export default function Documents({ go, jump, clearJump, group }) {
   const [invId, setInvId] = useState(invoices[0]?.id);
   const [open, setOpen] = useState(groupMeta ? groupMeta.docs[0] : "18");
   const [q, setQ] = useState("");
+  const [wizOpen, setWizOpen] = useState(false);
 
   useEffect(() => { if (jump) { setOpen(jump); setQ(""); clearJump(); } }, [jump, clearJump]);
 
@@ -37,7 +80,6 @@ export default function Documents({ go, jump, clearJump, group }) {
   if (!inv) {
     return (
       <div className="stack">
-        <Rail view="documents" go={go} />
         <div className="page-head"><h2 className="h1">{heading}</h2><p className="sub">Export documents, generated from a single invoice.</p></div>
         <Card><Empty icon={FileText} title="No invoice to build documents from" action={<Btn icon={ArrowRight} onClick={() => go("packing")}>Record packing first</Btn>}>Documents read their figures from an invoice — create one and every paper fills itself in.</Empty></Card>
       </div>
@@ -46,7 +88,9 @@ export default function Documents({ go, jump, clearJump, group }) {
 
   const buyer = buyerById(inv.buyerId);
   const done = shipComplete(inv.ship);
-  const ctx = { inv, buyer, items, buyerMaster, invoices, SUPPLIERS: suppliers, BUYERS: buyers, EXPORTER, supCode };
+  const ctx = { inv, buyer, items, buyerMaster, invoices, SUPPLIERS: suppliers, BUYERS: buyers, EXPORTER, supCode, transports };
+  const isPre = groupMeta?.k === "PRE";
+  const ewaySup = open === "10" ? ewaySupplierDocs(ctx) : [];
 
   const download = (no) => { buildDocument(no, ctx); toast(`Document ${no} · ${DOC_META[no]} downloaded`); };
   const downloadStage = (g) => { g.docs.forEach((no, i) => setTimeout(() => buildDocument(no, ctx), i * 250)); toast(`Downloading ${g.docs.length} documents — ${g.t}`); };
@@ -55,7 +99,6 @@ export default function Documents({ go, jump, clearJump, group }) {
 
   return (
     <div className="stack">
-      <Rail view="documents" go={go} />
 
       <div className="page-head">
         <h2 className="h1">{heading}</h2>
@@ -90,6 +133,8 @@ export default function Documents({ go, jump, clearJump, group }) {
           </div>
         )}
       </Card>
+
+      {isPre && <PreShipShipPanel inv={inv} onWizard={() => setWizOpen(true)} />}
 
       <div className="split-docs">
         {/* Catalogue */}
@@ -129,6 +174,18 @@ export default function Documents({ go, jump, clearJump, group }) {
             <Btn size="sm" icon={Download} onClick={() => download(open)}>Download Excel</Btn>
           </CardHead>
           <div className="docprev-shell">
+            {ewaySup.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <Note tone="teal" icon={Truck}>
+                  <b>Download the E-way bill supplier-wise</b> — one file per supplier, not a single combined sheet. The preview below shows all suppliers for reference.
+                  <div className="row wrap" style={{ gap: 8, marginTop: 8 }}>
+                    {ewaySup.map((d) => (
+                      <Btn key={d.supplierId} variant="ghost" size="sm" icon={Download} onClick={() => { downloadEwaySupplier(ctx, d.supplierId); toast(`E-way bill (10) · ${d.code} downloaded`); }}>{d.code} · {d.name}</Btn>
+                    ))}
+                  </div>
+                </Note>
+              </div>
+            )}
             <style>{PREVIEW_CSS}</style>
             <div className="docprev docprev-paper" dangerouslySetInnerHTML={{ __html: previewHtml || `<div class="sub">No preview for this document.</div>` }} />
             <div className="row" style={{ marginTop: 12, gap: 7, fontSize: 11.5, color: "var(--teal-ink)" }}>
@@ -155,6 +212,8 @@ export default function Documents({ go, jump, clearJump, group }) {
           </Btn>
         </div>
       </Card>
+
+      {wizOpen && <ShipmentWizard inv={inv} onClose={() => setWizOpen(false)} />}
     </div>
   );
 }

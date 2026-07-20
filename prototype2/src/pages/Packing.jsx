@@ -1,16 +1,18 @@
 import { useState } from "react";
 import {
-  PackageCheck, Plus, RotateCcw, Check, Search, Boxes, FileText, AlertTriangle, ArrowRight,
+  PackageCheck, Plus, RotateCcw, Check, Search, Boxes, FileText, AlertTriangle, ArrowRight, Truck, Hash,
 } from "lucide-react";
 import { useApp } from "../store.jsx";
-import Rail from "../Rail.jsx";
 import InvoiceModal from "../InvoiceModal.jsx";
+import ShipmentWizard from "../ShipmentWizard.jsx";
+import InvoiceEditModal from "../InvoiceEditModal.jsx";
 import {
   Card, CardHead, Btn, Field, Input, Select, Pill, Mono, DataTable, Drawer, Step,
-  Empty, Note, Info, SearchInput, EditModal, Seg,
+  Empty, Note, Info, SearchInput, Seg,
 } from "../ui.jsx";
 import {
-  TODAY, dmy, num, shipComplete, invoiceTotals, bySupplier, EMPTY_SHIP, SHIP_FIELDS, SEED_INVOICES,
+  TODAY, dmy, num, invoiceTotals, bySupplier, EMPTY_SHIP, SEED_INVOICES,
+  invoiceStatus, INV_STATUS_TONE, transportsForSupplier,
 } from "../data.js";
 
 /* ============================================================
@@ -20,10 +22,13 @@ import {
    ============================================================ */
 
 function RecordPackingDrawer({ onClose }) {
-  const { items, buyers, invoices, setInvoices, suppliersForItem, ledger, toast } = useApp();
+  const { items, buyers, invoices, setInvoices, suppliersForItem, ledger, transports, supById, toast } = useApp();
   const [invoiceNo, setInvoiceNo] = useState("JG/26-27/6003");
   const [date, setDate] = useState(TODAY);
   const [buyerId, setBuyerId] = useState(buyers[0].id);
+  const [rbi, setRbi] = useState("83.50");
+  const [serialStart, setSerialStart] = useState("2001");
+  const [packingTransports, setPackingTransports] = useState({});
   const [boxesBy, setBoxesBy] = useState({});
   const [q, setQ] = useState("");
 
@@ -51,11 +56,20 @@ function RecordPackingDrawer({ onClose }) {
   const supAgg = {};
   rows.forEach((r) => { (supAgg[r.sp.id] = supAgg[r.sp.id] || { code: r.sp.code, boxes: 0, volume: 0 }); supAgg[r.sp.id].boxes += r.boxes; supAgg[r.sp.id].volume += r.volume; });
 
+  const supIds = [...new Set(rows.map((r) => r.sp.id))];
+  const setTransport = (sid, tid) => setPackingTransports((p) => ({ ...p, [sid]: tid }));
+
   const create = () => {
     if (!rows.length) return;
-    const inv = { id: "inv" + Date.now(), invoiceNo, date, buyerId, lines: rows.map((r) => ({ itemId: r.it.id, supplierId: r.sp.id, boxes: r.boxes })), ship: { ...EMPTY_SHIP } };
+    const inv = {
+      id: "inv" + Date.now(), invoiceNo, date, buyerId,
+      rbi: Number(rbi) || 0, serialStart: Number(serialStart) || 0,
+      packingTransports: { ...packingTransports },
+      lines: rows.map((r) => ({ itemId: r.it.id, supplierId: r.sp.id, boxes: r.boxes })),
+      ship: { ...EMPTY_SHIP },
+    };
     setInvoices([inv, ...invoices]);
-    toast(`Invoice ${invoiceNo} created — ${totalBoxes} boxes cleared against the oldest orders`);
+    toast(`Invoice ${invoiceNo} created — ${totalBoxes} boxes · serials ${serialStart}–${(Number(serialStart) || 0) + totalBoxes - 1}`);
     onClose();
   };
 
@@ -72,11 +86,13 @@ function RecordPackingDrawer({ onClose }) {
       </>}>
       <div className="stack">
         <section>
-          <Step n="1" title="Which invoice are these boxes going on?" hint="One invoice can carry boxes from several suppliers." />
+          <Step n="1" title="Which invoice are these boxes going on?" hint="One invoice can carry boxes from several suppliers. Set the RBI rate and the carton serial start here." />
           <div className="grid-3">
             <Field label="Buyer"><Select value={buyerId} onChange={(e) => setBuyerId(e.target.value)}>{buyers.map((b) => <option key={b.id} value={b.id}>{b.name} — {b.brand}</option>)}</Select></Field>
             <Field label="Invoice number"><Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} /></Field>
             <Field label="Date"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+            <Field label="RBI rate ₹/$" hint="The Reserve Bank reference rate on the packing date — captured here, not at order entry."><Input className="rate" type="number" value={rbi} onChange={(e) => setRbi(e.target.value)} /></Field>
+            <Field label="Serial (carton) start" hint="The first carton number. Each line takes the next block of numbers, so ranges never overlap."><Input type="number" value={serialStart} onChange={(e) => setSerialStart(e.target.value)} placeholder="e.g. 2001" /></Field>
           </div>
         </section>
 
@@ -156,6 +172,29 @@ function RecordPackingDrawer({ onClose }) {
             <Card><Empty icon={PackageCheck} title="Nothing packed yet">Type the boxes each supplier delivered and the invoice preview builds itself.</Empty></Card>
           )}
         </section>
+
+        {supIds.length > 0 && (
+          <section>
+            <Step n="4" title="Who is the transporter for each supplier?" hint="Pick the carrier that will move each supplier's boxes. Added under Setup → Transport." />
+            <Card>
+              <div className="stack-sm" style={{ padding: 14 }}>
+                {supIds.map((sid) => {
+                  const sp = supById(sid), opts = transportsForSupplier(transports, sid);
+                  return (
+                    <div key={sid} className="row" style={{ justifyContent: "space-between", gap: 10 }}>
+                      <span className="row" style={{ gap: 8 }}><Pill tone="teal">{sp.code}</Pill><span style={{ fontSize: 12.5, color: "var(--ink)" }}>{sp.name}</span></span>
+                      <Select style={{ width: 300 }} value={packingTransports[sid] || ""} onChange={(e) => setTransport(sid, e.target.value)}>
+                        <option value="">— select transporter —</option>
+                        {opts.map((t) => <option key={t.id} value={t.id}>{t.name} · {t.transportId}</option>)}
+                        {!opts.length && <option value="" disabled>No transport added for {sp.code}</option>}
+                      </Select>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          </section>
+        )}
       </div>
     </Drawer>
   );
@@ -166,9 +205,11 @@ export default function Packing({ go }) {
   const { items, invoices, setInvoices, ledger, pendingBoxes, supCode, buyerById, toast } = useApp();
   const [drawer, setDrawer] = useState(false);
   const [selInv, setSelInv] = useState(null);
+  const [wizId, setWizId] = useState(null);
   const [editId, setEditId] = useState(null);
   const [tab, setTab] = useState("pending");
 
+  const wizInv = invoices.find((i) => i.id === wizId);
   const editInv = invoices.find((i) => i.id === editId);
 
   /* Everything still owed, item by item */
@@ -181,7 +222,6 @@ export default function Packing({ go }) {
 
   return (
     <div className="stack">
-      <Rail view="packing" go={go} />
 
       <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
         <div className="page-head" style={{ margin: 0 }}>
@@ -246,7 +286,15 @@ export default function Packing({ go }) {
                 { key: "boxes", label: "Boxes", align: "r", strong: true, render: (r) => r.boxes },
                 { key: "vol", label: "Volume m³", align: "r", render: (r) => num(r.volume, 3) },
                 { key: "sup", label: "Received from", render: (r) => <span className="row" style={{ gap: 6 }}>{r.sup.map((s) => <span key={s.supplierId} className="row" style={{ gap: 3 }}><Pill>{supCode(s.supplierId)}</Pill><span style={{ fontSize: 11, color: "var(--faint)" }}>{s.boxes}bx</span></span>)}</span> },
-                { key: "ship", label: "Shipment details", render: (r) => shipComplete(r.inv.ship) ? <Pill tone="green">complete</Pill> : <Pill tone="amber">pending</Pill> },
+                { key: "status", label: "Status", render: (r) => { const st = invoiceStatus(r.inv); return <Pill tone={INV_STATUS_TONE[st] || ""}>{st}</Pill>; } },
+                {
+                  key: "act", label: "", align: "r", render: (r) => (
+                    <span className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
+                      <button className="btn btn-quiet btn-sm" onClick={(e) => { e.stopPropagation(); setWizId(r.inv.id); }}><Truck size={13} /> Shipment</button>
+                      <button className="btn btn-quiet btn-sm" onClick={(e) => { e.stopPropagation(); setEditId(r.inv.id); }}><Hash size={13} /> Edit</button>
+                    </span>
+                  ),
+                },
               ]}
               rows={invList} rowKey={(r) => r.inv.id}
             />
@@ -257,13 +305,9 @@ export default function Packing({ go }) {
       )}
 
       {drawer && <RecordPackingDrawer onClose={() => setDrawer(false)} />}
-      {selInv && <InvoiceModal inv={selInv} onClose={() => setSelInv(null)} onEditShip={() => { setEditId(selInv.id); setSelInv(null); }} />}
-      {editInv && (
-        <EditModal title={`Shipment details · ${editInv.invoiceNo}`} schema={SHIP_FIELDS} value={editInv.ship}
-          note="BL number, vessel, container and port of discharge unlock the customs invoice and every post-shipment document."
-          onClose={() => setEditId(null)}
-          onSave={(f) => { setInvoices(invoices.map((x) => (x.id === editId ? { ...x, ship: f } : x))); setEditId(null); toast(`Shipment details saved for ${editInv.invoiceNo}`); }} />
-      )}
+      {selInv && <InvoiceModal inv={selInv} onClose={() => setSelInv(null)} onEditShip={() => { setWizId(selInv.id); setSelInv(null); }} />}
+      {wizInv && <ShipmentWizard inv={wizInv} onClose={() => setWizId(null)} />}
+      {editInv && <InvoiceEditModal inv={editInv} onClose={() => setEditId(null)} />}
     </div>
   );
 }

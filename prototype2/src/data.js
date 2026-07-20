@@ -55,6 +55,16 @@ export const shipComplete = (s) => !!(s && s.blNo && s.vessel && s.container && 
 
 export const ITEM_GROUPS = ["PP Moulded", "PP Extruded", "PA / Nylon Moulded", "Corrugated Boxes", "Adhesive Tapes"];
 
+/* Unit basis for value & FOB — drives Proforma grouping (per piece vs per 100 vs custom). */
+export const UNIT_MODES = [
+  { value: "piece", label: "Per piece" },
+  { value: "100", label: "Per 100 pieces" },
+  { value: "custom", label: "Customize" },
+];
+export const unitModeLabel = (m) => UNIT_MODES.find((x) => x.value === m)?.label || "Per piece";
+export const itemValueMode = (it) => it?.valueMode || "piece";
+export const itemFobMode = (it) => it?.fobMode || "100";
+
 export const SEED_ITEMS = [
   { id: "i1", code: "E-114", gd: "GD-2001", oswin: "OSW-114", gl: "GL-114", size: "20", length: "58", packing: 200, description: "PP threaded elbow", barcode: "8901234020014", hsn: "39174000", volume: 0.042, netPerBox: 9.2, grossPerBox: 10.1, bgPerBox: 1, pPerBox: 2, typeUp: 24, unitValue: 7.4, unitFob100: 15.8, group: "PP Moulded", supplierId: "s1" },
   { id: "i2", code: "T-220", gd: "GD-2050", oswin: "OSW-220", gl: "GL-220", size: "25", length: "62", packing: 150, description: "PP equal tee", barcode: "8901234020502", hsn: "39174000", volume: 0.040, netPerBox: 8.6, grossPerBox: 9.4, bgPerBox: 1, pPerBox: 2, typeUp: 24, unitValue: 9.1, unitFob100: 19.6, group: "PP Moulded", supplierId: "s2" },
@@ -85,8 +95,14 @@ export const SHIPMENTS = [
 export const SHIPMENT = { invoice: "JG/26-27/6002", date: "05-May-2026", container: "OOCU0793142", vessel: "CAPE SYROS 092E", pol: "Nhava Sheva", pod: "Fremantle", bl: "SFPM2605165498", marks: "GDW 2001–2421", pkgs: 421, terms: "FOB Mumbai" };
 
 export const SEED_INVOICES = [
-  { id: "inv1", invoiceNo: "JG/26-27/6002", date: "2026-05-05", buyerId: "b1",
+  { id: "inv1", invoiceNo: "JG/26-27/6002", date: "2026-05-05", buyerId: "b1", serialStart: 2001, rbi: 83.10,
     lines: [{ itemId: "i1", supplierId: "s1", boxes: 5 }, { itemId: "i3", supplierId: "s3", boxes: 6 }, { itemId: "i2", supplierId: "s2", boxes: 4 }],
+    vehicles: {
+      s1: { vehicleNo: "MH-04-KL-2231", transportId: "t1", transportName: "Velji Dosabhai & Sons", source: "Daman", dest: "Nhava Sheva" },
+      s3: { vehicleNo: "GJ-05-TR-8890", transportId: "t3", transportName: "VRL Logistics", source: "Silvassa", dest: "Nhava Sheva" },
+      s2: { vehicleNo: "GJ-02-AB-1145", transportId: "t2", transportName: "Gati Kintetsu Express", source: "Daman", dest: "Nhava Sheva" },
+    },
+    packingTransports: { s1: "t1", s3: "t3", s2: "t2" },
     ship: { ...EMPTY_SHIP, blNo: "SFPM2605165498", blDate: "2026-05-19", sbNo: "2945305", sbDate: "2026-05-04", vessel: "CAPE SYROS VOYAGE 092E", pod: "FREMANTLE", finalDest: "FREMANTLE", marks: "GDW 2001-2421", pkgs: "421 PACKAGES", container: "OOCU0793142", seal: "IND-0054079", netWt: "6050.9", grossWt: "6400", exRate: "92.50" } },
 ];
 
@@ -221,7 +237,11 @@ export function buildPoList(buyerMaster, items, receipts) {
       ordered += ord; completed += alloc; pending += rem; volume += ord * it.volume; supSet.add(it.supplierId);
       return { it, qty: r.qty, ordered: ord, completed: alloc, pending: rem, volume: ord * it.volume, rate: deriveBuyer(it, r.qty, r.rbi).rate, supplierId: it.supplierId };
     });
-    return { po, date, rows, detail, ordered, completed, pending, volume, suppliers: [...supSet], buyerId: rows[0].buyerId };
+    // A supplier drops off the PO's supplier list once every one of its items on
+    // that PO is fully delivered — so the column shows only who still owes boxes.
+    const pendBySup = {}; detail.forEach((d) => { pendBySup[d.supplierId] = (pendBySup[d.supplierId] || 0) + d.pending; });
+    const openSuppliers = [...supSet].filter((s) => (pendBySup[s] || 0) > 0);
+    return { po, date, rows, detail, ordered, completed, pending, volume, suppliers: [...supSet], openSuppliers, buyerId: rows[0].buyerId };
   }).sort((a, b) => b.date.localeCompare(a.date) || b.po.localeCompare(a.po));
 }
 
@@ -259,15 +279,41 @@ function shipHtml(inv, buyer) {
 }
 const exporterHtml = () => `<table><tr><td class="h">${EXPORTER.name} (${EXPORTER.sub})</td></tr><tr><td>${EXPORTER.addr}</td></tr><tr><td>Tel: ${EXPORTER.tel} · ${EXPORTER.email}</td></tr><tr><td>IEC ${EXPORTER.iec} · GSTIN ${EXPORTER.gstin} · PAN ${EXPORTER.pan}</td></tr></table>`;
 
-export function buildProformaXLS(inv, items, buyer) {
+// Proforma groups lines by their FOB basis (per piece / per 100 / custom). GD code
+// and Box columns are intentionally omitted from the download format.
+export function proformaGroups(inv, items) {
   const L = invoiceLines(inv, items);
-  const body = L.map((x) => `<tr><td>${x.it.code}</td><td>${x.it.gd}</td><td>${x.it.size}</td><td>${x.it.length}</td><td class="r">${x.pieces}</td><td class="r">${x.boxes}</td><td class="r">$${x.buyerRate.toFixed(2)}</td><td class="r">${usd(x.buyerAmt)}</td></tr>`).join("");
+  const order = ["piece", "100", "custom"];
+  const g = {};
+  L.forEach((x) => { const m = itemFobMode(x.it); (g[m] = g[m] || []).push(x); });
+  return order.filter((m) => g[m]?.length).map((m) => {
+    const rows = g[m];
+    const per100 = m === "100";
+    return {
+      mode: m, label: unitModeLabel(m), per100, rows,
+      pieces: rows.reduce((s, x) => s + x.pieces, 0),
+      amt: rows.reduce((s, x) => s + x.buyerAmt, 0),
+    };
+  });
+}
+export function buildProformaXLS(inv, items, buyer) {
+  const groups = proformaGroups(inv, items);
   const tot = invoiceTotals(inv, items);
+  const section = (grp) => {
+    const rateHead = grp.per100 ? "Rate $/100" : "Rate $/pc";
+    const body = grp.rows.map((x) => {
+      const rate = grp.per100 ? x.buyerRate * 100 : x.buyerRate;
+      return `<tr><td>${x.it.code}</td><td>${x.it.size}</td><td>${x.it.length}</td><td class="r">${x.pieces}</td><td class="r">$${rate.toFixed(grp.per100 ? 2 : 4)}</td><td class="r">${usd(x.buyerAmt)}</td></tr>`;
+    }).join("");
+    return `<tr class="sec"><td colspan="6">${grp.label}</td></tr>
+      <tr><th>Code</th><th>Size</th><th>Len (mm)</th><th>Pieces</th><th>${rateHead}</th><th>Total value</th></tr>
+      ${body}<tr class="sec"><td colspan="3">Subtotal — ${grp.label}</td><td class="r">${grp.pieces}</td><td></td><td class="r">${usd(grp.amt)}</td></tr>`;
+  };
   const html = `<h2>PROFORMA INVOICE (Buyer) — Doc 17</h2>${exporterHtml()}<br>
     <table><tr><td class="h">To</td><td>${buyer.name} — ${buyer.brand}</td><td class="h">PO No.</td><td>${buyer.orderNo || "—"}</td></tr>
     <tr><td class="h">Deliver to</td><td>${buyer.addr || "—"}</td><td class="h">Date</td><td>${dmy(inv.date)}</td></tr></table><br>
-    <table><tr><th>Code</th><th>GD</th><th>Size</th><th>Len (mm)</th><th>Pieces</th><th>Boxes</th><th>Rate $/pc</th><th>Total value</th></tr>
-    ${body}<tr class="sec"><td colspan="4">TOTAL · ${tot.boxes} boxes</td><td class="r">${tot.pieces}</td><td class="r">${tot.boxes}</td><td></td><td class="r">${usd(tot.buyerAmt)}</td></tr></table>`;
+    <table>${groups.map(section).join("")}
+    <tr class="sec"><td colspan="3">TOTAL</td><td class="r">${tot.pieces}</td><td></td><td class="r">${usd(tot.buyerAmt)}</td></tr></table>`;
   downloadXLS(`Proforma_17_${inv.invoiceNo.replace(/\//g, "-")}.xls`, html);
 }
 export function buildCustomInvoiceXLS(inv, items, buyer) {
@@ -336,14 +382,16 @@ export const SUPPLIER_FORMULAS = [
 
 /* ===== Edit schemas ===== */
 export const ITEM_NUM = ["packing", "volume", "netPerBox", "grossPerBox", "bgPerBox", "pPerBox", "typeUp", "unitValue", "unitFob100"];
-export const EMPTY_ITEM = { code: "", gd: "", oswin: "", gl: "", size: "", length: "", packing: "", description: "", barcode: "", hsn: "", volume: "", netPerBox: "", grossPerBox: "", bgPerBox: "", pPerBox: "", typeUp: "", unitValue: "", unitFob100: "", group: "PP Moulded", supplierId: "s1" };
+export const EMPTY_ITEM = { code: "", gd: "", oswin: "", gl: "", size: "", length: "", packing: "", description: "", barcode: "", hsn: "", volume: "", netPerBox: "", grossPerBox: "", bgPerBox: "", pPerBox: "", typeUp: "", valueMode: "piece", unitValue: "", fobMode: "100", unitFob100: "", group: "PP Moulded", supplierId: "s1" };
+const MODE_OPTS = UNIT_MODES.map((m) => ({ value: m.value, label: m.label }));
 export const itemSchema = (suppliers) => [
   { key: "code", label: "Code" }, { key: "gd", label: "GD code" }, { key: "oswin", label: "OSWIN code" }, { key: "gl", label: "GL code" },
   { key: "size", label: "Size (mm)" }, { key: "length", label: "Length (mm)" }, { key: "packing", label: "Packing (units/box)", type: "number" },
   { key: "description", label: "Description" }, { key: "barcode", label: "Bar code" }, { key: "hsn", label: "HSN code" },
   { key: "volume", label: "Volume/box (m³)", type: "number" }, { key: "netPerBox", label: "Net/box (kg)", type: "number" }, { key: "grossPerBox", label: "Gross/box (kg)", type: "number" },
   { key: "bgPerBox", label: "Bg per box", type: "number" }, { key: "pPerBox", label: "P per box", type: "number" }, { key: "typeUp", label: "Type UP", type: "number" },
-  { key: "unitValue", label: "Unit value (₹)", type: "number" }, { key: "unitFob100", label: "Unit FOB/100 ($)", type: "number" },
+  { key: "valueMode", label: "Value basis", type: "select", options: MODE_OPTS }, { key: "unitValue", label: "Unit value (₹)", type: "number" },
+  { key: "fobMode", label: "FOB basis", type: "select", options: MODE_OPTS }, { key: "unitFob100", label: "Unit FOB ($)", type: "number" },
   { key: "group", label: "Group", type: "select", options: ITEM_GROUPS.map((g) => ({ value: g, label: g })) },
   { key: "supplierId", label: "Supplier", type: "select", options: suppliers.map((s) => ({ value: s.id, label: s.code + " — " + s.name })) },
 ];
@@ -420,7 +468,140 @@ export const COSTING_FORMULAS = [
   ["Profit %", "Profit per pc × 100 ÷ cost per pc"],
 ];
 
-/* ===== Document catalogue, grouped under the client's menu heads =====
+/* ============================================================
+   Transport master (Setup → Transport) — supplier-wise carriers
+   the user selects when filling shipment vehicle details.
+   ============================================================ */
+export const SEED_TRANSPORTS = [
+  { id: "t1", name: "Velji Dosabhai & Sons", transportId: "MH-TR-4471", supplierId: "s1" },
+  { id: "t2", name: "Gati Kintetsu Express", transportId: "GJ-TR-2093", supplierId: "s2" },
+  { id: "t3", name: "VRL Logistics", transportId: "MH-TR-8812", supplierId: "s3" },
+  { id: "t4", name: "TCI Freight", transportId: "GJ-TR-5540", supplierId: "s4" },
+  { id: "t5", name: "Safexpress", transportId: "MH-TR-1077", supplierId: "s5" },
+];
+export const EMPTY_TRANSPORT = { name: "", transportId: "", supplierId: "s1" };
+export const transportSchema = (suppliers) => [
+  { key: "name", label: "Transport name" }, { key: "transportId", label: "Transport ID" },
+  { key: "supplierId", label: "Supplier", type: "select", options: suppliers.map((s) => ({ value: s.id, label: s.code + " — " + s.name })) },
+];
+export const transportsForSupplier = (transports, supplierId) => transports.filter((t) => t.supplierId === supplierId);
+
+/* ============================================================
+   Invoice lifecycle — a 3-step dispatch → ship flow.
+   Step 1  vehicle details (supplier-wise)   → status "Dispatched"
+   Step 2  container details                 → status "Ready to Ship"
+   Step 3  BL / shipping details             → status "Shipped"
+   A step also counts as done when explicitly skipped.
+   ============================================================ */
+export const invoiceSuppliers = (inv) => [...new Set((inv.lines || []).map((l) => l.supplierId))];
+// A supplier's vehicle is "done" once the number, source and destination are in.
+// The transporter is captured too (defaulted from the packing pick) but is not a
+// hard gate — some suppliers may have no transport registered yet.
+export const vehicleRowDone = (v) => !!(v && v.vehicleNo && v.source && v.dest);
+export function vehicleDone(inv) {
+  if (inv.stepSkip?.vehicle) return true;
+  const sups = invoiceSuppliers(inv), v = inv.vehicles || {};
+  return sups.length > 0 && sups.every((s) => vehicleRowDone(v[s]));
+}
+export function containerDone(inv) {
+  if (inv.stepSkip?.container) return true;
+  const s = inv.ship || {};
+  return !!(s.container && s.seal);
+}
+export function shipStepDone(inv) {
+  if (inv.stepSkip?.ship) return true;
+  const s = inv.ship || {};
+  return !!(s.blNo && s.blDate && s.vessel);
+}
+export function invoiceStatus(inv) {
+  if (vehicleDone(inv) && containerDone(inv) && shipStepDone(inv)) return "Shipped";
+  if (vehicleDone(inv) && containerDone(inv)) return "Ready to Ship";
+  if (vehicleDone(inv)) return "Dispatched";
+  return "Ready to dispatch";
+}
+export const INV_STATUS_TONE = { "Ready to dispatch": "amber", "Dispatched": "teal", "Ready to Ship": "teal", "Shipped": "green" };
+export const EMPTY_VEHICLE = { vehicleNo: "", transportId: "", transportName: "", source: "", dest: "" };
+
+/* Serial (carton) numbers — the invoice starts at `serialStart` and each
+   line consumes `boxes` numbers in order, so ranges never overlap. */
+export function invoiceSerials(inv, items) {
+  let start = Number(inv.serialStart) || 0;
+  return (inv.lines || []).map((l) => {
+    const it = items.find((x) => x.id === l.itemId) || l.item || {};
+    const boxes = Number(l.boxes) || 0;
+    const from = start, to = start + boxes - 1;
+    start += boxes;
+    return { itemId: l.itemId, supplierId: l.supplierId, it, boxes, from, to, range: boxes ? `${from}–${to}` : "—" };
+  });
+}
+
+/* ============================================================
+   Dashboard matrix (doc 39) — balance boxes & volume, suppliers × POs.
+   Cell = pending boxes / pending volume for that supplier on that PO.
+   ============================================================ */
+export function buildBalanceMatrix(buyerMaster, invoices, items, suppliers) {
+  const { byItem } = balanceData(buyerMaster, invoices, items);
+  const poDate = {};
+  buyerMaster.forEach((r) => { if (!poDate[r.po] || r.date < poDate[r.po]) poDate[r.po] = r.date; });
+  const pos = Object.keys(poDate).sort((a, b) => poDate[a].localeCompare(poDate[b]) || a.localeCompare(b));
+
+  const rows = suppliers.map((s) => {
+    const cells = {}; pos.forEach((po) => (cells[po] = { boxes: 0, vol: 0 }));
+    let totBox = 0, totVol = 0;
+    Object.values(byItem).forEach((b) => {
+      if (b.item.supplierId !== s.id) return;
+      b.demands.forEach((d) => {
+        if (d.remaining > 0 && cells[d.po]) {
+          cells[d.po].boxes += d.remaining;
+          cells[d.po].vol += d.remaining * (b.item.volume || 0);
+        }
+      });
+    });
+    pos.forEach((po) => { totBox += cells[po].boxes; totVol += cells[po].vol; });
+    return { supplier: s, cells, totBox, totVol };
+  }).filter((r) => r.totBox > 0);
+
+  const totals = { cells: {}, totBox: 0, totVol: 0 };
+  pos.forEach((po) => {
+    totals.cells[po] = { boxes: 0, vol: 0 };
+    rows.forEach((r) => { totals.cells[po].boxes += r.cells[po].boxes; totals.cells[po].vol += r.cells[po].vol; });
+  });
+  rows.forEach((r) => { totals.totBox += r.totBox; totals.totVol += r.totVol; });
+
+  const CNTR_VOL = 68; // 40' HC container ≈ 68 m³
+  return { pos, poDate, rows, totals, cntrVol: CNTR_VOL, containers: Math.ceil(totals.totVol / CNTR_VOL) || 0 };
+}
+
+/* ============================================================
+   PO item-wise with order details (doc 37) — one row per item,
+   a column per PO holding that PO's ordered pieces, plus packing,
+   total pieces/boxes, volume and net weight.
+   ============================================================ */
+export function buildItemOrderDetail(buyerMaster, items) {
+  const poDate = {};
+  buyerMaster.forEach((r) => { if (!poDate[r.po] || r.date < poDate[r.po]) poDate[r.po] = r.date; });
+  const pos = Object.keys(poDate).sort((a, b) => poDate[a].localeCompare(poDate[b]) || a.localeCompare(b));
+
+  const byItem = {};
+  buyerMaster.forEach((r) => {
+    const it = items.find((x) => x.id === r.itemId) || r.item; if (!it) return;
+    if (!byItem[it.id]) byItem[it.id] = { it, perPo: {}, qty: 0 };
+    byItem[it.id].perPo[r.po] = (byItem[it.id].perPo[r.po] || 0) + (Number(r.qty) || 0);
+    byItem[it.id].qty += Number(r.qty) || 0;
+  });
+  const rows = Object.values(byItem).map((x) => {
+    const boxes = Math.ceil(x.qty / (x.it.packing || 1)) || 0;
+    return {
+      it: x.it, perPo: x.perPo, qty: x.qty, packing: x.it.packing, boxes,
+      volPerBox: x.it.volume || 0, totalVol: boxes * (x.it.volume || 0),
+      netPerBox: x.it.netPerBox || 0, netTotal: boxes * (x.it.netPerBox || 0),
+    };
+  }).sort((a, b) => String(a.it.gd).localeCompare(String(b.it.gd)));
+  return { pos, poDate, rows };
+}
+
+/* ============================================================
+   Document catalogue, grouped under the client's menu heads =====
    Grouping follows Docs/Jaikvin Process/Menu Bar.xlsx — each key `k`
    matches a navigation entry, so every paper lives under its menu. */
 export const DOC_GROUPS = [

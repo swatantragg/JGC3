@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useCallback, useMemo } from "react";
 import {
   SEED_ITEMS, SEED_BM, SEED_INVOICES, SUPPLIERS, BUYERS,
-  SEED_COSTING, COST_PARAMS,
+  SEED_COSTING, COST_PARAMS, SEED_TRANSPORTS,
   invReceipts, computeLedger,
 } from "./data.js";
 
@@ -16,6 +16,7 @@ export function AppProvider({ children }) {
   const [suppliers, setSuppliers] = useState(SUPPLIERS);
   const [buyerMaster, setBuyerMaster] = useState(SEED_BM);
   const [invoices, setInvoices] = useState(SEED_INVOICES);
+  const [transports, setTransports] = useState(SEED_TRANSPORTS);
   const [costing, setCosting] = useState(SEED_COSTING);
   const [costParams, setCostParams] = useState(COST_PARAMS);
   const [toasts, setToasts] = useState([]);
@@ -43,15 +44,23 @@ export function AppProvider({ children }) {
       Object.values(ledger).flatMap((b) => b.demands.filter((d) => d.remaining > 0).map((d) => d.po))
     );
 
+    // --- Edit / delete for POs (buyer-master rows) and invoices ---
+    const deletePo = (po) => setBuyerMaster((l) => l.filter((r) => r.po !== po));
+    const updatePoRows = (po, updater) => setBuyerMaster((l) => updater(l.filter((r) => r.po === po)).concat(l.filter((r) => r.po !== po)));
+    const deleteInvoice = (id) => setInvoices((l) => l.filter((x) => x.id !== id));
+    const updateInvoice = (id, patch) => setInvoices((l) => l.map((x) => (x.id === id ? { ...x, ...(typeof patch === "function" ? patch(x) : patch) } : x)));
+
     return {
       items, setItems, buyers, setBuyers, suppliers, setSuppliers,
       buyerMaster, setBuyerMaster, invoices, setInvoices,
+      transports, setTransports,
       costing, setCosting, costParams, setCostParams,
       receipts, ledger, pendingBoxes, openPos,
       supCode, supById, buyerById, suppliersForItem,
+      deletePo, updatePoRows, deleteInvoice, updateInvoice,
       toast, toasts,
     };
-  }, [items, buyers, suppliers, buyerMaster, invoices, costing, costParams, toasts, toast]);
+  }, [items, buyers, suppliers, buyerMaster, invoices, transports, costing, costParams, toasts, toast]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

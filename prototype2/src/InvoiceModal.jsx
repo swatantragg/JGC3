@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Globe, Truck, Download, Pencil, FileText, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Globe, Truck, Download, Pencil, FileText, AlertTriangle, CheckCircle2, Hash } from "lucide-react";
 import { useApp } from "./store.jsx";
 import { Modal, Btn, Seg, Pill, Mono, DataTable, Note } from "./ui.jsx";
-import { invoiceTotals, shipComplete, dmy, num, inr, usd, buildProformaXLS, buildCustomInvoiceXLS, buildSupplierXLS } from "./data.js";
+import { invoiceTotals, shipComplete, invoiceStatus, INV_STATUS_TONE, invoiceSerials, dmy, num, inr, usd, buildProformaXLS, buildCustomInvoiceXLS, buildSupplierXLS } from "./data.js";
 
 /* One invoice, two audiences: the buyer sees USD/FOB, the supplier sees ₹/cost.
    Same rows, same source — just a different lens. */
@@ -12,8 +12,13 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
   const buyer = buyerById(inv.buyerId);
   const { lines, boxes, volume, pieces, buyerAmt, supAmt } = invoiceTotals(inv, items);
   const done = shipComplete(inv.ship);
+  const status = invoiceStatus(inv);
+  const serialByKey = {};
+  invoiceSerials(inv, items).forEach((s) => { serialByKey[s.itemId + "|" + s.supplierId] = s.range; });
+  const serialOf = (x) => serialByKey[x.itemId + "|" + x.supplierId] || "—";
 
   const buyerCols = [
+    { key: "sr", label: "Serial", render: (x) => <Mono>{serialOf(x)}</Mono> },
     { key: "gd", label: "GD code", render: (x) => <Mono>{x.it.gd}</Mono> },
     { key: "desc", label: "Description", render: (x) => <span style={{ color: "var(--ink)" }}>{x.it.description}</span> },
     { key: "sp", label: "Supplier", render: (x) => <Pill>{supCode(x.supplierId)}</Pill> },
@@ -24,6 +29,7 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
     { key: "amt", label: "Amount $", align: "r", strong: true, render: (x) => usd(x.buyerAmt) },
   ];
   const supCols = [
+    { key: "sr", label: "Serial", render: (x) => <Mono>{serialOf(x)}</Mono> },
     { key: "sp", label: "Supplier", render: (x) => <Pill>{supCode(x.supplierId)}</Pill> },
     { key: "gd", label: "GD code", render: (x) => <Mono>{x.it.gd}</Mono> },
     { key: "code", label: "Code", render: (x) => <Mono>{x.it.code}</Mono> },
@@ -33,14 +39,15 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
     { key: "rate", label: "Rate ₹/pc", align: "r", render: (x) => inr(x.supRate) },
     { key: "amt", label: "Amount ₹", align: "r", strong: true, render: (x) => inr(x.supAmt) },
   ];
-  const supRows = lines.slice().sort((a, b) => supCode(a.supplierId).localeCompare(supCode(b.supplierId)));
+  const supRows = lines.map((l) => ({ ...l, itemId: l.it.id })).slice().sort((a, b) => supCode(a.supplierId).localeCompare(supCode(b.supplierId)));
+  const buyerRows = lines.map((l) => ({ ...l, itemId: l.it.id }));
 
   return (
     <Modal title={`Invoice ${inv.invoiceNo}`} icon={FileText} onClose={onClose} width={960}
       footer={<>
-        <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
-          {dmy(inv.date)} · {buyer.name} · {boxes} boxes · {num(volume, 3)} m³ ·{" "}
-          {done ? <span style={{ color: "var(--green-ink)", fontWeight: 600 }}>shipment details complete</span> : <span style={{ color: "var(--amber-ink)", fontWeight: 600 }}>shipment details pending</span>}
+        <span className="row" style={{ fontSize: 11.5, color: "var(--muted)", gap: 6, flexWrap: "wrap" }}>
+          {dmy(inv.date)} · {buyer.name} · {boxes} boxes · {num(volume, 3)} m³ · {inv.serialStart ? <>serials from <Mono>{inv.serialStart}</Mono> · </> : ""}
+          <Pill tone={INV_STATUS_TONE[status] || ""}>{status}</Pill>
         </span>
         <div className="row wrap" style={{ gap: 8 }}>
           <Btn variant="ghost" size="sm" icon={Pencil} onClick={onEditShip}>Edit shipment details</Btn>
@@ -72,11 +79,11 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
       )}
 
       {tab === "buyer" ? (
-        <DataTable columns={buyerCols} rows={lines} rowKey={(x, i) => i}
-          footer={[{ v: "Total", span: 3 }, { v: boxes, align: "r" }, { v: pieces.toLocaleString("en-IN"), align: "r" }, { v: num(volume, 3), align: "r" }, { v: "" }, { v: usd(buyerAmt), align: "r" }]} />
+        <DataTable columns={buyerCols} rows={buyerRows} rowKey={(x, i) => i}
+          footer={[{ v: "Total", span: 4 }, { v: boxes, align: "r" }, { v: pieces.toLocaleString("en-IN"), align: "r" }, { v: num(volume, 3), align: "r" }, { v: "" }, { v: usd(buyerAmt), align: "r" }]} />
       ) : (
         <DataTable columns={supCols} rows={supRows} rowKey={(x, i) => i}
-          footer={[{ v: "Total", span: 3 }, { v: boxes, align: "r" }, { v: pieces.toLocaleString("en-IN"), align: "r" }, { v: num(volume, 3), align: "r" }, { v: "" }, { v: inr(supAmt), align: "r" }]} />
+          footer={[{ v: "Total", span: 4 }, { v: boxes, align: "r" }, { v: pieces.toLocaleString("en-IN"), align: "r" }, { v: num(volume, 3), align: "r" }, { v: "" }, { v: inr(supAmt), align: "r" }]} />
       )}
     </Modal>
   );

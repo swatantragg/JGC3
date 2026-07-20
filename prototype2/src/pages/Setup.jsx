@@ -1,6 +1,6 @@
 import { useState } from "react";
 import {
-  Layers, Globe, Truck, Plus, Check, SlidersHorizontal, GripVertical, Trash2, Search,
+  Layers, Globe, Truck, Plus, Check, SlidersHorizontal, GripVertical, Trash2, Search, Route,
   Users as UsersIcon, ShieldCheck, Clock, UserPlus, KeyRound,
 } from "lucide-react";
 import { useApp } from "../store.jsx";
@@ -11,7 +11,7 @@ import {
 } from "../ui.jsx";
 import {
   EMPTY_ITEM, ITEM_NUM, ITEM_GROUPS, itemSchema, BUYER_SCHEMA, SUP_SCHEMA,
-  BUYER_FORMULAS, num, inr, usd, usdp,
+  BUYER_FORMULAS, UNIT_MODES, EMPTY_TRANSPORT, transportSchema, num, inr, usd, usdp,
 } from "../data.js";
 
 /* ============================================================
@@ -157,8 +157,14 @@ function AddItemDrawer({ onClose }) {
           {G([["size", "Size (mm)"], ["length", "Length (mm)"], ["packing", "Packing (units / box) *", "number"], ["volume", "Volume / box (m³)", "number"], ["netPerBox", "Net weight / box (kg)", "number"], ["grossPerBox", "Gross weight / box (kg)", "number"]])}
         </section>
         <section>
-          <Step n="3" title="Labels & pricing" hint="HSN drives GST on the customs invoice." />
-          {G([["hsn", "HSN code"], ["bgPerBox", "Bg per box", "number"], ["pPerBox", "P per box", "number"], ["typeUp", "Type UP (labels / sheet)", "number"], ["unitValue", "Unit value (₹)", "number"], ["unitFob100", "Unit FOB / 100 pcs ($)", "number"]])}
+          <Step n="3" title="Labels & pricing" hint="HSN drives GST. The basis dropdown (per piece / per 100 / customize) sits before each price and groups the Proforma." />
+          {G([["hsn", "HSN code"], ["bgPerBox", "Bg per box", "number"], ["pPerBox", "P per box", "number"], ["typeUp", "Type UP (labels / sheet)", "number"]])}
+          <div className="grid-2" style={{ marginTop: 12 }}>
+            <Field label="Value basis"><Select value={f.valueMode} onChange={(e) => set("valueMode", e.target.value)}>{UNIT_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}</Select></Field>
+            <Field label="Unit value (₹)"><Input type="number" value={f.unitValue} onChange={(e) => set("unitValue", e.target.value)} /></Field>
+            <Field label="FOB basis"><Select value={f.fobMode} onChange={(e) => set("fobMode", e.target.value)}>{UNIT_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}</Select></Field>
+            <Field label="Unit FOB ($)"><Input type="number" value={f.unitFob100} onChange={(e) => set("unitFob100", e.target.value)} /></Field>
+          </div>
         </section>
       </div>
     </Drawer>
@@ -341,7 +347,7 @@ function UsersPanel() {
 
 /* ============================================================ */
 export default function Setup() {
-  const { items, setItems, buyers, setBuyers, suppliers, setSuppliers, supCode, toast } = useApp();
+  const { items, setItems, buyers, setBuyers, suppliers, setSuppliers, transports, setTransports, supCode, toast } = useApp();
   const { isAdmin, has, users } = useAuth();
   const canItems = has("setup.items");
   const canParties = has("setup.parties");
@@ -356,6 +362,7 @@ export default function Setup() {
 
   const [sDraft, setSDraft] = useState({ name: "", place: "", gstin: "" });
   const [bDraft, setBDraft] = useState({ name: "", brand: "", country: "", curr: "USD", shipTo: "" });
+  const [tDraft, setTDraft] = useState({ ...EMPTY_TRANSPORT });
 
   const DEF = COL(supCode);
 
@@ -394,7 +401,7 @@ export default function Setup() {
 
       <Seg options={[
         ...(canItems ? [["items", `Items · ${items.length}`, Layers]] : []),
-        ...(canParties ? [["buyers", `Buyers · ${buyers.length}`, Globe], ["suppliers", `Suppliers · ${suppliers.length}`, Truck]] : []),
+        ...(canParties ? [["buyers", `Buyers · ${buyers.length}`, Globe], ["suppliers", `Suppliers · ${suppliers.length}`, Truck], ["transports", `Transport · ${transports.length}`, Route]] : []),
         ...(isAdmin ? [["users", `Users · ${users.length}`, UsersIcon]] : []),
       ]} value={tab} onChange={setTab} />
 
@@ -521,6 +528,41 @@ export default function Setup() {
         </PartyPanel>
       )}
 
+      {/* ---------------- TRANSPORT ---------------- */}
+      {tab === "transports" && (
+        <PartyPanel title={`transport${transports.length === 1 ? "" : "s"}`} icon={Route} count={transports.length}
+          form={
+            <>
+              <div style={{ marginBottom: 14 }}><Step n="+" title="Add a transport" hint="You pick this carrier when filling a shipment's vehicle details." /></div>
+              <div className="stack-sm">
+                <Field label="Transport name"><Input value={tDraft.name} onChange={(e) => setTDraft({ ...tDraft, name: e.target.value })} placeholder="e.g. VRL Logistics" /></Field>
+                <Field label="Transport ID"><Input value={tDraft.transportId} onChange={(e) => setTDraft({ ...tDraft, transportId: e.target.value })} placeholder="e.g. MH-TR-8812" /></Field>
+                <Field label="Supplier"><Select value={tDraft.supplierId} onChange={(e) => setTDraft({ ...tDraft, supplierId: e.target.value })}>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}</Select></Field>
+                <div>
+                  <Btn icon={Plus} disabled={!tDraft.name || !tDraft.transportId} onClick={() => {
+                    setTransports([...transports, { ...tDraft, id: "t" + Date.now() }]);
+                    toast(`Transport ${tDraft.name} added`);
+                    setTDraft({ ...EMPTY_TRANSPORT });
+                  }}>Add transport</Btn>
+                </div>
+              </div>
+            </>
+          }>
+          {transports.map((t, i) => (
+            <div key={t.id} className="row" style={{ padding: "12px 16px", borderTop: i ? "1px solid var(--border)" : "none", justifyContent: "space-between" }}>
+              <div>
+                <div className="row" style={{ gap: 7 }}><span style={{ color: "var(--ink)", fontWeight: 650, fontSize: 13.5 }}>{t.name}</span><Pill><Mono>{t.transportId}</Mono></Pill></div>
+                <div style={{ fontSize: 11.5, color: "var(--faint)", marginTop: 2 }}>Supplier: {supCode(t.supplierId)}</div>
+              </div>
+              <div className="row" style={{ gap: 8 }}>
+                <EditBtn onClick={() => setEditing({ type: "transport", value: t })} />
+                <button className="icon-btn bare" title="Delete transport" onClick={() => { setTransports(transports.filter((x) => x.id !== t.id)); toast(`Transport ${t.name} removed`); }}><Trash2 size={14} /></button>
+              </div>
+            </div>
+          ))}
+        </PartyPanel>
+      )}
+
       {/* ---------------- USERS (admin only) ---------------- */}
       {tab === "users" && isAdmin && <UsersPanel />}
 
@@ -529,6 +571,7 @@ export default function Setup() {
       {editing?.type === "item" && <EditModal title={`Edit item · ${editing.value.gd}`} schema={itemSchema(suppliers)} value={editing.value} onClose={() => setEditing(null)} onSave={saveItem} />}
       {editing?.type === "buyer" && <EditModal title={`Edit buyer · ${editing.value.name}`} cols={2} schema={BUYER_SCHEMA} value={editing.value} onClose={() => setEditing(null)} onSave={(f) => { setBuyers(buyers.map((b) => (b.id === f.id ? f : b))); setEditing(null); toast("Buyer updated"); }} />}
       {editing?.type === "supplier" && <EditModal title={`Edit supplier · ${editing.value.name}`} cols={2} schema={SUP_SCHEMA} value={editing.value} onClose={() => setEditing(null)} onSave={(f) => { setSuppliers(suppliers.map((s) => (s.id === f.id ? { ...s, ...f } : s))); setEditing(null); toast("Supplier updated"); }} />}
+      {editing?.type === "transport" && <EditModal title={`Edit transport · ${editing.value.name}`} cols={2} schema={transportSchema(suppliers)} value={editing.value} onClose={() => setEditing(null)} onSave={(f) => { setTransports(transports.map((t) => (t.id === f.id ? { ...t, ...f } : t))); setEditing(null); toast("Transport updated"); }} />}
     </div>
   );
 }

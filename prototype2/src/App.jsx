@@ -125,6 +125,7 @@ function Shell() {
   const [view, setView] = useState(hashView);
   const [palette, setPalette] = useState(false);
   const [docJump, setDocJump] = useState(null);
+  const [focus, setFocus] = useState(null); // cross-page redirect target: { po } or { invId }
   const [theme, setTheme] = useState(() => (typeof localStorage !== "undefined" && localStorage.getItem("jg-theme")) || "light");
 
   useEffect(() => {
@@ -145,7 +146,7 @@ function Shell() {
     return () => window.removeEventListener("hashchange", h);
   }, []);
 
-  const go = (v) => { window.location.hash = "/" + v; setView(v); window.scrollTo({ top: 0 }); };
+  const go = (v, f = null) => { setFocus(f); window.location.hash = "/" + v; setView(v); window.scrollTo({ top: 0 }); };
   const openDoc = (no) => { setDocJump(no); go("documents"); };
 
   // Access guard: landing on a view this user isn't allowed bounces
@@ -253,9 +254,9 @@ function Shell() {
 
         <div className="page">
           {view === "home" && <Home go={go} />}
-          {view === "orders" && <Orders go={go} />}
+          {view === "orders" && <Orders go={go} focus={focus} clearFocus={() => setFocus(null)} />}
           {view === "packing" && <Packing go={go} />}
-          {view === "shipments" && <Shipments go={go} />}
+          {view === "shipments" && <Shipments go={go} focus={focus} clearFocus={() => setFocus(null)} />}
           {view === "documents" && <Documents go={go} jump={docJump} clearJump={() => setDocJump(null)} />}
           {view === "po-reports" && <Documents go={go} group="PO" />}
           {view === "supplier-reports" && <Documents go={go} group="SUP" />}
@@ -266,8 +267,8 @@ function Shell() {
         </div>
 
         <footer className="footer">
-          <span>Maintained and Developed By <b style={{ color: "var(--ink)" }}>Avita Technologies</b></span>
-          <span className="mono">V-3.0</span>
+          <span>Maintained and Developed By <b style={{ color: "var(--ink)" }}>Avita Technology</b></span>
+          <span className="mono">V-4.0</span>
         </footer>
       </div>
 

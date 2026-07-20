@@ -115,15 +115,17 @@ export const ActionCard = ({ icon: Icon, tone = "teal", title, children, onClick
 /* ============================================================
    Modal / Drawer
    ============================================================ */
-export function Modal({ title, icon: Icon, onClose, children, footer, width = 900 }) {
+export function Modal({ title, icon: Icon, onClose, children, footer, width }) {
   useEffect(() => {
     const h = (e) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
+  // Every editing / viewing popup covers ~75% of the screen with enlarged type
+  // (see .modal in index.css). The `width` prop is kept for API compatibility.
   return (
     <div className="backdrop" onClick={onClose}>
-      <div className="modal" style={{ maxWidth: width }} onClick={(e) => e.stopPropagation()}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{Icon && <Icon size={17} style={{ color: "var(--teal)" }} />}{title}</h3>
           <IconBtn bare icon={X} size={18} onClick={onClose} title="Close" />
