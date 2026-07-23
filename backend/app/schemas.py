@@ -1,10 +1,67 @@
 """Pydantic request/response schemas."""
+from datetime import datetime
 from typing import Optional, Any
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------- Users & auth ----------
+class UserOut(ORMModel):
+    id: str
+    email: str
+    name: str
+    role: str
+    status: str
+    access: list[str] = []
+    created_at: Optional[datetime] = None
+    last_login: Optional[datetime] = None
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    token: str
+    user: UserOut
+
+
+class RegisterRequest(BaseModel):
+    """Self sign-up. The account is created pending until an admin approves."""
+    name: str
+    email: str
+    password: str = Field(min_length=8)
+
+
+class BootstrapRequest(RegisterRequest):
+    """Creates the very first admin — only works while no users exist."""
+
+
+class UserCreate(BaseModel):
+    name: str
+    email: str
+    password: str = Field(min_length=8)
+    role: str = "user"
+    status: str = "active"
+    access: list[str] = []
+
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    password: Optional[str] = Field(default=None, min_length=8)
+    role: Optional[str] = None
+    status: Optional[str] = None
+    access: Optional[list[str]] = None
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
 
 
 # ---------- Supplier ----------
@@ -213,3 +270,51 @@ class InvoiceOut(ORMModel):
     lines: list[InvoiceLineOut] = []
     # Computed
     status: Optional[str] = None
+
+
+# ---------- Costing ----------
+class CostingLineBase(BaseModel):
+    gd: str = ""
+    code: str = ""
+    dia: str = ""
+    length: str = ""
+    unit: int = 0
+    box: int = 0
+    price_old: float = 0.0
+    price_new: float = 0.0
+    boxes_fcl: int = 0
+    fob_now: float = 0.0
+    fob_old: float = 0.0
+    item_id: Optional[str] = None
+
+
+class CostingLineCreate(CostingLineBase):
+    pass
+
+
+class CostingLineUpdate(BaseModel):
+    gd: Optional[str] = None
+    code: Optional[str] = None
+    dia: Optional[str] = None
+    length: Optional[str] = None
+    unit: Optional[int] = None
+    box: Optional[int] = None
+    price_old: Optional[float] = None
+    price_new: Optional[float] = None
+    boxes_fcl: Optional[int] = None
+    fob_now: Optional[float] = None
+    fob_old: Optional[float] = None
+    item_id: Optional[str] = None
+
+
+class CostingLineOut(CostingLineBase, ORMModel):
+    id: str
+    computed: dict[str, Any] = {}
+
+
+class CostParams(BaseModel):
+    barcode_sheet: float = 20.0    # ₹ per sheet of 125 stickers
+    transport_fcl: float = 15000.0  # ₹ inland transport per container
+    other_fcl: float = 50000.0      # ₹ clearing & other charges per container
+    ex_rate: float = 90.0           # ₹/$ used to express our cost in USD
+    real_rate: float = 94.5         # ₹/$ actually realised on the FOB price

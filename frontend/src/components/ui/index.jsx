@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from "react";
-import { X, Pencil, Inbox, Loader2, AlertTriangle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { X, Pencil, Inbox, Loader2, AlertTriangle, Eye, EyeOff } from "lucide-react";
 
 /* ============================================================
    Shared UI atoms. Styling lives in src/index.css (the design
@@ -52,6 +52,37 @@ export const Field = ({ label, children, style }) => (
 );
 
 export const Input = (props) => <input {...props} className={`input ${props.className || ""}`} />;
+
+/* A password box with an eye to reveal what was typed — the only way to catch
+   a typo in a field the browser masks. Reveal is per-field and resets on
+   every mount, so nothing stays readable after the form is left. */
+export function PasswordInput({ value, onChange, placeholder = "••••••••", onKeyDown, autoComplete }) {
+  const [shown, setShown] = useState(false);
+  return (
+    <span className="pw-in">
+      <input
+        className="input"
+        type={shown ? "text" : "password"}
+        value={value}
+        onChange={onChange}
+        onKeyDown={onKeyDown}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+      />
+      <button
+        type="button"
+        className="pw-eye"
+        onClick={() => setShown((s) => !s)}
+        title={shown ? "Hide password" : "Show password"}
+        aria-label={shown ? "Hide password" : "Show password"}
+        aria-pressed={shown}
+        tabIndex={-1}
+      >
+        {shown ? <EyeOff size={15} /> : <Eye size={15} />}
+      </button>
+    </span>
+  );
+}
 export const Select = ({ children, ...p }) => <select {...p} className={`select ${p.className || ""}`}>{children}</select>;
 
 export const Seg = ({ options, value, onChange }) => (

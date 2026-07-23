@@ -1,9 +1,19 @@
-# Full stack: Postgres + FastAPI backend + React (nginx) frontend.
+# Full stack: FastAPI backend + React (nginx) frontend.
 #   docker compose up --build
-# Frontend:  http://localhost:8080
-# Backend:   http://localhost:8000  (docs at /docs)
+# Frontend:  http://localhost:8090
+# Backend:   http://localhost:8001  (docs at /docs)
+#
+# The database comes from backend/.env, which is mounted into the container —
+# one file is the single source of truth for both `python run.py` and Docker,
+# so the two never drift onto different databases. That file currently points
+# at Neon; drop the bundled Postgres in by starting the optional `db` profile
+# and setting DATABASE_URL to postgresql+psycopg2://jaikvin:jaikvin@db:5432/jaikvin
+#
+#   docker compose --profile local-db up --build
 services:
   db:
+    # Optional: only starts with `--profile local-db`.
+    profiles: ["local-db"]
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: jaikvin
@@ -19,12 +29,11 @@ services:
 
   backend:
     build: ./backend
-    environment:
-      DATABASE_URL: postgresql+psycopg2://jaikvin:jaikvin@db:5432/jaikvin
-      CORS_ORIGINS: http://localhost:8090,http://localhost:5173
-    depends_on:
-      db:
-        condition: service_healthy
+    # Read-only mount: DATABASE_URL, CORS_ORIGINS and JWT_SECRET all come from
+    # here. Nothing is set under `environment:` because a real environment
+    # variable would silently win over the file.
+    volumes:
+      - ./backend/.env:/app/.env:ro
     # Host port is overridable and defaults to 8001 to avoid clashing with any
     # other service already on 8000. The container still listens on 8000, and
     # the frontend reaches it over the internal network (backend:8000).

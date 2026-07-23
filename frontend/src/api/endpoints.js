@@ -2,6 +2,33 @@
    REST shape of the backend; components never build URLs themselves. */
 import { apiGet, apiPost, apiPut, apiDelete } from "./client.js";
 
+export const auth = {
+  status: () => apiGet("/api/auth/status"),
+  permissions: () => apiGet("/api/auth/permissions"),
+  bootstrap: (b) => apiPost("/api/auth/bootstrap", b),
+  register: (b) => apiPost("/api/auth/register", b),
+  login: (b) => apiPost("/api/auth/login", b),
+  me: () => apiGet("/api/auth/me"),
+  changePassword: (b) => apiPost("/api/auth/change-password", b),
+};
+
+export const users = {
+  list: () => apiGet("/api/users"),
+  create: (b) => apiPost("/api/users", b),
+  update: (id, b) => apiPut(`/api/users/${id}`, b),
+  remove: (id) => apiDelete(`/api/users/${id}`),
+};
+
+export const costing = {
+  list: () => apiGet("/api/costing"),
+  create: (b) => apiPost("/api/costing", b),
+  update: (id, b) => apiPut(`/api/costing/${id}`, b),
+  remove: (id) => apiDelete(`/api/costing/${id}`),
+  params: () => apiGet("/api/costing/params"),
+  saveParams: (b) => apiPut("/api/costing/params", b),
+  formulas: () => apiGet("/api/costing/formulas"),
+};
+
 export const suppliers = {
   list: () => apiGet("/api/suppliers"),
   create: (b) => apiPost("/api/suppliers", b),

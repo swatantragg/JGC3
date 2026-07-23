@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     api_port: int = Field(default=8000)
     reload: bool = Field(default=True)
 
+    # Session tokens. Override JWT_SECRET in production — the default is a
+    # development convenience only.
+    jwt_secret: str = "jaikvin-dev-secret-change-me"
+    jwt_expire_minutes: int = 60 * 12
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
