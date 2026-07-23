@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { Layers, Globe, Truck, Route } from "lucide-react";
+import { Layers, Globe, Truck, Route, Users as UsersIcon } from "lucide-react";
 import { Seg, Pill, Mono } from "../../components/ui/index.jsx";
+import { useAuth } from "../../auth/AuthProvider.jsx";
+import UsersPanel from "./UsersPanel.jsx";
 import {
   useSuppliers, useCreateSupplier, useUpdateSupplier, useDeleteSupplier,
   useBuyers, useCreateBuyer, useUpdateBuyer, useDeleteBuyer,
@@ -15,7 +17,10 @@ const modeOpts = UNIT_MODES.map((m) => ({ value: m.value, label: m.label }));
 const groupOpts = ITEM_GROUPS.map((g) => ({ value: g, label: g }));
 
 export default function SetupPage() {
-  const [tab, setTab] = useState("items");
+  const { isAdmin, has } = useAuth();
+  const canItems = has("setup.items");
+  const canParties = has("setup.parties");
+  const [tab, setTab] = useState(canItems ? "items" : canParties ? "buyers" : "users");
   const suppliers = useSuppliers().data || [];
   const supOpts = suppliers.map((s) => ({ value: s.id, label: `${s.code} — ${s.name}` }));
   const supCode = (id) => suppliers.find((s) => s.id === id)?.code || "—";
@@ -52,13 +57,19 @@ export default function SetupPage() {
     <div className="stack">
       <div className="page-head">
         <h2 className="h1">Setup</h2>
-        <p className="sub">Your single source of truth. Every item, buyer, supplier and transport is entered here — orders and documents downstream read from it.</p>
+        <p className="sub">
+          Your single source of truth. Every item, buyer, supplier and transport is entered here — orders and documents downstream read from it.
+          {isAdmin && <> Under <b>Users</b> you decide who sees which part of the system.</>}
+        </p>
       </div>
 
       <Seg options={[
-        ["items", "Items", Layers], ["buyers", "Buyers", Globe],
-        ["suppliers", "Suppliers", Truck], ["transports", "Transport", Route],
+        ...(canItems ? [["items", "Items", Layers]] : []),
+        ...(canParties ? [["buyers", "Buyers", Globe], ["suppliers", "Suppliers", Truck], ["transports", "Transport", Route]] : []),
+        ...(isAdmin ? [["users", "Users", UsersIcon]] : []),
       ]} value={tab} onChange={setTab} />
+
+      {tab === "users" && isAdmin && <UsersPanel />}
 
       {tab === "suppliers" && (
         <MasterPanel title="Suppliers" icon={Truck} schema={supplierSchema} blank={{ code: "", name: "", place: "", gstin: "", weights: "auto" }} cols={2}

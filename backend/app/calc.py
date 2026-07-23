@@ -242,3 +242,61 @@ def build_item_order_detail(po_lines, items_by_id) -> dict:
         })
     rows.sort(key=lambda x: str(x["gd"]))
     return {"pos": pos, "po_date": po_date, "rows": rows}
+
+
+# ---------------- Costing sheet ----------------
+def compute_costing(line, p) -> dict:
+    """Cost working for one costing row against the shared parameters.
+
+    Mirrors the client's Excel column for column: purchase per box, barcode,
+    inland transport and clearing spread over a container, then cost per piece
+    against the FOB we sell at.
+    """
+    old = float(line.price_old or 0)
+    cur = float(line.price_new or 0)
+    box = int(line.box or 0)
+    bf = int(line.boxes_fcl or 0)
+
+    diff = cur - old
+    diff_pct = (diff * 100 / old) if old else 0.0
+    per_box = cur * box
+    sheets = math.ceil(box / 125) if box else 0
+    barcode_box = sheets * float(p.barcode_sheet or 0)
+    transport_box = math.ceil(float(p.transport_fcl or 0) / bf) if bf else 0
+    # floor(x + .5), not round(): Python's round() is banker's rounding and
+    # would disagree with the client's sheet on exact halves.
+    other_box = math.floor(float(p.other_fcl or 0) / bf + 0.5) if bf else 0
+    total_box = per_box + barcode_box + transport_box + other_box
+    per_pc = (total_box / box) if box else 0.0
+    fob_cost = (per_pc / float(p.ex_rate)) if p.ex_rate else 0.0
+
+    fob_now = float(line.fob_now or 0)
+    fob_old = float(line.fob_old or 0)
+    fob_diff = fob_now - fob_old
+    fob_pct = (fob_diff * 100 / fob_old) if fob_old else 0.0
+    profit_pc = fob_now * float(p.real_rate or 0) - per_pc
+    profit_pct = (profit_pc * 100 / per_pc) if per_pc else 0.0
+
+    return {
+        "diff": diff, "diffPct": diff_pct, "perBox": per_box, "sheets": sheets,
+        "barcodeBox": barcode_box, "transportBox": transport_box, "otherBox": other_box,
+        "totalBox": total_box, "perPc": per_pc, "fobCost": fob_cost,
+        "fobDiff": fob_diff, "fobPct": fob_pct, "profitPc": profit_pc, "profitPct": profit_pct,
+    }
+
+
+COSTING_FORMULAS = [
+    ["Price difference (₹)", "New price − old price"],
+    ["Difference %", "Difference × 100 ÷ old price"],
+    ["Purchase / box (₹)", "New price × pcs per box"],
+    ["Barcode sheets / box", "RoundUp ( pcs per box ÷ 125 )"],
+    ["Barcode cost / box (₹)", "Sheets × ₹ per sheet"],
+    ["Transport / box (₹)", "RoundUp ( transport ₹/FCL ÷ boxes per FCL )"],
+    ["Other charges / box (₹)", "Round ( other ₹/FCL ÷ boxes per FCL )"],
+    ["Total cost / box (₹)", "Purchase + barcodes + transport + other"],
+    ["Cost / pc (₹)", "Total cost per box ÷ pcs per box"],
+    ["Our cost, FOB ($)", "Cost per pc ÷ exchange rate ₹/$"],
+    ["FOB rise ($ · %)", "Sell now − sell old · ×100 ÷ old"],
+    ["Profit / pc (₹)", "Sell now × realisation ₹/$ − cost per pc"],
+    ["Profit %", "Profit per pc × 100 ÷ cost per pc"],
+]

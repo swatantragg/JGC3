@@ -80,3 +80,35 @@ export function useInvoiceMutations() {
 export const useDashboardMatrix = () => useQuery({ queryKey: ["dashboard"], queryFn: api.dashboard.matrix });
 export const useItemDetail = () => useQuery({ queryKey: ["item-detail"], queryFn: api.reports.itemDetail });
 export const useBalance = () => useQuery({ queryKey: ["balance"], queryFn: api.reports.balance });
+
+// Users — admin only; the query is disabled for everyone else so a
+// non-admin never fires a request the API would refuse.
+export const useUsers = (enabled = true) =>
+  useQuery({ queryKey: ["users"], queryFn: api.users.list, enabled });
+
+export function useUserMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["users"] });
+  return {
+    create: useMutation({ mutationFn: api.users.create, onSuccess: invalidate }),
+    update: useMutation({ mutationFn: ({ id, body }) => api.users.update(id, body), onSuccess: invalidate }),
+    remove: useMutation({ mutationFn: (id) => api.users.remove(id), onSuccess: invalidate }),
+  };
+}
+
+// Costing — every row arrives with its worked-out `computed` block, and the
+// shared parameters feed those figures, so saving them refreshes the rows.
+export const useCosting = () => useQuery({ queryKey: ["costing"], queryFn: api.costing.list });
+export const useCostParams = () => useQuery({ queryKey: ["cost-params"], queryFn: api.costing.params });
+export const useCostFormulas = () => useQuery({ queryKey: ["cost-formulas"], queryFn: api.costing.formulas, staleTime: Infinity });
+
+export function useCostingMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => ["costing", "cost-params"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  return {
+    create: useMutation({ mutationFn: api.costing.create, onSuccess: invalidate }),
+    update: useMutation({ mutationFn: ({ id, body }) => api.costing.update(id, body), onSuccess: invalidate }),
+    remove: useMutation({ mutationFn: (id) => api.costing.remove(id), onSuccess: invalidate }),
+    saveParams: useMutation({ mutationFn: api.costing.saveParams, onSuccess: invalidate }),
+  };
+}

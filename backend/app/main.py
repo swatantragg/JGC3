@@ -6,7 +6,8 @@ from .config import settings
 from .database import Base, engine
 from . import models  # noqa: F401  (ensure models are registered before create_all)
 from .routers import (
-    suppliers, buyers, items, transports, purchase_orders, invoices, dashboard, reports,
+    auth, users, suppliers, buyers, items, transports, purchase_orders, invoices,
+    dashboard, reports, costing,
 )
 
 # Create tables on startup. Swap for Alembic migrations in a larger deployment.
@@ -22,7 +23,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (suppliers, buyers, items, transports, purchase_orders, invoices, dashboard, reports):
+for r in (auth, users, suppliers, buyers, items, transports, purchase_orders, invoices,
+          dashboard, reports, costing):
     app.include_router(r.router)
 
 

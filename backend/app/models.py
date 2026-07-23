@@ -1,8 +1,9 @@
 """SQLAlchemy ORM models — the production data model for the export system.
 
 Mirrors the domain proven in prototype-2 but with real persistence:
-masters (suppliers, buyers, items, transports), the buyer order book
-(purchase-order lines) and packing invoices with their shipment lifecycle.
+accounts and their access rights, masters (suppliers, buyers, items,
+transports), the buyer order book (purchase-order lines), packing invoices
+with their shipment lifecycle, and the costing sheet.
 No seed / dummy rows are created — every record is entered through the API.
 """
 import uuid
@@ -16,6 +17,22 @@ from .database import Base
 
 def new_id() -> str:
     return uuid.uuid4().hex[:12]
+
+
+class User(Base):
+    """An account. `role` is "admin" (everything, plus user management) or
+    "user" (only the leaf permissions ticked in `access`). New sign-ups land
+    as status="pending" until an admin approves them."""
+    __tablename__ = "users"
+    id = Column(String, primary_key=True, default=new_id)
+    email = Column(String, nullable=False, unique=True, index=True)
+    password_hash = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    role = Column(String, nullable=False, default="user")     # admin | user
+    status = Column(String, nullable=False, default="pending")  # pending | active | disabled
+    access = Column(JSON, nullable=False, default=list)        # ["orders.entry", ...]
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login = Column(DateTime, nullable=True)
 
 
 class Supplier(Base):
@@ -111,3 +128,31 @@ class InvoiceLine(Base):
     supplier_id = Column(String, ForeignKey("suppliers.id"), nullable=True)
     boxes = Column(Integer, default=0)
     invoice = relationship("Invoice", back_populates="lines")
+
+
+class CostingLine(Base):
+    """One row of the costing sheet — purchase price vs FOB, per item."""
+    __tablename__ = "costing_lines"
+    id = Column(String, primary_key=True, default=new_id)
+    gd = Column(String, default="")
+    code = Column(String, default="")
+    dia = Column(String, default="")
+    length = Column(String, default="")
+    unit = Column(Integer, default=0)        # pcs per unit pack
+    box = Column(Integer, default=0)         # pcs per box
+    price_old = Column(Float, default=0.0)   # ₹ per pc, previous
+    price_new = Column(Float, default=0.0)   # ₹ per pc, current
+    boxes_fcl = Column(Integer, default=0)   # boxes that fit one container
+    fob_now = Column(Float, default=0.0)     # $ we sell at today
+    fob_old = Column(Float, default=0.0)     # $ we sold at before
+    item_id = Column(String, ForeignKey("items.id"), nullable=True)
+
+
+class Setting(Base):
+    """Key/value application settings — currently the costing parameters
+    (barcode ₹/sheet, transport & other ₹/FCL, exchange and realisation rates).
+    A table rather than a config file because the client edits them in the UI."""
+    __tablename__ = "settings"
+    key = Column(String, primary_key=True)
+    value = Column(JSON, nullable=False, default=dict)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

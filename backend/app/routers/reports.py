@@ -2,9 +2,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..deps import require
 from .. import models, calc
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
+
+_read = require("reports.balance", "orders.reports", "shipment.reports")
 
 
 def _ctx(db: Session):
@@ -14,14 +17,14 @@ def _ctx(db: Session):
     return items, po_lines, invoices
 
 
-@router.get("/item-detail")
+@router.get("/item-detail", dependencies=[Depends(_read)])
 def item_order_detail(db: Session = Depends(get_db)):
     """Item-wise order detail with a column per PO (doc 37)."""
     items, po_lines, _ = _ctx(db)
     return calc.build_item_order_detail(po_lines, items)
 
 
-@router.get("/balance")
+@router.get("/balance", dependencies=[Depends(_read)])
 def balance_register(db: Session = Depends(get_db)):
     """PO / item / supplier balance register, recomputed from the ledger."""
     items, po_lines, invoices = _ctx(db)
