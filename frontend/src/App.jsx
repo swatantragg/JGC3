@@ -1,10 +1,11 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { HashRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { Lock } from "lucide-react";
 import QueryProvider from "./providers/QueryProvider.jsx";
+import { ToastProvider } from "./providers/ToastProvider.jsx";
 import { AuthProvider, useAuth } from "./auth/AuthProvider.jsx";
 import LoginPage from "./auth/LoginPage.jsx";
 import AppShell from "./components/layout/AppShell.jsx";
 import { Spinner, Empty } from "./components/ui/index.jsx";
-import { Lock } from "lucide-react";
 import { ROUTE_PERMS, firstAllowedRoute } from "./lib/nav.js";
 
 import DashboardPage from "./features/dashboard/DashboardPage.jsx";
@@ -14,7 +15,6 @@ import PackingPage from "./features/packing/PackingPage.jsx";
 import ShipmentsPage from "./features/shipments/ShipmentsPage.jsx";
 import ReportsPage from "./features/reports/ReportsPage.jsx";
 import DocumentsPage from "./features/documents/DocumentsPage.jsx";
-import CostingPage from "./features/costing/CostingPage.jsx";
 
 /* A page the signed-in user has no rights to redirects to their first
    permitted one, so deep links never dead-end on a blank screen. An account
@@ -36,6 +36,8 @@ function Guard({ perm, children }) {
   return <Navigate to={fallback} replace state={{ denied: pathname }} />;
 }
 
+const guard = (path, el) => <Guard perm={ROUTE_PERMS[path]}>{el}</Guard>;
+
 function Routed() {
   const { user, ready } = useAuth();
   if (!ready) return <div className="page"><Spinner label="Starting up…" /></div>;
@@ -44,14 +46,17 @@ function Routed() {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        <Route index element={<Guard perm={ROUTE_PERMS["/"]}><DashboardPage /></Guard>} />
-        <Route path="orders" element={<Guard perm={ROUTE_PERMS["/orders"]}><OrdersPage /></Guard>} />
-        <Route path="packing" element={<Guard perm={ROUTE_PERMS["/packing"]}><PackingPage /></Guard>} />
-        <Route path="shipments" element={<Guard perm={ROUTE_PERMS["/shipments"]}><ShipmentsPage /></Guard>} />
-        <Route path="documents" element={<Guard perm={ROUTE_PERMS["/documents"]}><DocumentsPage /></Guard>} />
-        <Route path="reports" element={<Guard perm={ROUTE_PERMS["/reports"]}><ReportsPage /></Guard>} />
-        <Route path="costing" element={<Guard perm={ROUTE_PERMS["/costing"]}><CostingPage /></Guard>} />
-        <Route path="setup" element={<Guard perm={ROUTE_PERMS["/setup"]}><SetupPage /></Guard>} />
+        <Route index element={guard("/", <DashboardPage />)} />
+        <Route path="orders" element={guard("/orders", <OrdersPage />)} />
+        <Route path="po-reports" element={guard("/po-reports", <DocumentsPage group="PO" />)} />
+        <Route path="packing" element={guard("/packing", <PackingPage />)} />
+        <Route path="shipments" element={guard("/shipments", <ShipmentsPage />)} />
+        <Route path="supplier-reports" element={guard("/supplier-reports", <DocumentsPage group="SUP" />)} />
+        <Route path="pre-shipment" element={guard("/pre-shipment", <DocumentsPage group="PRE" />)} />
+        <Route path="post-shipment" element={guard("/post-shipment", <DocumentsPage group="POST" />)} />
+        <Route path="reports" element={guard("/reports", <ReportsPage />)} />
+        <Route path="documents" element={guard("/documents", <DocumentsPage />)} />
+        <Route path="setup" element={guard("/setup", <SetupPage />)} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
@@ -61,11 +66,15 @@ function Routed() {
 export default function App() {
   return (
     <QueryProvider>
-      <BrowserRouter>
+      {/* Hash routing: the bundle is served statically behind nginx, so a deep
+          link must resolve without a server rewrite. */}
+      <HashRouter>
         <AuthProvider>
-          <Routed />
+          <ToastProvider>
+            <Routed />
+          </ToastProvider>
         </AuthProvider>
-      </BrowserRouter>
+      </HashRouter>
     </QueryProvider>
   );
 }

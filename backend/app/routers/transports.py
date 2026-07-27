@@ -17,9 +17,22 @@ def list_transports(db: Session = Depends(get_db)):
     return db.query(models.Transport).order_by(models.Transport.name).all()
 
 
+def _sync_primary(obj: models.Transport) -> None:
+    """`supplier_id` is the single-supplier view of `supplier_ids`, kept in
+    step so packing and vehicle screens that read one still see the right
+    carrier."""
+    ids = obj.supplier_ids or []
+    if ids:
+        if obj.supplier_id not in ids:
+            obj.supplier_id = ids[0]
+    elif obj.supplier_id:
+        obj.supplier_ids = [obj.supplier_id]
+
+
 @router.post("", response_model=schemas.Transport, status_code=201, dependencies=[Depends(_write)])
 def create_transport(body: schemas.TransportCreate, db: Session = Depends(get_db)):
     obj = models.Transport(**body.model_dump())
+    _sync_primary(obj)
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -33,6 +46,7 @@ def update_transport(tid: str, body: schemas.TransportUpdate, db: Session = Depe
         raise HTTPException(404, "Transport not found")
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(obj, k, v)
+    _sync_primary(obj)
     db.commit()
     db.refresh(obj)
     return obj

@@ -614,6 +614,10 @@ textarea {
   background: var(--amber-bg);
   color: var(--amber-ink);
 }
+.note-green {
+  background: var(--green-bg);
+  color: var(--green-ink);
+}
 .note b {
   font-weight: 650;
 }

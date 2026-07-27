@@ -66,15 +66,17 @@ export default function LoginPage() {
   return (
     <div className="login">
       <div className="login-brand">
-        <div className="row" style={{ gap: 12 }}>
-          <div className="brand-mark" style={{ width: 44, height: 44 }}><Anchor size={24} color="#0b2c4d" strokeWidth={2.6} /></div>
+        {/* The name is the whole statement here — no tagline above it. */}
+        <div className="row" style={{ gap: 18 }}>
+          <div className="brand-mark" style={{ width: 76, height: 76, borderRadius: 20 }}>
+            <Anchor size={42} color="#0b2c4d" strokeWidth={2.6} />
+          </div>
           <div>
-            <div style={{ fontWeight: 750, fontSize: 19, color: "#fff" }}>Jaikvin Global</div>
-            <div style={{ fontSize: 11, letterSpacing: 1.6, color: "#9fc0d8" }}>EXPORT SYSTEM</div>
+            <div style={{ fontWeight: 780, fontSize: 40, lineHeight: 1.1, color: "#fff", letterSpacing: "-0.5px" }}>Jaikvin Global</div>
+            <div style={{ fontSize: 15, letterSpacing: 5, color: "#9fc0d8", marginTop: 6 }}>EXPORT SYSTEM</div>
           </div>
         </div>
-        <h1>Enter once.<br />Generate everything.<br />Always balanced.</h1>
-        <p>Orders, packing, shipment papers and costing — one login, and each person sees exactly the areas the admin has given them. Nothing more to learn.</p>
+        <p style={{ marginTop: 26 }}>Orders, packing, shipment papers and costing — one login, and each person sees exactly the areas the admin has given them. Nothing more to learn.</p>
         <div className="login-points">
           {POINTS.map(([t, s]) => (
             <div key={t} className="row" style={{ gap: 10, alignItems: "flex-start" }}>
@@ -142,7 +144,7 @@ export default function LoginPage() {
             </button>
           )}
         </div>
-        <div className="login-foot">Maintained and developed by <b>Avita Technologies</b> · V-1.0</div>
+        <div className="login-foot">Maintained and developed by <b>Avita Technology</b> · V-2.2</div>
       </div>
     </div>
   );

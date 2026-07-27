@@ -43,11 +43,34 @@ export const buyers = {
   remove: (id) => apiDelete(`/api/buyers/${id}`),
 };
 
+const qs = (params = {}) => {
+  const s = new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ""),
+  ).toString();
+  return s ? `?${s}` : "";
+};
+
 export const items = {
-  list: () => apiGet("/api/items"),
+  // params: { supplier_id, group, q } — filtered server-side so the whole
+  // 285-row master never has to be sifted in the browser.
+  list: (params) => apiGet(`/api/items${qs(params)}`),
+  grouped: (params) => apiGet(`/api/items/grouped${qs(params)}`),
+  groups: () => apiGet("/api/items/groups"),
   create: (b) => apiPost("/api/items", b),
   update: (id, b) => apiPut(`/api/items/${id}`, b),
   remove: (id) => apiDelete(`/api/items/${id}`),
+};
+
+/* The master workbook: what the bundled extract holds, loading it, and the
+   2A / 7A derived figures for a set of ordered quantities. */
+export const masters = {
+  seed: () => apiGet("/api/masters/seed"),
+  import: (overwrite = false) => apiPost(`/api/masters/import${qs({ overwrite })}`),
+  derive: (rows) => apiPost("/api/masters/derive", rows),
+  formulas: () => apiGet("/api/masters/formulas"),
+  order: (po) => apiGet(`/api/masters/order/${encodeURIComponent(po)}`),
+  supplier: (id, range) => apiGet(`/api/masters/supplier/${id}${qs(range)}`),
+  orderLines: (range) => apiGet(`/api/masters/order-lines${qs(range)}`),
 };
 
 export const transports = {
@@ -77,6 +100,7 @@ export const invoices = {
 
 export const dashboard = {
   matrix: () => apiGet("/api/dashboard/matrix"),
+  badges: () => apiGet("/api/dashboard/badges"),
 };
 
 export const reports = {

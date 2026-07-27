@@ -1,7 +1,7 @@
 """Pydantic request/response schemas."""
 from datetime import datetime
 from typing import Optional, Any
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ORMModel(BaseModel):
@@ -70,6 +70,9 @@ class SupplierBase(BaseModel):
     name: str
     place: str = ""
     gstin: str = ""
+    addr: str = ""
+    pin: str = ""
+    state: str = ""
     weights: str = "auto"
 
 
@@ -78,10 +81,14 @@ class SupplierCreate(SupplierBase):
 
 
 class SupplierUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     code: Optional[str] = None
     name: Optional[str] = None
     place: Optional[str] = None
     gstin: Optional[str] = None
+    addr: Optional[str] = None
+    pin: Optional[str] = None
+    state: Optional[str] = None
     weights: Optional[str] = None
 
 
@@ -126,6 +133,7 @@ class ItemBase(BaseModel):
     gl: str = ""
     size: str = ""
     length: str = ""
+    pack_unit: int = 0
     packing: int = 1
     description: str = ""
     barcode: str = ""
@@ -136,11 +144,18 @@ class ItemBase(BaseModel):
     bg_per_box: float = 0.0
     p_per_box: float = 0.0
     type_up: int = 0
+    sticker_mult: float = 1.1
+    sticker_round: bool = False
+    stickers_fixed: float = 0.0
+    label_spoilage: float = 1.0
+    sticker_rule: str = "pp"
+    uom: str = "PCS"
     value_mode: str = "piece"
     unit_value: float = 0.0
     fob_mode: str = "100"
     unit_fob100: float = 0.0
     group: str = ""
+    source_sheet: str = ""
     supplier_id: Optional[str] = None
 
 
@@ -156,6 +171,7 @@ class ItemUpdate(BaseModel):
     gl: Optional[str] = None
     size: Optional[str] = None
     length: Optional[str] = None
+    pack_unit: Optional[int] = None
     packing: Optional[int] = None
     description: Optional[str] = None
     barcode: Optional[str] = None
@@ -166,16 +182,33 @@ class ItemUpdate(BaseModel):
     bg_per_box: Optional[float] = None
     p_per_box: Optional[float] = None
     type_up: Optional[int] = None
+    sticker_mult: Optional[float] = None
+    sticker_round: Optional[bool] = None
+    stickers_fixed: Optional[float] = None
+    label_spoilage: Optional[float] = None
+    sticker_rule: Optional[str] = None
+    uom: Optional[str] = None
     value_mode: Optional[str] = None
     unit_value: Optional[float] = None
     fob_mode: Optional[str] = None
     unit_fob100: Optional[float] = None
     group: Optional[str] = None
+    source_sheet: Optional[str] = None
     supplier_id: Optional[str] = None
 
 
 class Item(ItemBase, ORMModel):
     id: str
+    # Figures that do not depend on an order quantity, so every screen shows
+    # the same stickers-per-box without recomputing it locally.
+    stickers_per_box: float = 0.0
+
+
+class ItemDeriveIn(BaseModel):
+    """Ask the API what one ordered quantity works out to."""
+    item_id: str
+    qty: float = 0
+    rbi: float = 0.0
 
 
 # ---------- Transport ----------
@@ -183,6 +216,13 @@ class TransportBase(BaseModel):
     name: str
     transport_id: str = ""
     supplier_id: Optional[str] = None
+    supplier_ids: list[str] = Field(default_factory=list)
+
+    # Rows written before the column existed read back as NULL.
+    @field_validator("supplier_ids", mode="before")
+    @classmethod
+    def _none_is_empty(cls, v):
+        return v or []
 
 
 class TransportCreate(TransportBase):
@@ -190,9 +230,11 @@ class TransportCreate(TransportBase):
 
 
 class TransportUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     name: Optional[str] = None
     transport_id: Optional[str] = None
     supplier_id: Optional[str] = None
+    supplier_ids: Optional[list[str]] = None
 
 
 class Transport(TransportBase, ORMModel):

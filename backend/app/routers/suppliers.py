@@ -41,7 +41,12 @@ def update_supplier(sid: str, body: schemas.SupplierUpdate, db: Session = Depend
 @router.delete("/{sid}", status_code=204, dependencies=[Depends(_write)])
 def delete_supplier(sid: str, db: Session = Depends(get_db)):
     obj = db.get(models.Supplier, sid)
-    if obj:
-        db.delete(obj)
-        db.commit()
+    if not obj:
+        return None
+    items = db.query(models.Item).filter_by(supplier_id=sid).count()
+    if items:
+        raise HTTPException(409, f"{obj.name} still has {items} item(s) in the master — "
+                                 "move or remove them first.")
+    db.delete(obj)
+    db.commit()
     return None

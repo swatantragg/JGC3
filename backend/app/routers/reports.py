@@ -47,12 +47,49 @@ def balance_register(db: Session = Depends(get_db)):
                 "recd": recd, "pending": d["remaining"], "volume": d["ordered"] * (it.volume or 0),
                 "invoices": sorted(d["invoices"]),
             })
+        open_demands = [d for d in b["demands"] if d["remaining"] > 0]
         item_rows.append({
-            "item_id": it.id, "gd": it.gd, "description": it.description,
-            "pos": sorted({d["po"] for d in b["demands"]}), "invoices": sorted(inv_set),
+            "item_id": it.id, "gd": it.gd, "code": it.code, "description": it.description,
+            "supplier_id": it.supplier_id, "packing": it.packing,
+            "pos": sorted({d["po"] for d in b["demands"]}),
+            # Only the orders still short — that is what packing is filling.
+            "pending_pos": sorted({d["po"] for d in open_demands}),
+            "oldest": min((d["date"] for d in open_demands), default=None),
+            "date": max((d["date"] for d in b["demands"]), default=None),
+            "invoices": sorted(inv_set),
             "qty": sum(d["qty"] for d in b["demands"]), "ordered": ordered,
-            "recd": ordered - pending, "pending": pending, "volume": ordered * (it.volume or 0),
+            "recd": ordered - pending, "pending": pending,
+            "vol_per_box": it.volume or 0, "volume": ordered * (it.volume or 0),
         })
+
+    # Supplier-wise: what each supplier has actually delivered, per item.
+    sup_map: dict = {}
+    for inv in sorted(invoices, key=lambda x: x.date):
+        for l in inv.lines:
+            it = items.get(l.item_id)
+            if not it:
+                continue
+            k = (l.supplier_id, l.item_id)
+            e = sup_map.setdefault(k, {
+                "supplier_id": l.supplier_id, "item_id": it.id, "gd": it.gd,
+                "code": it.code, "description": it.description, "date": inv.date,
+                "recd": 0, "invoices": set(),
+            })
+            e["recd"] += int(l.boxes or 0)
+            e["invoices"].add(inv.invoice_no)
+            e["date"] = inv.date
+    sup_rows = []
+    pending_by_item = {r["item_id"]: r["pending"] for r in item_rows}
+    for e in sup_map.values():
+        it = items[e["item_id"]]
+        sup_rows.append({
+            **e, "invoices": sorted(e["invoices"]),
+            "volume": e["recd"] * (it.volume or 0),
+            "value": e["recd"] * (it.packing or 0) * (it.unit_value or 0),
+            "pending": pending_by_item.get(e["item_id"], 0),
+        })
+
     po_rows.sort(key=lambda r: (r["po"], r["gd"]))
     item_rows.sort(key=lambda r: r["gd"])
-    return {"po": po_rows, "item": item_rows}
+    sup_rows.sort(key=lambda r: (r["supplier_id"] or "", r["gd"]))
+    return {"po": po_rows, "item": item_rows, "supplier": sup_rows}
