@@ -29,7 +29,8 @@ function crudHooks(key, resource, extraInvalidate = []) {
 }
 
 // Masters — mutations also refresh dependent computed views.
-const DERIVED = ["dashboard", "po-list", "po-lines", "invoices", "item-detail", "balance"];
+const DERIVED = ["dashboard", "badges", "po-list", "po-lines", "invoices", "item-detail",
+  "balance", "item-groups", "items-grouped", "order-lines", "master-2a", "master-7a", "derive"];
 
 export const {
   useList: useSuppliers, useCreate: useCreateSupplier,
@@ -41,22 +42,79 @@ export const {
   useUpdate: useUpdateBuyer, useRemove: useDeleteBuyer,
 } = crudHooks("buyers", api.buyers, DERIVED);
 
-export const {
-  useList: useItems, useCreate: useCreateItem,
-  useUpdate: useUpdateItem, useRemove: useDeleteItem,
-} = crudHooks("items", api.items, DERIVED);
+const itemHooks = crudHooks("items", api.items, DERIVED);
+export const { useCreate: useCreateItem, useUpdate: useUpdateItem, useRemove: useDeleteItem } = itemHooks;
+
+/* Items take optional server-side filters — { supplier_id, group, q }. The
+   filters are part of the cache key, so switching supplier is instant once
+   seen and a mutation still invalidates every variation. */
+export const useItems = (params) =>
+  useQuery({ queryKey: ["items", params || {}], queryFn: () => api.items.list(params) });
+
+export const useItemGroups = () =>
+  useQuery({ queryKey: ["item-groups"], queryFn: api.items.groups });
+
+/* The master keyed the way an order is placed — one product, then the
+   suppliers who make it. */
+export const useGroupedItems = (params) =>
+  useQuery({ queryKey: ["items-grouped", params || {}], queryFn: () => api.items.grouped(params) });
 
 export const {
   useList: useTransports, useCreate: useCreateTransport,
   useUpdate: useUpdateTransport, useRemove: useDeleteTransport,
 } = crudHooks("transports", api.transports, DERIVED);
 
+/* Master workbook — what the bundled extract holds, loading it into the
+   database, and the 2A / 7A figures for a set of ordered quantities. The
+   derivation is asked of the API rather than repeated in the browser, so a
+   screen can never show a number the backend would not agree with. */
+export const useMastersSeed = () =>
+  useQuery({ queryKey: ["masters-seed"], queryFn: api.masters.seed, staleTime: Infinity });
+
+export const useMasterFormulas = () =>
+  useQuery({ queryKey: ["master-formulas"], queryFn: api.masters.formulas, staleTime: Infinity });
+
+export function useImportMasters() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (overwrite) => api.masters.import(overwrite),
+    onSuccess: () => ["items", "item-groups", "suppliers", "buyers", "transports", ...DERIVED]
+      .forEach((k) => qc.invalidateQueries({ queryKey: [k] })),
+  });
+}
+
+/* `rows` is [{ item_id, qty, rbi }]. Disabled while empty so an untouched
+   order form makes no request. */
+export const useDerive = (rows) =>
+  useQuery({
+    queryKey: ["derive", rows],
+    queryFn: () => api.masters.derive(rows),
+    enabled: Array.isArray(rows) && rows.length > 0,
+    placeholderData: (prev) => prev,
+  });
+
+/* The two master sheets themselves — 2A for a buyer order, 7A for a
+   supplier's whole open book. */
+export const useOrderMaster = (po) =>
+  useQuery({ queryKey: ["master-2a", po], queryFn: () => api.masters.order(po), enabled: !!po });
+
+export const useOrderLines = (range) =>
+  useQuery({ queryKey: ["order-lines", range || {}], queryFn: () => api.masters.orderLines(range) });
+
+export const useSupplierMaster = (supplierId, range) =>
+  useQuery({
+    queryKey: ["master-7a", supplierId, range || {}],
+    queryFn: () => api.masters.supplier(supplierId, range),
+    enabled: !!supplierId,
+  });
+
 // Purchase orders
 export const usePoList = () => useQuery({ queryKey: ["po-list"], queryFn: api.purchaseOrders.list });
 export const usePoLines = () => useQuery({ queryKey: ["po-lines"], queryFn: api.purchaseOrders.lines });
 export function usePoMutations() {
   const qc = useQueryClient();
-  const invalidate = () => ["po-list", "po-lines", "dashboard", "item-detail", "balance"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  const invalidate = () => ["po-list", "po-lines", "dashboard", "badges", "item-detail", "balance",
+    "order-lines", "master-2a", "master-7a"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   return {
     create: useMutation({ mutationFn: api.purchaseOrders.create, onSuccess: invalidate }),
     update: useMutation({ mutationFn: ({ po, body }) => api.purchaseOrders.update(po, body), onSuccess: invalidate }),
@@ -68,7 +126,8 @@ export function usePoMutations() {
 export const useInvoices = () => useQuery({ queryKey: ["invoices"], queryFn: api.invoices.list });
 export function useInvoiceMutations() {
   const qc = useQueryClient();
-  const invalidate = () => ["invoices", "dashboard", "po-list", "balance"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  const invalidate = () => ["invoices", "dashboard", "badges", "po-list", "balance", "order-lines",
+    "master-2a", "master-7a"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
   return {
     create: useMutation({ mutationFn: api.invoices.create, onSuccess: invalidate }),
     update: useMutation({ mutationFn: ({ id, body }) => api.invoices.update(id, body), onSuccess: invalidate }),
@@ -78,6 +137,10 @@ export function useInvoiceMutations() {
 
 // Derived / reports
 export const useDashboardMatrix = () => useQuery({ queryKey: ["dashboard"], queryFn: api.dashboard.matrix });
+
+/* The three counters the menu bar carries. Refetched after any mutation that
+   could move them, so a badge never lies about what is still open. */
+export const useBadges = () => useQuery({ queryKey: ["badges"], queryFn: api.dashboard.badges });
 export const useItemDetail = () => useQuery({ queryKey: ["item-detail"], queryFn: api.reports.itemDetail });
 export const useBalance = () => useQuery({ queryKey: ["balance"], queryFn: api.reports.balance });
 

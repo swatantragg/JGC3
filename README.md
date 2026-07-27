@@ -64,10 +64,79 @@ records. Open the frontend and the login screen offers to **create the admin
 account**; that first account gets full access and is the only one that can
 approve anybody else. The offer disappears once an admin exists.
 
-After that: enter real master data through **Setup** (items, buyers,
-suppliers, transports), then create purchase orders, record packing
-(invoices) and add shipment details — the dashboard, PO roll-up, balance
-register and costing sheet update live from that data.
+After that, load the client's master workbook — **Setup → Items → Load from
+workbook**. That brings in the 285 products, five suppliers, the buyer and
+the two transporters from `Docs/Data/Masters.xlsx`. It is an upsert keyed on
+supplier + sheet + code, so it can be run again after the workbook changes
+without duplicating anything, and it never overwrites a record you have since
+corrected in Setup.
+
+Then create purchase orders, record packing (invoices) and add shipment
+details — the dashboard, PO roll-up, balance register and costing sheet
+update live from that data.
+
+## The master workbook
+
+`Docs/Data/Masters.xlsx` is the source of truth for parties and products.
+Sheet1 holds the buyer, the suppliers and the transporters; the six sheets
+after it (Kiran, Hansa-PP, Hansa-GRN, Oswin, VP-PP, VP-GRN) are the client's
+2A and 7A masters, one per supplier range.
+
+```bash
+python backend/scripts/extract_masters.py   # xlsx  → app/data/masters_seed.json
+python backend/scripts/verify_masters.py    # check that extract against Excel
+python backend/scripts/import_masters.py    # seed  → the database
+```
+
+`verify_masters.py` is the guard rail. Excel stores the value it last
+calculated for every formula cell, so those cached results are ground truth:
+the script checks each row's barcode-sticker total against Excel's own cell,
+re-implements the whole formula chain independently of `calc.py` and compares
+the two at three different quantities, and asserts that every sheet's
+formulas still reference the columns the extractor reads. Run it after any
+change to the workbook or to `calc.derive_line`.
+
+The ranges do not share one formula. What differs is carried per item —
+`sticker_mult`, `sticker_round`, `stickers_fixed`, `label_spoilage` and
+`type_up` — because the workbook has per-row exceptions inside a range too
+(VP-PP rows 9-11 round like the GRN sheets, two rows multiply by 1 rather
+than 1.1, one Oswin row has its total typed in). `calc.derive_line` is the
+only implementation of the arithmetic; every screen asks the API for it.
+
+## Navigation
+
+The menu follows the client's own (Docs/Jaikvin Process/Menu Bar.xlsx), with
+two dropdowns:
+
+```
+Dashboard | Purchase Orders ▾ | Shipment ▾ | Pre-Shipment Reports | Post Shipment Reports | Other Reports | Setup
+             Purchase Orders     Packing — FIFO
+             PO Reports          Shipment details
+                                 Suppliers' Reports
+```
+
+Badges on **Purchase Orders** and **Shipment** count open POs and boxes still
+to pack; `⌘K` opens a palette that jumps to any page or any of the 40
+documents. Routing is hash-based (`#/orders`), so a deep link resolves without
+a server rewrite.
+
+**Where the RBI rate lives.** Not on the purchase order — on the packing. It
+is the Reserve Bank reference rate for the day the goods were packed, which is
+what the customs invoice and the bank need, so it is entered at
+**Shipment → Record packing** along with the carton serial start. The
+shipment's own exchange rate (₹/$) is step 3 of the shipment wizard.
+
+## Documents
+
+`frontend/src/lib/docs.js` generates all 40 export papers as Excel workbooks
+from one invoice, previewed on screen before download. The four report pages
+(PO / Suppliers' / Pre-Shipment / Post Shipment) are the same page narrowed to
+one menu head.
+
+The layouts are the reference build's, unchanged. The figures are not: barcode
+stickers, label sheets and FOB follow each item's own rule out of Masters.xlsx
+rather than one blanket formula. `frontend/src/lib/docCtx.js` adapts the API's
+records into the shape the engine reads.
 
 ## Accounts and access
 
@@ -102,3 +171,9 @@ already worked out, so no two screens can disagree.
 
 Tables: `users`, `suppliers`, `buyers`, `items`, `transports`, `po_lines`,
 `invoices`, `invoice_lines`, `costing_lines`, `settings`.
+
+**Schema changes.** `Base.metadata.create_all` makes missing tables but never
+missing columns, so `app/migrate.py` runs at startup and adds any column the
+models have gained. It is additive only — nothing is dropped, renamed or
+retyped — so it is safe on every boot. Anything beyond adding a column
+belongs in Alembic.

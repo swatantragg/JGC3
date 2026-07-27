@@ -9,7 +9,7 @@ No seed / dummy rows are created — every record is entered through the API.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, Integer, Float, ForeignKey, JSON, DateTime
+from sqlalchemy import Boolean, Column, String, Integer, Float, ForeignKey, JSON, DateTime
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -36,12 +36,17 @@ class User(Base):
 
 
 class Supplier(Base):
+    """A manufacturer we buy from. Address / PIN / state come from the client's
+    master workbook (Sheet1) and print on the supplier PO and e-way bill."""
     __tablename__ = "suppliers"
     id = Column(String, primary_key=True, default=new_id)
     code = Column(String, nullable=False)
     name = Column(String, nullable=False)
     place = Column(String, default="")
     gstin = Column(String, default="")
+    addr = Column(String, default="")
+    pin = Column(String, default="")
+    state = Column(String, default="")
     weights = Column(String, default="auto")  # "auto" | "manual"
 
 
@@ -58,6 +63,14 @@ class Buyer(Base):
 
 
 class Item(Base):
+    """One product of one supplier — a row of the client's master workbook.
+
+    The workbook keeps a sheet per supplier range (Kiran, Hansa-PP, Hansa-GRN,
+    Oswin, VP-PP, VP-GRN) and the ranges do not share every formula, so each
+    row carries the `sticker_rule` its numbers were produced with. See
+    `calc.derive_line` for the three variants — everything else (boxes,
+    volume, weights, value, FOB, RBI reference) is common.
+    """
     __tablename__ = "items"
     id = Column(String, primary_key=True, default=new_id)
     code = Column(String, nullable=False)
@@ -66,30 +79,43 @@ class Item(Base):
     gl = Column(String, default="")
     size = Column(String, default="")
     length = Column(String, default="")
-    packing = Column(Integer, default=1)
+    pack_unit = Column(Integer, default=0)   # pieces per inner bag / unit pack
+    packing = Column(Integer, default=1)     # pieces (or metres) per box
     description = Column(String, default="")
     barcode = Column(String, default="")
     hsn = Column(String, default="")
-    volume = Column(Float, default=0.0)
+    volume = Column(Float, default=0.0)      # m³ per box
     net_per_box = Column(Float, default=0.0)
     gross_per_box = Column(Float, default=0.0)
-    bg_per_box = Column(Float, default=0.0)
-    p_per_box = Column(Float, default=0.0)
-    type_up = Column(Integer, default=0)
+    bg_per_box = Column(Float, default=0.0)  # bag stickers per box
+    p_per_box = Column(Float, default=0.0)   # piece stickers per box
+    type_up = Column(Integer, default=0)     # labels printed per sheet
+    sticker_mult = Column(Float, default=1.1)      # (bg + p) × this
+    sticker_round = Column(Boolean, default=False)  # …then rounded (GRN range)
+    stickers_fixed = Column(Float, default=0.0)     # typed-in override, 0 = derive
+    label_spoilage = Column(Float, default=1.0)     # 1.05 on the Oswin range
+    sticker_rule = Column(String, default="pp")    # provenance: pp | grn | oswin
+    uom = Column(String, default="PCS")            # PCS | MTR
     value_mode = Column(String, default="piece")   # piece | 100 | custom
     unit_value = Column(Float, default=0.0)
     fob_mode = Column(String, default="100")        # piece | 100 | custom
     unit_fob100 = Column(Float, default=0.0)
     group = Column(String, default="")
+    source_sheet = Column(String, default="")     # provenance in Masters.xlsx
     supplier_id = Column(String, ForeignKey("suppliers.id"), nullable=True)
 
 
 class Transport(Base):
+    """A carrier. One transporter may serve several suppliers (the workbook
+    lists "Oswin Plastic Pvt Ltd, VP Plastic" against one carrier), so the
+    full set lives in `supplier_ids`; `supplier_id` keeps the first of them
+    for the older single-supplier reads."""
     __tablename__ = "transports"
     id = Column(String, primary_key=True, default=new_id)
     name = Column(String, nullable=False)
     transport_id = Column(String, default="")
     supplier_id = Column(String, ForeignKey("suppliers.id"), nullable=True)
+    supplier_ids = Column(JSON, nullable=False, default=list)
 
 
 class PurchaseOrderLine(Base):

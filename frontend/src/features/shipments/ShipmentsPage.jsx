@@ -1,66 +1,116 @@
-import { useState } from "react";
-import { Ship, FileText, Truck, Container, Pencil, Trash2 } from "lucide-react";
-import { Card, CardHead, Btn, Pill, Mono, DataTable, Empty, Spinner, ErrorState, Stat } from "../../components/ui/index.jsx";
-import { useInvoices, useBuyers, useInvoiceMutations } from "../../api/hooks.js";
+import { useMemo, useState } from "react";
+import { Ship, FileText, Pencil, ChevronRight, ArrowRight, Truck, Container } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import {
+  Card, CardHead, Btn, Pill, Mono, DataTable, Empty, Note, Stat, Spinner, ErrorState,
+} from "../../components/ui/index.jsx";
+import { useInvoices, useItems, useBuyers } from "../../api/hooks.js";
+import { dmy, num, usd } from "../../lib/format.js";
 import { INV_STATUS_TONE } from "../../lib/constants.js";
-import { dmy } from "../../lib/format.js";
-import ShipmentEditor from "./ShipmentEditor.jsx";
+import InvoiceModal from "../packing/InvoiceModal.jsx";
+import InvoiceEditModal from "../packing/InvoiceEditModal.jsx";
+import ShipmentWizard from "./ShipmentWizard.jsx";
 
+/* Shipment details — an invoice moves through three gated steps
+   (vehicle → container → BL). The status column tracks it:
+   Ready to dispatch → Dispatched → Ready to Ship → Shipped. */
 export default function ShipmentsPage() {
-  const iq = useInvoices();
-  const buyers = useBuyers().data || [];
-  const { remove } = useInvoiceMutations();
-  const [editing, setEditing] = useState(null);
-  const [confirmId, setConfirmId] = useState(null);
+  const nav = useNavigate();
+  const [openId, setOpenId] = useState(null);
+  const [wizId, setWizId] = useState(null);
+  const [editId, setEditId] = useState(null);
 
-  if (iq.isLoading) return <Spinner label="Loading shipments…" />;
-  if (iq.error) return <ErrorState error={iq.error} onRetry={iq.refetch} />;
-  const invoices = iq.data || [];
+  const invq = useInvoices();
+  const items = useItems().data || [];
+  const buyers = useBuyers().data || [];
+  const invoices = invq.data || [];
+
+  const byId = useMemo(() => Object.fromEntries(items.map((i) => [i.id, i])), [items]);
   const brand = (id) => buyers.find((b) => b.id === id)?.brand || "—";
-  const count = (st) => invoices.filter((i) => i.status === st).length;
+
+  const rows = useMemo(() => invoices.map((inv) => {
+    let boxes = 0; let volume = 0; let fob = 0;
+    (inv.lines || []).forEach((l) => {
+      const it = byId[l.item_id] || {};
+      const b = Number(l.boxes) || 0;
+      const pieces = b * (it.packing || 0);
+      const rate = (it.fob_mode || "100") === "100" ? (it.unit_fob100 || 0) / 100 : (it.unit_fob100 || 0);
+      boxes += b; volume += b * (it.volume || 0); fob += pieces * rate;
+    });
+    return { inv, boxes, volume, fob };
+  }), [invoices, byId]);
+
+  const totalFob = rows.reduce((s, r) => s + r.fob, 0);
+  const byStatus = (st) => invoices.filter((i) => i.status === st).length;
+
+  const openInv = invoices.find((i) => i.id === openId);
+  const wizInv = invoices.find((i) => i.id === wizId);
+  const editInv = invoices.find((i) => i.id === editId);
+
+  if (invq.isLoading) return <Spinner label="Loading invoices…" />;
+  if (invq.error) return <ErrorState error={invq.error} onRetry={invq.refetch} />;
 
   return (
     <div className="stack">
       <div className="page-head">
         <h2 className="h1">Shipment details</h2>
-        <p className="sub">Advance each invoice through three gated steps — vehicle details (supplier-wise), container details, then BL &amp; shipping. The status moves Ready to dispatch → Dispatched → Ready to Ship → Shipped.</p>
+        <p className="sub">
+          Open an invoice and fill three gated steps — <b>vehicle details</b> (supplier-wise), <b>container details</b>, then <b>BL &amp; shipping</b>.
+          Each unlocks the next, and the status moves from <b>Ready to dispatch</b> → <b>Dispatched</b> → <b>Ready to Ship</b> → <b>Shipped</b>.
+        </p>
       </div>
 
       <div className="grid-4">
-        <Stat icon={FileText} value={invoices.length} label="Invoices" sub="All buyers" />
-        <Stat icon={Truck} tone={count("Dispatched") ? "amber" : undefined} value={count("Dispatched")} label="Dispatched" sub="Vehicle details in" />
-        <Stat icon={Container} value={count("Ready to Ship")} label="Ready to Ship" sub="Container details in" />
-        <Stat icon={Ship} tone="green" value={count("Shipped")} label="Shipped" sub="BL & vessel in" />
+        <Stat icon={FileText} value={invoices.length} label="Invoices" sub="Across all buyers" />
+        <Stat icon={Truck} tone={byStatus("Dispatched") ? "amber" : undefined} value={byStatus("Dispatched")} label="Dispatched" sub="Vehicle details in" />
+        <Stat icon={Container} value={byStatus("Ready to Ship")} label="Ready to Ship" sub="Container details in" />
+        <Stat icon={Ship} tone="green" value={byStatus("Shipped")} label="Shipped" sub={usd(totalFob) + " FOB total"} />
       </div>
 
       <Card>
-        <CardHead icon={FileText} title={`${invoices.length} invoice${invoices.length === 1 ? "" : "s"}`} />
+        <CardHead icon={FileText} title={`${invoices.length} invoice${invoices.length === 1 ? "" : "s"}`}>
+          <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Click a row to open · edit shipment to advance the status</span>
+        </CardHead>
         {invoices.length ? (
-          <DataTable
+          <DataTable serial
+            freeze={5}
+            onRowClick={(r) => setOpenId(r.inv.id)}
             columns={[
-              { key: "no", label: "Invoice", render: (r) => <Mono>{r.invoice_no}</Mono> },
-              { key: "date", label: "Date", render: (r) => <span style={{ color: "var(--muted)" }}>{dmy(r.date)}</span> },
-              { key: "buyer", label: "Buyer", render: (r) => brand(r.buyer_id) },
-              { key: "boxes", label: "Boxes", align: "r", strong: true, render: (r) => r.lines.reduce((s, l) => s + l.boxes, 0) },
-              { key: "container", label: "Container", render: (r) => r.ship?.container ? <Mono>{r.ship.container}</Mono> : <span style={{ color: "var(--faint)" }}>—</span> },
-              { key: "status", label: "Status", render: (r) => <Pill tone={INV_STATUS_TONE[r.status] || ""}>{r.status}</Pill> },
+              { key: "no", w: 156, label: "Invoice", render: (r) => <Mono>{r.inv.invoice_no}</Mono> },
+              { key: "date", w: 118, label: "Date", render: (r) => <span style={{ color: "var(--muted)" }}>{dmy(r.inv.date)}</span> },
+              { key: "buyer", w: 150, label: "Buyer", render: (r) => <span style={{ color: "var(--ink)", fontWeight: 500 }}>{brand(r.inv.buyer_id)}</span> },
+              { key: "boxes", w: 78, label: "Boxes", align: "r", strong: true, render: (r) => r.boxes },
+              { key: "vol", w: 106, label: "Volume m³", align: "r", render: (r) => num(r.volume, 3) },
+              { key: "fob", label: "FOB $", align: "r", strong: true, render: (r) => usd(r.fob) },
+              { key: "container", label: "Container", render: (r) => r.inv.ship?.container ? <Mono>{r.inv.ship.container}</Mono> : <span style={{ color: "var(--faint)" }}>—</span> },
+              { key: "status", label: "Status", render: (r) => <Pill tone={INV_STATUS_TONE[r.inv.status] || ""}>{r.inv.status}</Pill> },
               {
-                key: "_act", label: "", align: "r", render: (r) => (
+                key: "act", label: "", align: "r", render: (r) => (
                   <span className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
-                    <button className="btn btn-quiet btn-sm" onClick={() => setEditing(r)}><Pencil size={13} /> Shipment</button>
-                    {confirmId === r.id
-                      ? <><Btn variant="danger" size="sm" icon={Trash2} onClick={() => remove.mutate(r.id, { onSettled: () => setConfirmId(null) })}>Confirm</Btn><Btn variant="ghost" size="sm" onClick={() => setConfirmId(null)}>No</Btn></>
-                      : <button className="icon-btn bare" title="Delete invoice" onClick={() => setConfirmId(r.id)}><Trash2 size={14} /></button>}
+                    <button className="btn btn-quiet btn-sm" onClick={(e) => { e.stopPropagation(); setWizId(r.inv.id); }}><Ship size={13} /> Shipment</button>
+                    <button className="btn btn-quiet btn-sm" onClick={(e) => { e.stopPropagation(); setEditId(r.inv.id); }}><Pencil size={13} /> Edit</button>
                   </span>
                 ),
               },
+              { key: "go", label: "", align: "r", render: () => <ChevronRight size={15} style={{ color: "var(--faint)" }} /> },
             ]}
-            rows={invoices} rowKey={(r) => r.id}
+            rows={rows} rowKey={(r) => r.inv.id}
           />
-        ) : <Empty icon={FileText} title="No invoices yet">Record packing to create an invoice, then add its shipment details here.</Empty>}
+        ) : (
+          <Empty icon={FileText} title="No invoices yet" action={<Btn icon={ArrowRight} onClick={() => nav("/packing")}>Go to packing</Btn>}>
+            Invoices are created when you record what a supplier packed.
+          </Empty>
+        )}
+        {invoices.length > 0 && (
+          <div className="card-foot">
+            <Note tone="teal">Fill the three shipment steps and every one of the 40 papers is populated from this invoice — same PO, dates, BL, container and quantities on every sheet.</Note>
+          </div>
+        )}
       </Card>
 
-      {editing && <ShipmentEditor inv={editing} onClose={() => setEditing(null)} />}
+      {openInv && <InvoiceModal inv={openInv} onClose={() => setOpenId(null)} onEditShip={() => { setWizId(openInv.id); setOpenId(null); }} />}
+      {wizInv && <ShipmentWizard inv={wizInv} onClose={() => setWizId(null)} />}
+      {editInv && <InvoiceEditModal inv={editInv} onClose={() => setEditId(null)} />}
     </div>
   );
 }

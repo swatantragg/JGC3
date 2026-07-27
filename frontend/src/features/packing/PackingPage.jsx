@@ -1,53 +1,168 @@
-import { useState } from "react";
-import { Plus, FileText, PackageCheck } from "lucide-react";
-import { Card, CardHead, Btn, Pill, Mono, DataTable, Empty, Spinner, ErrorState } from "../../components/ui/index.jsx";
-import { useInvoices, useBuyers, useSuppliers } from "../../api/hooks.js";
+import { useMemo, useState } from "react";
+import { Plus, Check, Boxes, FileText, AlertTriangle, ArrowRight, Truck, Hash } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import {
+  Card, CardHead, Btn, Seg, Pill, Mono, DataTable, Empty, Note, Info, Spinner, ErrorState,
+} from "../../components/ui/index.jsx";
+import { useInvoices, useBalance, useItems, useSuppliers, useBuyers } from "../../api/hooks.js";
+import { dmy, num } from "../../lib/format.js";
 import { INV_STATUS_TONE } from "../../lib/constants.js";
-import { dmy } from "../../lib/format.js";
-import NewInvoiceModal from "./NewInvoiceModal.jsx";
+import RecordPackingDrawer from "./RecordPackingDrawer.jsx";
+import InvoiceModal from "./InvoiceModal.jsx";
+import InvoiceEditModal from "./InvoiceEditModal.jsx";
+import ShipmentWizard from "../shipments/ShipmentWizard.jsx";
 
-/* Packing — record what suppliers delivered as a real invoice. */
+/* Shipment — "what did the supplier actually deliver?"
+
+   FIFO is never asked of the user: boxes simply clear the oldest open order
+   first, and the page says so in plain English. */
 export default function PackingPage() {
-  const [adding, setAdding] = useState(false);
-  const iq = useInvoices();
-  const buyers = useBuyers().data || [];
-  const suppliers = useSuppliers().data || [];
-  const brand = (id) => buyers.find((b) => b.id === id)?.brand || "—";
-  const supCode = (id) => suppliers.find((s) => s.id === id)?.code || "—";
+  const nav = useNavigate();
+  const [drawer, setDrawer] = useState(false);
+  const [selId, setSelId] = useState(null);
+  const [wizId, setWizId] = useState(null);
+  const [editId, setEditId] = useState(null);
+  const [tab, setTab] = useState("pending");
 
-  if (iq.isLoading) return <Spinner label="Loading invoices…" />;
-  if (iq.error) return <ErrorState error={iq.error} onRetry={iq.refetch} />;
-  const invoices = iq.data || [];
+  const invq = useInvoices();
+  const balq = useBalance();
+  const items = useItems().data || [];
+  const suppliers = useSuppliers().data || [];
+  const buyers = useBuyers().data || [];
+
+  const invoices = invq.data || [];
+  const supCode = (id) => suppliers.find((s) => s.id === id)?.code || "—";
+  const brand = (id) => buyers.find((b) => b.id === id)?.brand || "—";
+  const byId = useMemo(() => Object.fromEntries(items.map((i) => [i.id, i])), [items]);
+
+  const selInv = invoices.find((i) => i.id === selId);
+  const wizInv = invoices.find((i) => i.id === wizId);
+  const editInv = invoices.find((i) => i.id === editId);
+
+  /* Everything still owed, item by item, oldest order first — that is exactly
+     the order the boxes will be allocated in. */
+  const pendingRows = useMemo(
+    () => (balq.data?.item || []).filter((r) => r.pending > 0)
+      .sort((a, b) => String(a.oldest || "").localeCompare(String(b.oldest || ""))),
+    [balq.data],
+  );
+  const pendingBoxes = pendingRows.reduce((s, r) => s + r.pending, 0);
+
+  const invList = useMemo(() => invoices.map((inv) => {
+    const lines = (inv.lines || []).map((l) => {
+      const it = byId[l.item_id] || {};
+      const boxes = Number(l.boxes) || 0;
+      return { ...l, boxes, volume: boxes * (it.volume || 0) };
+    });
+    const sup = {};
+    lines.forEach((l) => {
+      sup[l.supplier_id] = sup[l.supplier_id] || { supplierId: l.supplier_id, boxes: 0 };
+      sup[l.supplier_id].boxes += l.boxes;
+    });
+    return {
+      inv,
+      boxes: lines.reduce((s, l) => s + l.boxes, 0),
+      volume: lines.reduce((s, l) => s + l.volume, 0),
+      sup: Object.values(sup),
+    };
+  }), [invoices, byId]);
+
+  if (invq.isLoading || balq.isLoading) return <Spinner label="Loading the packing register…" />;
+  if (invq.error) return <ErrorState error={invq.error} onRetry={invq.refetch} />;
 
   return (
     <div className="stack">
       <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
         <div className="page-head" style={{ margin: 0 }}>
-          <h2 className="h1">Packing</h2>
-          <p className="sub">Record the boxes each supplier delivers as an invoice, with its serial-carton range and RBI rate. Shipment details are added later on the Shipments page.</p>
+          <h2 className="h1">Shipment</h2>
+          <p className="sub">
+            Record the boxes each supplier delivers. They automatically clear the <b>oldest open order first</b>,{" "}
+            <Info>Known in the trade as FIFO — first in, first out. You never choose which purchase order a box belongs to; the system always fills the oldest one, so nothing ages silently.</Info>{" "}
+            and the balance register updates everywhere at once.
+          </p>
         </div>
-        <Btn size="lg" icon={Plus} onClick={() => setAdding(true)}>Record packing</Btn>
+        <Btn size="lg" icon={Plus} onClick={() => setDrawer(true)}>Record packing</Btn>
       </div>
 
-      <Card>
-        <CardHead icon={FileText} title={`${invoices.length} packing invoice${invoices.length === 1 ? "" : "s"}`} />
-        {invoices.length ? (
-          <DataTable
-            columns={[
-              { key: "no", label: "Invoice", render: (r) => <Mono>{r.invoice_no}</Mono> },
-              { key: "date", label: "Date", render: (r) => <span style={{ color: "var(--muted)" }}>{dmy(r.date)}</span> },
-              { key: "buyer", label: "Buyer", render: (r) => brand(r.buyer_id) },
-              { key: "boxes", label: "Boxes", align: "r", strong: true, render: (r) => r.lines.reduce((s, l) => s + l.boxes, 0) },
-              { key: "sup", label: "Received from", render: (r) => <span className="row" style={{ gap: 4 }}>{[...new Set(r.lines.map((l) => l.supplier_id))].map((s) => <Pill key={s}>{supCode(s)}</Pill>)}</span> },
-              { key: "serial", label: "Serial start", render: (r) => <Mono>{r.serial_start || "—"}</Mono> },
-              { key: "status", label: "Status", render: (r) => <Pill tone={INV_STATUS_TONE[r.status] || ""}>{r.status}</Pill> },
-            ]}
-            rows={invoices} rowKey={(r) => r.id}
-          />
-        ) : <Empty icon={PackageCheck} title="No packing invoices yet" action={<Btn icon={Plus} onClick={() => setAdding(true)}>Record packing</Btn>}>Record what a supplier delivered and an invoice is created.</Empty>}
-      </Card>
+      <Seg options={[
+        ["pending", `Still to pack${pendingBoxes ? ` · ${pendingBoxes}` : ""}`, Boxes],
+        ["invoices", `Packing invoices · ${invoices.length}`, FileText],
+      ]} value={tab} onChange={setTab} />
 
-      {adding && <NewInvoiceModal onClose={() => setAdding(false)} />}
+      {tab === "pending" && (
+        <Card>
+          <CardHead icon={Boxes} title={pendingBoxes ? `${pendingBoxes} boxes owed to the buyer` : "Every order is filled"}>
+            <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Oldest order first — the order your boxes will be allocated in</span>
+          </CardHead>
+          {pendingRows.length ? (
+            <>
+              <DataTable serial
+                freeze={5}
+                columns={[
+                  { key: "gd", w: 96, label: "GD code", render: (r) => <Mono>{r.gd}</Mono> },
+                  { key: "item", w: 220, label: "Item", render: (r) => <span style={{ color: "var(--ink)", whiteSpace: "pre-line" }}>{r.description}</span> },
+                  { key: "sup", w: 118, label: "Primary supplier", render: (r) => <Pill>{supCode(r.supplier_id)}</Pill> },
+                  { key: "pack", w: 96, label: "Packing", align: "r", render: (r) => `${r.packing} / box` },
+                  { key: "pending", w: 116, label: "Boxes pending", align: "r", strong: true, render: (r) => <span style={{ color: "var(--amber-ink)", fontWeight: 700 }}>{r.pending}</span> },
+                  { key: "vol", label: "Volume owed m³", align: "r", render: (r) => num(r.pending * r.vol_per_box, 3) },
+                  { key: "pos", label: "Open orders", render: (r) => <span className="row wrap" style={{ gap: 4 }}>{r.pending_pos.map((p) => <Pill key={p} tone="amber">PO {p}</Pill>)}</span> },
+                  { key: "oldest", label: "Oldest order", render: (r) => <span style={{ color: "var(--muted)" }}>{r.oldest ? dmy(r.oldest) : "—"}</span> },
+                ]}
+                rows={pendingRows} rowKey={(r) => r.item_id}
+              />
+              <div className="card-foot">
+                <Note tone="amber" icon={AlertTriangle}>Rows are sorted oldest order first — that is exactly the order your boxes will be allocated in.</Note>
+              </div>
+            </>
+          ) : (
+            <Empty icon={Check} title="Nothing pending" action={<Btn variant="ghost" icon={ArrowRight} onClick={() => nav("/shipments")}>Go to shipment details</Btn>}>
+              Every box ordered has been delivered and invoiced. Add shipment details next.
+            </Empty>
+          )}
+        </Card>
+      )}
+
+      {tab === "invoices" && (
+        <Card>
+          <CardHead icon={FileText} title={`${invoices.length} packing invoice${invoices.length === 1 ? "" : "s"}`}>
+            <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Click a row to open the invoice</span>
+          </CardHead>
+          {invoices.length ? (
+            <DataTable serial
+              freeze={5}
+              onRowClick={(r) => setSelId(r.inv.id)}
+              columns={[
+                { key: "no", w: 156, label: "Invoice", render: (r) => <Mono>{r.inv.invoice_no}</Mono> },
+                { key: "date", w: 118, label: "Date", render: (r) => <span style={{ color: "var(--muted)" }}>{dmy(r.inv.date)}</span> },
+                { key: "buyer", w: 150, label: "Buyer", render: (r) => brand(r.inv.buyer_id) },
+                { key: "boxes", w: 78, label: "Boxes", align: "r", strong: true, render: (r) => r.boxes },
+                { key: "vol", w: 106, label: "Volume m³", align: "r", render: (r) => num(r.volume, 3) },
+                { key: "sup", label: "Received from", render: (r) => <span className="row wrap" style={{ gap: 6 }}>{r.sup.map((s) => <span key={s.supplierId} className="row" style={{ gap: 3 }}><Pill>{supCode(s.supplierId)}</Pill><span style={{ fontSize: 11, color: "var(--faint)" }}>{s.boxes}bx</span></span>)}</span> },
+                { key: "status", label: "Status", render: (r) => <Pill tone={INV_STATUS_TONE[r.inv.status] || ""}>{r.inv.status}</Pill> },
+                {
+                  key: "act", label: "", align: "r", render: (r) => (
+                    <span className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
+                      <button className="btn btn-quiet btn-sm" onClick={(e) => { e.stopPropagation(); setWizId(r.inv.id); }}><Truck size={13} /> Shipment</button>
+                      <button className="btn btn-quiet btn-sm" onClick={(e) => { e.stopPropagation(); setEditId(r.inv.id); }}><Hash size={13} /> Edit</button>
+                    </span>
+                  ),
+                },
+              ]}
+              rows={invList} rowKey={(r) => r.inv.id}
+            />
+          ) : (
+            <Empty icon={FileText} title="No packing invoices yet">
+              Record what a supplier delivered with the button above and an invoice is created for you.
+            </Empty>
+          )}
+        </Card>
+      )}
+
+      {drawer && <RecordPackingDrawer onClose={() => setDrawer(false)} />}
+      {selInv && <InvoiceModal inv={selInv} onClose={() => setSelId(null)}
+        onEditShip={() => { setWizId(selInv.id); setSelId(null); }} />}
+      {wizInv && <ShipmentWizard inv={wizInv} onClose={() => setWizId(null)} />}
+      {editInv && <InvoiceEditModal inv={editInv} onClose={() => setEditId(null)} />}
     </div>
   );
 }
