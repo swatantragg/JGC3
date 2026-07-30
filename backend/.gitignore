@@ -1,15 +1,19 @@
 # Python
 __pycache__/
 *.py[cod]
+*.so
 *.egg-info/
 .eggs/
-build/
-dist/
+
+# Packaging output — anchored to backend/ root.
+# Unanchored (build/, dist/) matches at ANY depth and can swallow real source dirs.
+/build/
+/dist/
 
 # Virtual environments
 .venv/
 venv/
-env/
+/env/
 
 # Environment / secrets
 .env
