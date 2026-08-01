@@ -27,6 +27,9 @@ export const costing = {
   params: () => apiGet("/api/costing/params"),
   saveParams: (b) => apiPut("/api/costing/params", b),
   formulas: () => apiGet("/api/costing/formulas"),
+  // Cost a set of typed prices without saving, then save them item-wise.
+  preview: (rows) => apiPost("/api/costing/preview", rows),
+  upsert: (rows) => apiPut("/api/costing/upsert-by-item", rows),
 };
 
 export const suppliers = {
@@ -87,6 +90,11 @@ export const purchaseOrders = {
   create: (b) => apiPost("/api/purchase-orders", b),
   update: (po, b) => apiPut(`/api/purchase-orders/${encodeURIComponent(po)}`, b),
   remove: (po) => apiDelete(`/api/purchase-orders/${encodeURIComponent(po)}`),
+  // Orders keep the price they were placed at; these report and clear the
+  // difference after an item's price is edited in Setup.
+  priceDrift: (params) => apiGet(`/api/purchase-orders/price-drift${qs(params)}`),
+  applyPrices: (params) => apiPost(`/api/purchase-orders/apply-prices${qs(params)}`),
+  pendingForItem: (id) => apiGet(`/api/purchase-orders/pending-for-item/${id}`),
 };
 
 export const invoices = {
@@ -106,4 +114,7 @@ export const dashboard = {
 export const reports = {
   itemDetail: () => apiGet("/api/reports/item-detail"),
   balance: () => apiGet("/api/reports/balance"),
+  // Doc 38 — supply details item wise / supplier wise.
+  // params: { mode: "po" | "invoice", supplier_id, date_from, date_to }
+  supplyDetails: (params) => apiGet(`/api/reports/supply-details${qs(params)}`),
 };

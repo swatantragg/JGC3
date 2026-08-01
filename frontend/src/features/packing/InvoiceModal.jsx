@@ -3,7 +3,8 @@ import { Globe, Truck, Download, Pencil, FileText, AlertTriangle, CheckCircle2 }
 import { Modal, Btn, Seg, Pill, Mono, DataTable, Note } from "../../components/ui/index.jsx";
 import { useItems, useBuyers, useSuppliers, usePoLines, useInvoices } from "../../api/hooks.js";
 import { useToast } from "../../providers/ToastProvider.jsx";
-import { dmy, num, inr, usd } from "../../lib/format.js";
+import { dmy, num } from "../../lib/format.js";
+import { hidePriceCols, PRICE_HIDDEN_NOTE } from "../../lib/priceCols.js";
 import { docCtx } from "../../lib/docCtx.js";
 import { buildDocument, DOC_META } from "../../lib/docs.js";
 import { INV_STATUS_TONE } from "../../lib/constants.js";
@@ -34,13 +35,18 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
       const it = byId[l.item_id] || {};
       const boxes = Number(l.boxes) || 0;
       const pieces = boxes * (it.packing || 0);
-      const buyerRate = (it.fob_mode || "100") === "100" ? (it.unit_fob100 || 0) / 100 : (it.unit_fob100 || 0);
+      // As invoiced, not as the master reads today — a delivered invoice must
+      // always show the figures it was raised at.
+      const fob100 = l.unit_fob100 == null ? (it.unit_fob100 || 0) : Number(l.unit_fob100);
+      const fobMode = l.fob_mode || it.fob_mode || "100";
+      const supRate = l.unit_value == null ? (it.unit_value || 0) : Number(l.unit_value);
+      const buyerRate = fobMode === "100" ? fob100 / 100 : fob100;
       const from = sr; const to = sr + boxes - 1; sr += boxes;
       return {
         it, supplierId: l.supplier_id, boxes, pieces,
         volume: boxes * (it.volume || 0), netWt: boxes * (it.net_per_box || 0),
         buyerRate, buyerAmt: pieces * buyerRate,
-        supRate: it.unit_value || 0, supAmt: pieces * (it.unit_value || 0),
+        supRate, supAmt: pieces * supRate,
         range: boxes ? `${from}–${to}` : "—",
       };
     });
@@ -54,7 +60,9 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
   const ctx = () => docCtx({ invoice: inv, items, buyers, suppliers, poLines, invoices });
   const grab = (no) => { buildDocument(no, ctx()); toast(`Document ${no} · ${DOC_META[no]} downloaded`); };
 
-  const buyerCols = [
+  /* Rates and amounts are held off screen like everywhere else; the invoice
+     documents carry them in full. */
+  const buyerCols = hidePriceCols([
     { key: "sr", w: 108, label: "Serial", render: (x) => <Mono>{x.range}</Mono> },
     { key: "gd", w: 96, label: "GD code", render: (x) => <Mono>{x.it.gd}</Mono> },
     { key: "desc", w: 220, label: "Description", render: (x) => <span style={{ color: "var(--ink)", whiteSpace: "pre-line" }}>{x.it.description}</span> },
@@ -62,10 +70,10 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
     { key: "boxes", w: 78, label: "Boxes", align: "r", strong: true, render: (x) => x.boxes },
     { key: "pieces", label: "Pieces", align: "r", render: (x) => x.pieces.toLocaleString("en-IN") },
     { key: "vol", label: "Vol m³", align: "r", render: (x) => num(x.volume, 3) },
-    { key: "rate", label: "Rate $/pc", align: "r", render: (x) => usd(x.buyerRate) },
-    { key: "amt", label: "Amount $", align: "r", strong: true, render: (x) => usd(x.buyerAmt) },
-  ];
-  const supCols = [
+    { key: "rate", label: "Rate $/pc", align: "r" },
+    { key: "amt", label: "Amount $", align: "r", strong: true },
+  ]);
+  const supCols = hidePriceCols([
     { key: "sr", w: 108, label: "Serial", render: (x) => <Mono>{x.range}</Mono> },
     { key: "sp", w: 92, label: "Supplier", render: (x) => <Pill>{supCode(x.supplierId)}</Pill> },
     { key: "gd", w: 96, label: "GD code", render: (x) => <Mono>{x.it.gd}</Mono> },
@@ -73,9 +81,9 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
     { key: "boxes", w: 78, label: "Boxes", align: "r", strong: true, render: (x) => x.boxes },
     { key: "pieces", label: "Pieces", align: "r", render: (x) => x.pieces.toLocaleString("en-IN") },
     { key: "vol", label: "Vol m³", align: "r", render: (x) => num(x.volume, 3) },
-    { key: "rate", label: "Rate ₹/pc", align: "r", render: (x) => inr(x.supRate) },
-    { key: "amt", label: "Amount ₹", align: "r", strong: true, render: (x) => inr(x.supAmt) },
-  ];
+    { key: "rate", label: "Rate ₹/pc", align: "r" },
+    { key: "amt", label: "Amount ₹", align: "r", strong: true },
+  ]);
   const supRows = [...lines].sort((a, b) => supCode(a.supplierId).localeCompare(supCode(b.supplierId)));
 
   return (
@@ -109,12 +117,16 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
           : <Note tone="amber" icon={AlertTriangle}>The <b>customs invoice (18)</b> unlocks once you add the BL number, vessel, container and port of discharge. Use <b>Edit shipment details</b> below. The proforma (17) is ready now.</Note>}
       </div>
 
+      <div style={{ marginBottom: 12 }}>
+        <Note tone="teal">{PRICE_HIDDEN_NOTE}</Note>
+      </div>
+
       {tab === "buyer" ? (
         <DataTable serial columns={buyerCols} rows={lines} rowKey={(x, i) => i} freeze={5}
-          footer={[{ v: "Total", span: 4 }, { v: t.boxes, align: "r" }, { v: t.pieces.toLocaleString("en-IN"), align: "r" }, { v: num(t.volume, 3), align: "r" }, { v: "" }, { v: usd(t.buyerAmt), align: "r" }]} />
+          footer={[{ v: "Total", span: 4 }, { v: t.boxes, align: "r" }, { v: t.pieces.toLocaleString("en-IN"), align: "r" }, { v: num(t.volume, 3), align: "r" }]} />
       ) : (
         <DataTable serial columns={supCols} rows={supRows} rowKey={(x, i) => i} freeze={5}
-          footer={[{ v: "Total", span: 4 }, { v: t.boxes, align: "r" }, { v: t.pieces.toLocaleString("en-IN"), align: "r" }, { v: num(t.volume, 3), align: "r" }, { v: "" }, { v: inr(t.supAmt), align: "r" }]} />
+          footer={[{ v: "Total", span: 4 }, { v: t.boxes, align: "r" }, { v: t.pieces.toLocaleString("en-IN"), align: "r" }, { v: num(t.volume, 3), align: "r" }]} />
       )}
     </Modal>
   );

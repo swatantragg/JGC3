@@ -74,6 +74,12 @@ class SupplierBase(BaseModel):
     pin: str = ""
     state: str = ""
     weights: str = "auto"
+    your_reference: str = ""
+
+    @field_validator("your_reference", mode="before")
+    @classmethod
+    def _ref_none_is_blank(cls, v):
+        return v or ""
 
 
 class SupplierCreate(SupplierBase):
@@ -90,6 +96,7 @@ class SupplierUpdate(BaseModel):
     pin: Optional[str] = None
     state: Optional[str] = None
     weights: Optional[str] = None
+    your_reference: Optional[str] = None
 
 
 class Supplier(SupplierBase, ORMModel):
@@ -105,6 +112,12 @@ class BuyerBase(BaseModel):
     ship_to: str = ""
     addr: str = ""
     order_no: str = ""
+    our_reference: str = ""
+
+    @field_validator("our_reference", mode="before")
+    @classmethod
+    def _ref_none_is_blank(cls, v):
+        return v or ""
 
 
 class BuyerCreate(BuyerBase):
@@ -112,6 +125,7 @@ class BuyerCreate(BuyerBase):
 
 
 class BuyerUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     name: Optional[str] = None
     brand: Optional[str] = None
     country: Optional[str] = None
@@ -119,6 +133,7 @@ class BuyerUpdate(BaseModel):
     ship_to: Optional[str] = None
     addr: Optional[str] = None
     order_no: Optional[str] = None
+    our_reference: Optional[str] = None
 
 
 class Buyer(BuyerBase, ORMModel):
@@ -273,6 +288,12 @@ class InvoiceLineOut(ORMModel):
     item_id: str
     supplier_id: Optional[str] = None
     boxes: int
+    # The prices this line was invoiced at. NULL on invoices raised before the
+    # columns existed — the reader falls back to the item master.
+    unit_value: Optional[float] = None
+    value_mode: Optional[str] = None
+    unit_fob100: Optional[float] = None
+    fob_mode: Optional[str] = None
 
 
 class InvoiceCreate(BaseModel):
@@ -355,8 +376,21 @@ class CostingLineOut(CostingLineBase, ORMModel):
 
 
 class CostParams(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     barcode_sheet: float = 20.0    # ₹ per sheet of 125 stickers
+    carton_price: float = 0.0      # ₹ for the carton one box is packed in
     transport_fcl: float = 15000.0  # ₹ inland transport per container
     other_fcl: float = 50000.0      # ₹ clearing & other charges per container
     ex_rate: float = 90.0           # ₹/$ used to express our cost in USD
     real_rate: float = 94.5         # ₹/$ actually realised on the FOB price
+
+
+class CostingPreviewIn(BaseModel):
+    """Cost one item at a typed price without saving anything — the live
+    working behind the costing screen's summary."""
+    item_id: str
+    price_new: float = 0.0
+    price_old: Optional[float] = None
+    boxes_fcl: Optional[int] = None
+    fob_now: Optional[float] = None
+    fob_old: Optional[float] = None

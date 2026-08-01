@@ -13,7 +13,11 @@ import { Modal, Btn, Field, Input, Select } from "../../components/ui/index.jsx"
    Sections are supported too — an entry of the shape { section: "Packing" }
    starts a new labelled band, which is what makes a 28-field item editable
    without becoming a wall of boxes. */
-export default function RecordModal({ title, schema, value, onSave, onClose, saving, cols = 3 }) {
+/* `beforeSave(draft)` is an optional slot rendered between the fields and the
+   Save button. It receives the draft as it stands, so a caller can react to
+   what has actually been edited — the item form uses it to ask about pending
+   orders only once a price has been touched. */
+export default function RecordModal({ title, schema, value, onSave, onClose, saving, cols = 3, beforeSave }) {
   const [f, setF] = useState({ ...value });
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
 
@@ -103,6 +107,7 @@ export default function RecordModal({ title, schema, value, onSave, onClose, sav
           </Field>
         ))}
       </div>
+      {beforeSave && <div style={{ marginTop: 14 }}>{beforeSave(f)}</div>}
     </Modal>
   );
 }

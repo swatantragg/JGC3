@@ -144,6 +144,39 @@ export const useBadges = () => useQuery({ queryKey: ["badges"], queryFn: api.das
 export const useItemDetail = () => useQuery({ queryKey: ["item-detail"], queryFn: api.reports.itemDetail });
 export const useBalance = () => useQuery({ queryKey: ["balance"], queryFn: api.reports.balance });
 
+/* Doc 38 — supply details, item wise / supplier wise. The filters are part of
+   the cache key, so flipping between PO and invoice is instant once seen. */
+export const useSupplyDetails = (params) =>
+  useQuery({
+    queryKey: ["supply-details", params || {}],
+    queryFn: () => api.reports.supplyDetails(params),
+    placeholderData: (prev) => prev,
+  });
+
+/* How many still-open order lines are priced at something the item master no
+   longer says. Pass { item_id } to ask about a single product. */
+export const usePriceDrift = (params) =>
+  useQuery({ queryKey: ["price-drift", params || {}], queryFn: () => api.purchaseOrders.priceDrift(params) });
+
+/* Which orders still have this item outstanding — shown beside the "apply to
+   pending orders" tick in the edit form, so the effect is visible first. */
+export const usePendingForItem = (itemId) =>
+  useQuery({
+    queryKey: ["pending-for-item", itemId],
+    queryFn: () => api.purchaseOrders.pendingForItem(itemId),
+    enabled: !!itemId,
+  });
+
+export function useApplyPrices() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (params) => api.purchaseOrders.applyPrices(params),
+    onSuccess: () => ["price-drift", "pending-for-item", "po-list", "po-lines", "order-lines",
+      "master-2a", "master-7a", "item-detail", "balance", "supply-details", "dashboard"]
+      .forEach((k) => qc.invalidateQueries({ queryKey: [k] })),
+  });
+}
+
 // Users — admin only; the query is disabled for everyone else so a
 // non-admin never fires a request the API would refuse.
 export const useUsers = (enabled = true) =>
@@ -164,6 +197,25 @@ export function useUserMutations() {
 export const useCosting = () => useQuery({ queryKey: ["costing"], queryFn: api.costing.list });
 export const useCostParams = () => useQuery({ queryKey: ["cost-params"], queryFn: api.costing.params });
 export const useCostFormulas = () => useQuery({ queryKey: ["cost-formulas"], queryFn: api.costing.formulas, staleTime: Infinity });
+
+/* The live working behind the costing screen. `rows` is
+   [{ item_id, price_new }]; disabled while empty so an untouched sheet makes
+   no request. The arithmetic is the API's, never the browser's. */
+export const useCostPreview = (rows) =>
+  useQuery({
+    queryKey: ["cost-preview", rows],
+    queryFn: () => api.costing.preview(rows),
+    enabled: Array.isArray(rows) && rows.length > 0,
+    placeholderData: (prev) => prev,
+  });
+
+export function useSaveCosting() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.costing.upsert,
+    onSuccess: () => ["costing", "cost-preview"].forEach((k) => qc.invalidateQueries({ queryKey: [k] })),
+  });
+}
 
 export function useCostingMutations() {
   const qc = useQueryClient();

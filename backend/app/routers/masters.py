@@ -107,7 +107,8 @@ def order_lines(date_from: str | None = None, date_to: str | None = None,
             "gl": it.gl, "size": it.size, "length": it.length, "packing": it.packing,
             "description": it.description, "barcode": it.barcode, "hsn": it.hsn,
             "supplier_id": it.supplier_id,
-            **calc.derive_line(it, r.qty, r.rbi),
+            # Worked out at the price this order was placed at, not today's.
+            **calc.derive_line(it, r.qty, r.rbi, snapshot=r),
         })
     out.sort(key=lambda x: (x["date"], x["po"]), reverse=True)
     return {"rows": out, "totals": calc._totals(out)}

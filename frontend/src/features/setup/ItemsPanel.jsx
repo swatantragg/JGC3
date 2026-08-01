@@ -1,17 +1,20 @@
 import { useMemo, useState } from "react";
 import {
   Layers, Plus, Check, SlidersHorizontal, GripVertical, Trash2, Search, AlertTriangle,
+  EyeOff, Pencil,
 } from "lucide-react";
 import {
   Card, CardHead, Btn, Seg, Input, Select, Pill, Mono, DataTable, Modal, EditBtn,
-  Empty, Note, Info, SearchInput, FormulaPanel, Spinner, ErrorState,
+  Empty, Note, Info, SearchInput, FormulaPanel, Spinner, ErrorState, DownloadPair,
 } from "../../components/ui/index.jsx";
 import {
   useItems, useItemGroups, useCreateItem, useUpdateItem, useDeleteItem,
   useSuppliers, useMasterFormulas,
 } from "../../api/hooks.js";
-import { num, inr, usd, usdp } from "../../lib/format.js";
+import { num, inr, usd, usdp, todayISO } from "../../lib/format.js";
 import { useDebounced } from "../../lib/useDebounced.js";
+import { hidePriceCols, PRICE_HIDDEN_NOTE } from "../../lib/priceCols.js";
+import { downloadGridExcel, downloadGridPDF } from "../../lib/download.js";
 import AddItemDrawer from "./AddItemDrawer.jsx";
 import ItemEditModal from "./ItemEditModal.jsx";
 
@@ -58,7 +61,6 @@ const COLS = (supCode) => ({
 });
 
 const PRESETS = {
-  essentials: { label: "Essentials", hint: "The seven fields you look at day to day.", keys: ["gd", "code", "description", "packing", "unitValue", "unitFob", "supplier"] },
   buyer: { label: "Buyer sheet", hint: "The constant fields on the 2A buyer master — handy for verifying item pricing.", keys: ["gd", "code", "size", "length", "packUnit", "packing", "description", "barcode", "hsn", "volume", "netPerBox", "grossPerBox", "stk", "typeUp", "unitValue", "unitFob", "supplier"] },
   supplier: { label: "Supplier sheet", hint: "The constant fields on the 7A supplier master. BG and PC are the bag and piece stickers a box carries.", keys: ["gd", "code", "oswin", "gl", "size", "length", "packing", "description", "barcode", "hsn", "volume", "bgPerBox", "pPerBox", "stk", "unitValue", "fobpc", "supplier"] },
   all: { label: "All fields", hint: "Every column stored on an item.", keys: ["gd", "code", "oswin", "gl", "description", "size", "length", "packUnit", "packing", "uom", "barcode", "hsn", "volume", "netPerBox", "grossPerBox", "bgPerBox", "pPerBox", "stk", "typeUp", "range", "unitValue", "unitFob", "sheet", "supplier"] },
@@ -152,15 +154,111 @@ function ColumnManager({ cols, catalogue, onSave, onClose }) {
   );
 }
 
+/* The item master as it downloads — every column, prices included. What the
+   client keeps off the screen is still theirs on paper and in the workbook. */
+const EXPORT_COLS = (supCode) => [
+  { h: "GD code", key: "gd", f: (r) => r.gd, w: 12 },
+  { h: "Code", key: "code", f: (r) => r.code, w: 12 },
+  { h: "OSWIN", key: "oswin", f: (r) => r.oswin },
+  { h: "GL", key: "gl", f: (r) => r.gl },
+  { h: "Description", key: "description", f: (r) => r.description, w: 34 },
+  { h: "Group", key: "group", f: (r) => r.group },
+  { h: "Supplier", key: "supplier", f: (r) => supCode(r.supplier_id) },
+  { h: "Size mm", key: "size", f: (r) => r.size },
+  { h: "Len mm", key: "length", f: (r) => r.length },
+  { h: "Ordered in", key: "uom", f: (r) => (r.uom === "MTR" ? "Metres" : "Pieces") },
+  { h: "Unit pack", key: "packUnit", t: "int", v: (r) => r.pack_unit },
+  { h: "Pcs / box", key: "packing", t: "int", v: (r) => r.packing },
+  { h: "Bar code", key: "barcode", f: (r) => r.barcode },
+  { h: "HSN", key: "hsn", f: (r) => r.hsn },
+  { h: "Vol / box m³", key: "volume", t: "num3", v: (r) => r.volume },
+  { h: "Net / box kg", key: "net", t: "num", v: (r) => r.net_per_box },
+  { h: "Gross / box kg", key: "gross", t: "num", v: (r) => r.gross_per_box },
+  { h: "BG / box", key: "bg", t: "int", v: (r) => r.bg_per_box },
+  { h: "PC / box", key: "pc", t: "int", v: (r) => r.p_per_box },
+  /* The ranges do not agree on this: a typed-in total always wins, the GRN
+     range rounds, the rest do not. The formula follows the row's own rule
+     rather than one blanket expression. */
+  {
+    h: "Stickers / box", key: "stk", t: "num1",
+    fml: (r) => (Number(r.stickers_fixed)
+      ? String(Number(r.stickers_fixed))
+      : (r.sticker_round ? "ROUND(({bg}+{pc})*{mult},0)" : "({bg}+{pc})*{mult}")),
+  },
+  { h: "Sticker ×", key: "mult", t: "num", v: (r) => r.sticker_mult },
+  { h: "Label allowance", key: "spoil", t: "num", v: (r) => r.label_spoilage },
+  { h: "Labels / sheet", key: "typeup", t: "int", v: (r) => r.type_up },
+  { h: "Range", key: "range", f: (r) => String(r.sticker_rule || "").toUpperCase() },
+  { h: "Purchase basis", key: "valmode", f: (r) => (r.value_mode === "100" ? "Per 100" : "Per piece") },
+  { h: "Purchase price ₹", key: "unitValue", t: "inr", v: (r) => r.unit_value },
+  { h: "FOB basis", key: "fobmode", f: (r) => (r.fob_mode === "100" ? "Per 100" : "Per piece") },
+  { h: "FOB price $", key: "unitFob", t: "usd4", v: (r) => r.unit_fob100 },
+  { h: "FOB / pc $", key: "fobpc", t: "usd4", fml: (r) => (r.fob_mode === "100" ? "{unitFob}/100" : "{unitFob}") },
+  { h: "Source sheet", key: "sheet", f: (r) => r.source_sheet },
+];
+
+/* Pick an item to edit.
+
+   The table below is a report — long, and filtered for reading. Editing is a
+   different job: you know which product you want, so this is a search box, a
+   supplier filter and a list, and picking a row opens the same edit form the
+   pencil opens. */
+function ItemPicker({ suppliers, onPick, onClose }) {
+  const [q, setQ] = useState("");
+  const [sup, setSup] = useState("");
+  const list = useItems({ supplier_id: sup, q: useDebounced(q) });
+  const rows = list.data || [];
+  const supCode = (id) => suppliers.find((s) => s.id === id)?.code || "—";
+
+  return (
+    <Modal title="Edit an item" icon={Pencil} onClose={onClose}
+      footer={<>
+        <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+          {list.isLoading ? "Searching…" : `${rows.length} item${rows.length === 1 ? "" : "s"} match`}
+        </span>
+        <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
+      </>}>
+      <div className="row wrap" style={{ gap: 10, marginBottom: 12 }}>
+        <SearchInput value={q} onChange={setQ} placeholder="Code, GD, OSWIN, description…" style={{ flex: 1, minWidth: 240 }} />
+        <Select style={{ width: 230 }} value={sup} onChange={(e) => setSup(e.target.value)}>
+          <option value="">All suppliers</option>
+          {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}
+        </Select>
+      </div>
+
+      {list.isLoading ? <Spinner label="Loading items…" />
+        : rows.length ? (
+          <div style={{ maxHeight: 420, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 10 }}>
+            {rows.map((it, i) => (
+              <button key={it.id} className="pick-row" style={{ borderTop: i ? "1px solid var(--border)" : "none" }}
+                onClick={() => onPick(it)}>
+                <Mono>{it.gd || it.code}</Mono>
+                <span className="grow" style={{ minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 12.5, color: "var(--ink)", fontWeight: 600, whiteSpace: "pre-line" }}>{it.description || "untitled"}</span>
+                  <span style={{ display: "block", fontSize: 11, color: "var(--faint)" }}>{it.code} · {it.packing} / box{it.group ? ` · ${it.group}` : ""}</span>
+                </span>
+                <Pill>{supCode(it.supplier_id)}</Pill>
+                <Pencil size={14} style={{ color: "var(--faint)" }} />
+              </button>
+            ))}
+          </div>
+        ) : (
+          <Empty icon={Search} title="No item matches">Try the GD code, the item code, the supplier, or part of the description.</Empty>
+        )}
+    </Modal>
+  );
+}
+
 export default function ItemsPanel() {
   const suppliers = useSuppliers().data || [];
   const groups = useItemGroups().data || [];
   const formulas = useMasterFormulas().data || [];
 
-  const [preset, setPreset] = useState("essentials");
+  const [preset, setPreset] = useState("buyer");
   const [customCols, setCustomCols] = useState(null);
   const [colMgr, setColMgr] = useState(false);
   const [addItem, setAddItem] = useState(false);
+  const [picking, setPicking] = useState(false);
   const [editing, setEditing] = useState(null);
   const [confirmId, setConfirmId] = useState(null);
   const [failed, setFailed] = useState("");
@@ -195,11 +293,14 @@ export default function ItemsPanel() {
     ? customCols.filter((c) => c.visible).map((c) => c.key)
     : PRESETS[preset].keys;
 
-  const columns = activeKeys.map((k) => {
+  /* The purchase and FOB prices come out of every view. They are still in the
+     master, still in the edit form, still in every download — just not on a
+     screen anyone can read over a shoulder. */
+  const columns = hidePriceCols(activeKeys.map((k) => {
     if (DEF[k]) return { key: k, ...DEF[k] };
     const custom = (customCols || []).find((c) => c.key === k);
     return { key: k, label: custom?.label || k, w: 120, render: () => <span style={{ color: "var(--faint)" }}>—</span> };
-  }).concat([{
+  })).concat([{
     key: "_edit", label: "", w: 84, align: "r",
     render: (it) => (
       <span className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
@@ -220,12 +321,24 @@ export default function ItemsPanel() {
     setColMgr(true);
   };
 
+  const exportCols = useMemo(() => EXPORT_COLS(supCode), [suppliers]); // eslint-disable-line react-hooks/exhaustive-deps
+  const exportOpts = {
+    title: "Item master",
+    subtitle: `${shownItems.length} item(s)${supFilter ? ` · supplier ${supCode(supFilter)}` : ""}${group ? ` · ${group}` : ""} · as on ${todayISO()}`,
+  };
+
   return (
     <>
       <div className="row wrap" style={{ justifyContent: "space-between", gap: 12 }}>
         <div className="row wrap" style={{ gap: 8 }}>
           <Btn icon={Plus} onClick={() => setAddItem(true)}>Add item</Btn>
+          <Btn variant="ghost" icon={Pencil} onClick={() => setPicking(true)}>Edit item</Btn>
           <Btn variant="ghost" icon={SlidersHorizontal} onClick={openColMgr}>Customise columns</Btn>
+          <DownloadPair
+            disabled={!shownItems.length}
+            onExcel={() => downloadGridExcel(`Item_master_${todayISO()}`, "Item master", exportCols, shownItems, exportOpts)}
+            onPDF={() => downloadGridPDF("Item master", exportCols, shownItems, exportOpts)}
+          />
         </div>
         <div className="row wrap" style={{ gap: 8 }}>
           <SearchInput value={q} onChange={setQ} placeholder="Code, GD, OSWIN, description, supplier…" style={{ width: 280 }} />
@@ -249,7 +362,7 @@ export default function ItemsPanel() {
         />
         <span style={{ fontSize: 11.5, color: "var(--muted)" }} className="row">
           {preset === "custom" ? "Your saved column layout." : PRESETS[preset].hint}
-          <Info>These are saved views of the same item master — switching a view never changes your data. Downloads always contain every column.</Info>
+          <Info>These are saved views of the same item master — switching a view never changes your data. Purchase and FOB prices are held back from every on-screen view; downloads always contain every column.</Info>
         </span>
       </div>
 
@@ -273,7 +386,8 @@ export default function ItemsPanel() {
                   The master is empty. Add items here, or load the client's workbook with
                   {" "}<span className="mono">python backend/scripts/import_masters.py</span>.
                 </Empty>}
-        <div className="card-foot">
+        <div className="card-foot stack-sm">
+          <Note tone="teal" icon={EyeOff}>{PRICE_HIDDEN_NOTE} Open an item with the pencil to see or change them.</Note>
           <Note tone="amber">Constant fields only — these never change with an order. Quantities, totals, labels, sheets and rate are calculated per order.</Note>
         </div>
       </Card>
@@ -282,6 +396,10 @@ export default function ItemsPanel() {
         intro="An item stores only what is constant. Everything below depends on the order quantity and the day's RBI rate, so it is derived when the order is placed — never stored, never stale." />
 
       {addItem && <AddItemDrawer onClose={() => setAddItem(false)} />}
+      {picking && (
+        <ItemPicker suppliers={suppliers} onClose={() => setPicking(false)}
+          onPick={(it) => { setPicking(false); setEditing(it); }} />
+      )}
       {colMgr && <ColumnManager cols={customCols} catalogue={DEF} onClose={() => setColMgr(false)}
         onSave={(l) => { setCustomCols(l); setPreset("custom"); setColMgr(false); }} />}
       {editing && <ItemEditModal item={editing} onClose={() => setEditing(null)} />}

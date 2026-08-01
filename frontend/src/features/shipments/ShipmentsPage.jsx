@@ -5,7 +5,7 @@ import {
   Card, CardHead, Btn, Pill, Mono, DataTable, Empty, Note, Stat, Spinner, ErrorState,
 } from "../../components/ui/index.jsx";
 import { useInvoices, useItems, useBuyers } from "../../api/hooks.js";
-import { dmy, num, usd } from "../../lib/format.js";
+import { dmy, num } from "../../lib/format.js";
 import { INV_STATUS_TONE } from "../../lib/constants.js";
 import InvoiceModal from "../packing/InvoiceModal.jsx";
 import InvoiceEditModal from "../packing/InvoiceEditModal.jsx";
@@ -40,7 +40,7 @@ export default function ShipmentsPage() {
     return { inv, boxes, volume, fob };
   }), [invoices, byId]);
 
-  const totalFob = rows.reduce((s, r) => s + r.fob, 0);
+  const totalBoxes = rows.reduce((s, r) => s + r.boxes, 0);
   const byStatus = (st) => invoices.filter((i) => i.status === st).length;
 
   const openInv = invoices.find((i) => i.id === openId);
@@ -64,7 +64,7 @@ export default function ShipmentsPage() {
         <Stat icon={FileText} value={invoices.length} label="Invoices" sub="Across all buyers" />
         <Stat icon={Truck} tone={byStatus("Dispatched") ? "amber" : undefined} value={byStatus("Dispatched")} label="Dispatched" sub="Vehicle details in" />
         <Stat icon={Container} value={byStatus("Ready to Ship")} label="Ready to Ship" sub="Container details in" />
-        <Stat icon={Ship} tone="green" value={byStatus("Shipped")} label="Shipped" sub={usd(totalFob) + " FOB total"} />
+        <Stat icon={Ship} tone="green" value={byStatus("Shipped")} label="Shipped" sub={`${totalBoxes} boxes in total`} />
       </div>
 
       <Card>
@@ -81,7 +81,6 @@ export default function ShipmentsPage() {
               { key: "buyer", w: 150, label: "Buyer", render: (r) => <span style={{ color: "var(--ink)", fontWeight: 500 }}>{brand(r.inv.buyer_id)}</span> },
               { key: "boxes", w: 78, label: "Boxes", align: "r", strong: true, render: (r) => r.boxes },
               { key: "vol", w: 106, label: "Volume m³", align: "r", render: (r) => num(r.volume, 3) },
-              { key: "fob", label: "FOB $", align: "r", strong: true, render: (r) => usd(r.fob) },
               { key: "container", label: "Container", render: (r) => r.inv.ship?.container ? <Mono>{r.inv.ship.container}</Mono> : <span style={{ color: "var(--faint)" }}>—</span> },
               { key: "status", label: "Status", render: (r) => <Pill tone={INV_STATUS_TONE[r.inv.status] || ""}>{r.inv.status}</Pill> },
               {

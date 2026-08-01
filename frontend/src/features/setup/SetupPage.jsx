@@ -40,6 +40,10 @@ const SUPPLIER_SCHEMA = [
   { key: "addr", label: "Address", type: "textarea", span: 2 },
   { key: "place", label: "Place" }, { key: "pin", label: "PIN code" }, { key: "state", label: "State" },
   {
+    key: "your_reference", label: "Your reference", span: 2,
+    hint: "The supplier's own reference for our orders — prints under the shipping marks on their purchase order.",
+  },
+  {
     key: "weights", label: "Weights", type: "select", allowEmpty: false,
     options: [{ value: "auto", label: "Auto" }, { value: "manual", label: "Manual" }],
     hint: "Whether this supplier's box weights are worked out or entered by hand",
@@ -50,12 +54,16 @@ const BUYER_SCHEMA = [
   { key: "addr", label: "Address", type: "textarea", span: 4 },
   { key: "country", label: "Country" }, { key: "ship_to", label: "Ship to (port)" },
   { key: "curr", label: "Currency" }, { key: "order_no", label: "Buyer order no." },
+  {
+    key: "our_reference", label: "Our reference", span: 2,
+    hint: "Our own file reference for this buyer — prints under the shipping marks on the supplier purchase order.",
+  },
 ];
 
 // The add forms start from the same blanks the edit modals save back to, so a
 // field can never exist in one and be missing from the other.
-const BLANK_SUPPLIER = { code: "", name: "", place: "", gstin: "", addr: "", pin: "", state: "" };
-const BLANK_BUYER = { name: "", brand: "", country: "", curr: "USD", ship_to: "", addr: "", order_no: "" };
+const BLANK_SUPPLIER = { code: "", name: "", place: "", gstin: "", addr: "", pin: "", state: "", your_reference: "" };
+const BLANK_BUYER = { name: "", brand: "", country: "", curr: "USD", ship_to: "", addr: "", order_no: "", our_reference: "" };
 const BLANK_TRANSPORT = { name: "", transport_id: "", supplier_ids: [] };
 
 export default function SetupPage() {
@@ -133,6 +141,9 @@ export default function SetupPage() {
                   placeholder="e.g. 13, Tesla Link, Wangara WA 6065" />
               </Field>
               <Field label="Buyer order no."><Input value={bDraft.order_no} onChange={(e) => setBDraft({ ...bDraft, order_no: e.target.value })} placeholder="e.g. JG/26-P/09" /></Field>
+              <Field label="Our reference" hint="Our own file reference for this buyer. It prints under the shipping marks on the supplier purchase order and carries into the Excel exports.">
+                <Input value={bDraft.our_reference} onChange={(e) => setBDraft({ ...bDraft, our_reference: e.target.value })} placeholder="e.g. JG/EXP/26-27/AU" />
+              </Field>
               <div>
                 <Btn icon={Plus} disabled={!bDraft.name || createBuyer.isPending} onClick={() => createBuyer.mutate(
                   bDraft,
@@ -155,7 +166,7 @@ export default function SetupPage() {
                 </div>
               </div>
               <div className="grid-3" style={{ marginTop: 12, gap: 12 }}>
-                {[["Country", b.country], ["Currency", b.curr], ["Ship to", b.ship_to], ["Address", b.addr], ["Order no.", b.order_no]].map(([k, v]) => (
+                {[["Country", b.country], ["Currency", b.curr], ["Ship to", b.ship_to], ["Address", b.addr], ["Order no.", b.order_no], ["Our reference", b.our_reference]].map(([k, v]) => (
                   <div key={k}><div style={{ fontSize: 10.5, color: "var(--faint)" }}>{k}</div><div style={{ fontSize: 12.5, color: "var(--ink-2)", fontWeight: 500 }}>{v || "—"}</div></div>
                 ))}
               </div>
@@ -185,6 +196,9 @@ export default function SetupPage() {
                 <Field label="PIN code"><Input value={sDraft.pin} onChange={(e) => setSDraft({ ...sDraft, pin: e.target.value })} placeholder="e.g. 396210" /></Field>
                 <Field label="State"><Input value={sDraft.state} onChange={(e) => setSDraft({ ...sDraft, state: e.target.value })} placeholder="e.g. Maharashtra" /></Field>
               </div>
+              <Field label="Your reference" hint="The supplier's own reference for our orders. It prints under the shipping marks on their purchase order and carries into the Excel exports.">
+                <Input value={sDraft.your_reference} onChange={(e) => setSDraft({ ...sDraft, your_reference: e.target.value })} placeholder="e.g. KP/JG/2026-27" />
+              </Field>
               <div>
                 <Btn icon={Plus} disabled={!sDraft.name || createSupplier.isPending} onClick={() => createSupplier.mutate(
                   { ...EMPTY_SUPPLIER, ...sDraft, code: sDraft.code || sDraft.name.slice(0, 2).toUpperCase() },
@@ -202,6 +216,7 @@ export default function SetupPage() {
                 </div>
                 <div style={{ fontSize: 11.5, color: "var(--faint)", marginTop: 2 }}>{s.place || "—"} · <Mono>{s.gstin || "—"}</Mono></div>
                 {s.addr && <div style={{ fontSize: 11.5, color: "var(--faint)", marginTop: 2 }}>{s.addr} {s.pin} {s.state}</div>}
+                {s.your_reference && <div style={{ fontSize: 11.5, color: "var(--faint)", marginTop: 2 }}>Your reference: <span style={{ color: "var(--ink-2)" }}>{s.your_reference}</span></div>}
               </div>
               <div className="row" style={{ gap: 8 }}>
                 {s.weights === "manual" && <Pill tone="amber">weights manual</Pill>}

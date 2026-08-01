@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   X, Pencil, Inbox, Loader2, AlertTriangle, Eye, EyeOff,
-  HelpCircle, Search, ChevronRight, ChevronDown,
+  HelpCircle, Search, ChevronRight, ChevronDown, FileSpreadsheet, FileDown,
 } from "lucide-react";
 
 /* ============================================================
@@ -222,8 +222,40 @@ const SERIAL_COL = {
   render: (_r, i) => <span style={{ color: "var(--faint)" }}>{i + 1}</span>,
 };
 
-export function DataTable({ columns, rows, rowKey, freeze = 0, serial = false, onRowClick, footer, maxHeight }) {
-  const cols = useMemo(() => (serial ? [SERIAL_COL, ...columns] : columns), [columns, serial]);
+/* Page sizes offered under a long table. "All" is kept because the client
+   often wants the whole sheet on screen to read it aloud. */
+const PAGE_SIZES = [25, 50, 100, 0];
+const sizeLabel = (n) => (n ? String(n) : "All");
+
+export function DataTable({
+  columns, rows, rowKey, freeze = 0, serial = false, onRowClick, footer, maxHeight,
+  paginate = false, pageSize: initialPageSize = 25,
+}) {
+  const [size, setSize] = useState(initialPageSize);
+  const [page, setPage] = useState(0);
+  const total = rows.length;
+  const pages = paginate && size ? Math.max(1, Math.ceil(total / size)) : 1;
+
+  // A filter that shortens the list must not strand you on a page that no
+  // longer exists.
+  useEffect(() => { if (page > pages - 1) setPage(0); }, [pages, page]);
+
+  const shown = useMemo(() => {
+    if (!paginate || !size) return rows;
+    const from = Math.min(page, pages - 1) * size;
+    return rows.slice(from, from + size);
+  }, [rows, paginate, size, page, pages]);
+
+  const first = paginate && size ? Math.min(page, pages - 1) * size : 0;
+
+  /* The row numbers keep counting across pages — row 26 is row 26, not row 1
+     of page two. */
+  const cols = useMemo(
+    () => (serial
+      ? [{ ...SERIAL_COL, render: (_r, i) => <span style={{ color: "var(--faint)" }}>{first + i + 1}</span> }, ...columns]
+      : columns),
+    [columns, serial, first],
+  );
   const n = Math.min(serial ? freeze + 1 : freeze, cols.length);
 
   const offsets = useMemo(() => {
@@ -253,12 +285,40 @@ export function DataTable({ columns, rows, rowKey, freeze = 0, serial = false, o
     return [{ ...first, span: (first.span || 1) + 1 }, ...rest];
   }, [footer, serial]);
 
+  const pager = paginate && total > PAGE_SIZES[0] && (
+    <div className="pager">
+      <span className="pager-count">
+        {size
+          ? <>Showing <b>{first + 1}–{Math.min(first + size, total)}</b> of <b>{total}</b></>
+          : <>Showing all <b>{total}</b></>}
+      </span>
+      <span className="grow" />
+      <span className="pager-sizes">
+        Rows
+        {PAGE_SIZES.map((v) => (
+          <button key={v} type="button" className={size === v ? "on" : ""}
+            onClick={() => { setSize(v); setPage(0); }}>{sizeLabel(v)}</button>
+        ))}
+      </span>
+      {size > 0 && pages > 1 && (
+        <span className="pager-nav">
+          <button type="button" disabled={page <= 0} onClick={() => setPage(0)} title="First page">«</button>
+          <button type="button" disabled={page <= 0} onClick={() => setPage((p) => p - 1)}>Prev</button>
+          <span className="pager-at">Page {Math.min(page, pages - 1) + 1} of {pages}</span>
+          <button type="button" disabled={page >= pages - 1} onClick={() => setPage((p) => p + 1)}>Next</button>
+          <button type="button" disabled={page >= pages - 1} onClick={() => setPage(pages - 1)} title="Last page">»</button>
+        </span>
+      )}
+    </div>
+  );
+
   return (
+    <>
     <div className="tbl-wrap" style={maxHeight ? { maxHeight } : undefined}>
       <table className="tbl">
         <thead><tr>{cols.map((c, i) => <th key={c.key} className={cls(i)} style={frz(i)}>{c.label}</th>)}</tr></thead>
         <tbody>
-          {rows.map((r, ri) => (
+          {shown.map((r, ri) => (
             <tr key={rowKey ? rowKey(r, ri) : ri} className={onRowClick ? "click" : ""} onClick={onRowClick ? () => onRowClick(r) : undefined}>
               {cols.map((c, i) => <td key={c.key} className={cls(i)} style={frz(i)}>{c.render ? c.render(r, ri) : r[c.key]}</td>)}
             </tr>
@@ -268,6 +328,8 @@ export function DataTable({ columns, rows, rowKey, freeze = 0, serial = false, o
         {foot && rows.length > 0 && <tfoot><tr>{foot.map((f, i) => <td key={i} colSpan={f.span} className={f.align === "r" ? "r" : ""}>{f.v}</td>)}</tr></tfoot>}
       </table>
     </div>
+    {pager}
+    </>
   );
 }
 
@@ -298,6 +360,21 @@ export function FormulaPanel({ title, intro, rows }) {
     </Card>
   );
 }
+
+/* Every report and every document downloads the same two ways. The pair is a
+   component so no screen can offer one format and forget the other. */
+export const DownloadPair = ({ onExcel, onPDF, disabled, size = "sm", variant = "teal", label = "" }) => (
+  <span className="row" style={{ gap: 6 }}>
+    <Btn variant={variant} size={size} icon={FileSpreadsheet} disabled={disabled} onClick={onExcel}
+      title="Download as Excel — the formulas stay live">
+      {label ? `${label} · Excel` : "Excel"}
+    </Btn>
+    <Btn variant="ghost" size={size} icon={FileDown} disabled={disabled} onClick={onPDF}
+      title="Download as PDF — opens your browser's print dialog">
+      PDF
+    </Btn>
+  </span>
+);
 
 export const ActionCard = ({ icon: Icon, tone = "teal", title, children, onClick }) => (
   <button className="action" onClick={onClick}>

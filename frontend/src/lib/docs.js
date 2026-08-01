@@ -18,6 +18,8 @@
    `docCtx()` in lib/docCtx.js adapts the API's records into this shape.
    ============================================================================ */
 
+import { downloadDocsExcel, downloadPDF } from "./download.js";
+
 /* ---- formatting (self-contained, matches App.jsx conventions) ---- */
 const inr = (n) => "₹" + Math.round(Number(n || 0)).toLocaleString("en-IN");
 const inr2 = (n) => "₹" + Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -54,42 +56,40 @@ function fobPerPiece(it) {
   return (it.fobMode || "100") === "100" ? unit / 100 : unit;
 }
 
-/* ---- .xls workbook writer (Excel opens the HTML natively, keeps layout) ---- */
-const XLS_STYLE = `
-  table{border-collapse:collapse;margin-bottom:8px;}
-  td,th{border:1px solid #aebccb;padding:3px 7px;font-family:Calibri,Arial,sans-serif;font-size:10.5pt;vertical-align:top;mso-number-format:"\\@";}
-  th{background:#0b2c4d;color:#ffffff;font-weight:700;text-align:center;}
-  .title{font-size:16pt;font-weight:800;color:#0b2c4d;}
-  .sub{font-size:9.5pt;color:#516170;}
-  .r{text-align:right;} .c{text-align:center;} .b{font-weight:700;} .lg{font-size:12pt;font-weight:800;color:#0b2c4d;}
-  .sec{background:#e6edf4;font-weight:700;color:#0b2c4d;}
-  .tot{background:#fbe6c2;font-weight:800;color:#0b2c4d;}
-  .k{background:#f2f5f8;font-weight:700;white-space:nowrap;color:#0b2c4d;}
-  .amber{color:#B7791F;font-weight:700;}
-  .plain td{border:none;padding:1px 7px;}
-  .plain{margin-bottom:2px;}
-`;
-export function writeXLS(filename, inner) {
-  const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><style>${XLS_STYLE}</style></head><body>${inner}</body></html>`;
-  try {
-    const url = URL.createObjectURL(new Blob(["﻿" + html], { type: "application/vnd.ms-excel" }));
-    const a = document.createElement("a");
-    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1500);
-  } catch (e) { alert("Download blocked in this preview environment."); }
-}
+/* ---- output ----------------------------------------------------------------
+   Downloads go through lib/download.js: Excel is a real .xlsx with the
+   arithmetic still live (lib/xlsx.js), PDF is the same HTML through the
+   browser's print engine. The builders below annotate the cells that carry a
+   calculation — see `tableOf` — and lib/sheet.js reads those annotations back
+   out when it converts a document into a worksheet.                        */
 
 /* ---- shared derived data ---- */
 function exRate(ctx) { return Number(ctx.inv.ship?.exRate) || 92.5; }
 function marksStart(ctx) { const m = (ctx.inv.ship?.marks || "").match(/(\d{3,})/); return m ? Number(m[1]) : 2001; }
 function supFor(ctx, id) { return ctx.SUPPLIERS.find((s) => s.id === id) || {}; }
 
+/* The order reference a buyer-stage document prints. A PO-stage context
+   (Documents → PO Reports) is built around one purchase order, so that number
+   is the reference; the invoice-stage contexts fall back to the buyer's own
+   standing order number, as before. */
+function orderRefOf(ctx) { return ctx.po || ctx.buyer.orderNo || "—"; }
+
 // Shipment lines (from the selected invoice) with every derived figure a document may need
 function L(ctx) {
   const ex = exRate(ctx);
   let sr = Number(ctx.inv.serialStart) || marksStart(ctx);
   return ctx.inv.lines.map((l) => {
-    const it = ctx.items.find((x) => x.id === l.itemId) || l.item || {};
+    const master = ctx.items.find((x) => x.id === l.itemId) || l.item || {};
+    /* Priced as invoiced, not as the master reads today. Everything else —
+       packing, volume, weights, stickers — is a physical fact of the item and
+       still comes from the master. */
+    const it = l.unitValue == null && l.unitFob100 == null ? master : {
+      ...master,
+      unitValue: l.unitValue == null ? master.unitValue : Number(l.unitValue),
+      valueMode: l.valueMode || master.valueMode,
+      unitFob100: l.unitFob100 == null ? master.unitFob100 : Number(l.unitFob100),
+      fobMode: l.fobMode || master.fobMode,
+    };
     const boxes = Number(l.boxes) || 0, packing = Number(it.packing) || 0;
     const pieces = boxes * packing;
     const volTotal = boxes * (Number(it.volume) || 0);
@@ -103,7 +103,11 @@ function L(ctx) {
     const from = sr, to = sr + boxes - 1; sr += boxes;
     const range = boxes ? `${from}-${to}` : "—";
     const pos = [...new Set(ctx.buyerMaster.filter((r) => r.itemId === it.id).map((r) => r.po))].sort();
-    return { it, sup: supFor(ctx, l.supplierId), supId: l.supplierId, boxes, packing, pieces, volTotal, netTotal, grossTotal, fobPc, fobTotal, valUnit, valTotal, rbiTotal, rateKg, bg, pc, ttl, stickers, sheets, range, pos };
+    // Stickers a single box consumes, allowance included — inlined into the
+    // Excel formulas so the sticker and sheet counts follow the box count.
+    const stkPerBox = ttl * (Number(it.labelSpoilage) || 1);
+    const typeUp = Number(it.typeUp) || 0;
+    return { it, sup: supFor(ctx, l.supplierId), supId: l.supplierId, boxes, packing, pieces, volTotal, netTotal, grossTotal, fobPc, fobTotal, valUnit, valTotal, rbiTotal, rateKg, bg, pc, ttl, stkPerBox, typeUp, stickers, sheets, range, pos };
   });
 }
 
@@ -127,8 +131,19 @@ function orderAgg(ctx) {
     const bg = Number(it.bgPerBox) || 0, pc = Number(it.pPerBox) || 0, ttl = stickersPerBox(it);
     const stickers = Math.ceil(labelsFor(it, boxes)), sheets = sheetsFor(it, boxes);
     const typeUp = Number(it.typeUp) || 0;
-    return { it, pos: [...x.pos].sort(), qty, packing, boxes, volTotal, netTotal, grossTotal, fobPc, fobTotal, valUnit, valTotal, rbiTotal, bg, pc, ttl, stickers, sheets, typeUp };
+    const stkPerBox = ttl * (Number(it.labelSpoilage) || 1);
+    return { it, pos: [...x.pos].sort(), qty, packing, boxes, volTotal, netTotal, grossTotal, fobPc, fobTotal, valUnit, valTotal, rbiTotal, bg, pc, ttl, stkPerBox, stickers, sheets, typeUp };
   }).sort((a, b) => String(a.it.gd || "").localeCompare(String(b.it.gd || "")));
+}
+
+/* The order book seen the way the supplier PO needs it — one row per item,
+   tagged with the factory that makes it. Ordered pieces, not packed boxes:
+   the supplier's order exists the moment the buyer's does, long before
+   anything has been invoiced. */
+function orderRows(ctx) {
+  return orderAgg(ctx).map((r) => ({
+    ...r, pieces: r.qty, supId: r.it.supplierId, sup: supFor(ctx, r.it.supplierId),
+  }));
 }
 
 function poHeaderList(ctx) {
@@ -168,17 +183,62 @@ function masthead(ctx, docTitle, opts = {}) {
     </tr>
     <tr><td colspan="2"><table style="width:100%">${consignee}</table></td></tr></table>`;
 }
-// generic data table: cols = [{h, r?, c?, f(row)->cell}], foot = [{v, r?, span?}]
+/* Generic data table.
+
+   cols = [{ h, r?, c?, f(row) -> cell html,
+             key?, t?, v?(row) -> number, fml? }]
+
+   The last four are what make the Excel download live rather than a picture
+   of one. `key` names the column; `t` is the number format; `v` gives the
+   exact value (no ₹, no thousands separator, no rounding); `fml` is a formula
+   written in terms of other columns' names — "{qty}*{rate}" — which
+   lib/sheet.js resolves to real cell references at conversion time. Anything
+   a row genuinely holds as a constant is inlined into the formula, so the
+   figures that depend on it still move when a quantity is edited.
+
+   foot = [{ v, r?, span?, sum?, t? }] — `sum` names the column to total.  */
+const attr = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+
+function cellData(c, row) {
+  const bits = [];
+  if (c.t) bits.push(`data-t="${attr(c.t)}"`);
+  if (c.fml) {
+    const f = typeof c.fml === "function" ? c.fml(row) : c.fml;
+    if (f) bits.push(`data-f="${attr(f)}"`);
+  } else if (c.v) {
+    const n = Number(c.v(row));
+    if (Number.isFinite(n)) bits.push(`data-v="${n}"`);
+  }
+  return bits.length ? " " + bits.join(" ") : "";
+}
+
 function tableOf(cols, rows, foot, sectionRows) {
-  const head = `<tr>${cols.map((c) => `<th>${c.h}</th>`).join("")}</tr>`;
-  const body = rows.map((row, i) => {
-    if (sectionRows && sectionRows[i]) return `<tr><td class="sec" colspan="${cols.length}">${esc(sectionRows[i])}</td></tr><tr>${cols.map((c) => `<td class="${c.r ? "r" : c.c ? "c" : ""}">${c.f(row)}</td>`).join("")}</tr>`;
-    return `<tr>${cols.map((c) => `<td class="${c.r ? "r" : c.c ? "c" : ""}">${c.f(row)}</td>`).join("")}</tr>`;
-  }).join("");
-  const f = foot ? `<tr class="tot">${foot.map((cell) => `<td class="${cell.r ? "r" : ""}"${cell.span ? ` colspan="${cell.span}"` : ""}>${cell.v}</td>`).join("")}</tr>` : "";
+  const head = `<tr>${cols.map((c) => `<th${c.key ? ` data-k="${attr(c.key)}"` : ""}>${c.h}</th>`).join("")}</tr>`;
+  const dataRow = (row) => `<tr>${cols.map((c) => `<td class="${c.r ? "r" : c.c ? "c" : ""}"${cellData(c, row)}>${c.f(row)}</td>`).join("")}</tr>`;
+  const body = rows.map((row, i) => (sectionRows && sectionRows[i]
+    ? `<tr><td class="sec" colspan="${cols.length}">${esc(sectionRows[i])}</td></tr>${dataRow(row)}`
+    : dataRow(row))).join("");
+  const f = foot
+    ? `<tr class="tot">${foot.map((cell) => {
+      const bits = [];
+      if (cell.t) bits.push(`data-t="${attr(cell.t)}"`);
+      if (cell.sum) bits.push(`data-sum="${attr(cell.sum)}"`);
+      return `<td class="${cell.r ? "r" : ""}"${cell.span ? ` colspan="${cell.span}"` : ""}${bits.length ? " " + bits.join(" ") : ""}>${cell.v}</td>`;
+    }).join("")}</tr>`
+    : "";
   return `<table>${head}${body}${f}</table>`;
 }
-function fnameFor(no, name, ctx) { return `Doc_${no}_${name.replace(/[^A-Za-z0-9]+/g, "_")}_${ctx.inv.invoiceNo.replace(/\//g, "-")}.xls`; }
+
+/* RoundUp that survives a zero divisor — Excel would show #DIV/0! and the
+   client's sheets never do. */
+const upDiv = (a, b) => `IF(${b}=0,0,ROUNDUP(${a}/${b},0))`;
+/* Base filename, no extension — the download helper adds the right one.
+   A PO-stage document is stamped with its purchase order, an invoice-stage
+   one with its invoice. */
+function fnameFor(no, name, ctx) {
+  const stamp = String(ctx.po || ctx.inv.invoiceNo || "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `Doc_${no}_${String(name).replace(/[^A-Za-z0-9]+/g, "_")}${stamp ? `_${stamp}` : ""}`;
+}
 const sum = (a, k) => a.reduce((s, x) => s + (Number(x[k]) || 0), 0);
 const declBlock = (ctx) => { const E = ctx.EXPORTER; return `<table style="width:100%"><tr><td class="k" style="width:20%">Place</td><td>Mumbai</td><td class="k" style="width:20%">Date</td><td>${ddmm(ctx.inv.date)}</td></tr>
   <tr><td class="k">Signature</td><td colspan="3">For ${esc(E.name)} &nbsp;— &nbsp;Mr Aalok M Shah, Proprietor</td></tr></table>`; };
@@ -191,39 +251,63 @@ const B = {};
 /* ---------- Stage A · Buyer order ---------- */
 B["1"] = (ctx) => {
   const rows = orderAgg(ctx);
-  const body = rows.map((r, i) => `<tr><td class="c">${i + 1}</td><td>${esc(r.it.code)}</td><td>${esc(r.it.gd)}</td><td>${esc(r.it.description)}</td><td class="c">${esc(r.it.size)}</td><td class="r">${r.qty.toLocaleString("en-IN")}</td><td class="r">${usdp(r.fobPc)}</td><td class="r">${usd(r.fobTotal)}</td></tr>`).join("");
-  const head = `<tr><th>#</th><th>Code</th><th>GD Code</th><th>Description</th><th>Size</th><th>Qty (Pcs)</th><th>Rate $/pc</th><th>Amount $</th></tr>`;
-  const foot = `<tr class="tot"><td colspan="5">TOTAL</td><td class="r">${sum(rows, "qty").toLocaleString("en-IN")}</td><td></td><td class="r">${usd(sum(rows, "fobTotal"))}</td></tr>`;
+  const cols = [
+    { h: "#", c: 1, f: (r) => rows.indexOf(r) + 1 },
+    { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) },
+    { h: "Description", f: (r) => esc(r.it.description) }, { h: "Size", c: 1, f: (r) => esc(r.it.size) },
+    { h: "Qty (Pcs)", r: 1, key: "qty", t: "int", v: (r) => r.qty, f: (r) => r.qty.toLocaleString("en-IN") },
+    { h: "Rate $/pc", r: 1, key: "rate", t: "usd4", v: (r) => r.fobPc, f: (r) => usdp(r.fobPc) },
+    { h: "Amount $", r: 1, key: "amount", t: "usd", fml: "{qty}*{rate}", f: (r) => usd(r.fobTotal) },
+  ];
+  const foot = [{ v: "TOTAL", span: 5 }, { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
+    { v: "" }, { v: usd(sum(rows, "fobTotal")), r: 1, sum: "amount", t: "usd" }];
   const html = `<div class="title">BUYER PURCHASE ORDER</div>
     <table style="width:100%"><tr><td style="width:55%">${exporterBlock(ctx)}</td>
-      <td><table style="width:100%"><tr><td class="k">PO No.</td><td class="b">${esc(ctx.buyer.orderNo)}</td></tr>
+      <td><table style="width:100%"><tr><td class="k">PO No.</td><td class="b">${esc(orderRefOf(ctx))}</td></tr>
       <tr><td class="k">Date</td><td class="b">${ddmm(ctx.inv.date)}</td></tr>
       <tr><td class="k">Buyer</td><td class="b">${esc(ctx.buyer.name)} T/A ${esc(ctx.buyer.brand)}</td></tr>
+      <tr><td class="k">Our Reference</td><td class="b">${esc(ctx.buyer.ourReference || "")}</td></tr>
       <tr><td class="k">Ship To</td><td>${esc(ctx.buyer.addr || ctx.buyer.shipTo)}</td></tr></table></td></tr></table>
-    <table>${head}${body}${foot}</table>`;
+    ${tableOf(cols, rows, foot)}`;
   return { name: "Buyers_Order", html };
 };
 
 B["2A"] = (ctx) => {
   const rows = orderAgg(ctx);
+  const ex = exRate(ctx);
   const cols = [
     { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "GL Code", f: (r) => esc(r.it.gl) },
     { h: "Size (MM)", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) },
-    { h: "Pack/Unit", c: 1, f: (r) => r.packing }, { h: "Pack/Box", c: 1, f: (r) => r.boxes ? Math.round(r.qty / r.boxes) : "" },
+    { h: "Pack/Unit", c: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
+    { h: "Pack/Box", c: 1, f: (r) => (r.boxes ? Math.round(r.qty / r.boxes) : "") },
     { h: "Description", f: (r) => esc(r.it.description) }, { h: "Bar Code", f: (r) => esc(r.it.barcode) }, { h: "HSN", f: (r) => esc(r.it.hsn) },
-    { h: "Qty Pcs", r: 1, f: (r) => r.qty.toLocaleString("en-IN") }, { h: "Box", r: 1, f: (r) => r.boxes },
-    { h: "Vol/Box", r: 1, f: (r) => num(r.it.volume, 3) }, { h: "Total Vol", r: 1, f: (r) => num(r.volTotal, 2) },
-    { h: "Net/Box", r: 1, f: (r) => num(r.it.netPerBox) }, { h: "Gross/Box", r: 1, f: (r) => num(r.it.grossPerBox) },
-    { h: "Total Net kg", r: 1, f: (r) => num(r.netTotal) }, { h: "Total Gross kg", r: 1, f: (r) => num(r.grossTotal) },
-    { h: "Stickers", r: 1, f: (r) => r.stickers }, { h: "Type UPS", r: 1, f: (r) => r.typeUp }, { h: "Sheets", r: 1, f: (r) => r.sheets },
-    { h: "Value Unit ₹", r: 1, f: (r) => num(r.valUnit) }, { h: "Value Total ₹", r: 1, f: (r) => num(r.valTotal) },
-    { h: "FOB/pc $", r: 1, f: (r) => usdp(r.fobPc) }, { h: "FOB Total $", r: 1, f: (r) => usd(r.fobTotal) },
-    { h: "RBI Ref ₹", r: 1, f: (r) => num(r.rbiTotal) },
+    { h: "Qty Pcs", r: 1, key: "qty", t: "int", v: (r) => r.qty, f: (r) => r.qty.toLocaleString("en-IN") },
+    { h: "Box", r: 1, key: "box", t: "int", fml: () => upDiv("{qty}", "{pack}"), f: (r) => r.boxes },
+    { h: "Vol/Box", r: 1, key: "volbox", t: "num3", v: (r) => r.it.volume, f: (r) => num(r.it.volume, 3) },
+    { h: "Total Vol", r: 1, key: "voltot", t: "num", fml: "{box}*{volbox}", f: (r) => num(r.volTotal, 2) },
+    { h: "Net/Box", r: 1, key: "netbox", t: "num", v: (r) => r.it.netPerBox, f: (r) => num(r.it.netPerBox) },
+    { h: "Gross/Box", r: 1, key: "grossbox", t: "num", v: (r) => r.it.grossPerBox, f: (r) => num(r.it.grossPerBox) },
+    { h: "Total Net kg", r: 1, key: "nettot", t: "num", fml: "{box}*{netbox}", f: (r) => num(r.netTotal) },
+    { h: "Total Gross kg", r: 1, key: "grosstot", t: "num", fml: "{box}*{grossbox}", f: (r) => num(r.grossTotal) },
+    { h: "Stickers", r: 1, key: "stk", t: "int", fml: (r) => `ROUNDUP({box}*${r.stkPerBox},0)`, f: (r) => r.stickers },
+    { h: "Type UPS", r: 1, key: "typeup", t: "int", v: (r) => r.typeUp, f: (r) => r.typeUp },
+    { h: "Sheets", r: 1, key: "sheets", t: "int", fml: () => upDiv("{stk}", "{typeup}"), f: (r) => r.sheets },
+    { h: "Value Unit ₹", r: 1, key: "valunit", t: "inr", v: (r) => r.valUnit, f: (r) => num(r.valUnit) },
+    { h: "Value Total ₹", r: 1, key: "valtot", t: "inr", fml: "{qty}*{valunit}", f: (r) => num(r.valTotal) },
+    { h: "FOB/pc $", r: 1, key: "fobpc", t: "usd4", v: (r) => r.fobPc, f: (r) => usdp(r.fobPc) },
+    { h: "FOB Total $", r: 1, key: "fobtot", t: "usd", fml: "{qty}*{fobpc}", f: (r) => usd(r.fobTotal) },
+    { h: "RBI Ref ₹", r: 1, key: "rbi", t: "inr", fml: `{fobtot}*${ex}`, f: (r) => num(r.rbiTotal) },
   ];
-  const foot = [{ v: "TOTAL", span: 10 }, { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1 }, { v: sum(rows, "boxes"), r: 1 },
-    { v: "", span: 2 }, { v: "", span: 2 }, { v: num(sum(rows, "netTotal")), r: 1 }, { v: num(sum(rows, "grossTotal")), r: 1 },
-    { v: "", span: 3 }, { v: "", span: 1 }, { v: num(sum(rows, "valTotal")), r: 1 }, { v: "", span: 1 }, { v: usd(sum(rows, "fobTotal")), r: 1 }, { v: num(sum(rows, "rbiTotal")), r: 1 }];
-  const html = `<div class="title">2A · MASTER (Buyer Order)</div><div class="sub">PO NO : ${esc(poHeaderList(ctx))} &nbsp;— &nbsp;Rate @ Rs. ${exRate(ctx)}/US$</div>${tableOf(cols, rows, foot)}`;
+  const foot = [{ v: "TOTAL", span: 10 }, { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
+    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" },
+    { v: "", span: 1 }, { v: num(sum(rows, "volTotal"), 2), r: 1, sum: "voltot", t: "num" },
+    { v: "", span: 2 }, { v: num(sum(rows, "netTotal")), r: 1, sum: "nettot", t: "num" },
+    { v: num(sum(rows, "grossTotal")), r: 1, sum: "grosstot", t: "num" },
+    { v: sum(rows, "stickers"), r: 1, sum: "stk", t: "int" }, { v: "" }, { v: sum(rows, "sheets"), r: 1, sum: "sheets", t: "int" },
+    { v: "" }, { v: num(sum(rows, "valTotal")), r: 1, sum: "valtot", t: "inr" },
+    { v: "" }, { v: usd(sum(rows, "fobTotal")), r: 1, sum: "fobtot", t: "usd" },
+    { v: num(sum(rows, "rbiTotal")), r: 1, sum: "rbi", t: "inr" }];
+  const html = `<div class="title">2A · MASTER (Buyer Order)</div><div class="sub">PO NO : ${esc(poHeaderList(ctx))} &nbsp;— &nbsp;Rate @ Rs. ${ex}/US$</div>${tableOf(cols, rows, foot)}`;
   return { name: "Master_2A", html };
 };
 
@@ -231,10 +315,16 @@ B["2"] = (ctx) => {
   const rows = orderAgg(ctx);
   const cols = [
     { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Description", f: (r) => esc(r.it.description) },
-    { h: "Bar Codes", f: (r) => esc(r.it.barcode) }, { h: "Labels", r: 1, f: (r) => r.stickers.toLocaleString("en-IN") },
-    { h: "Type UPS", r: 1, f: (r) => r.typeUp }, { h: "Sheets Reqd", r: 1, f: (r) => r.sheets },
+    { h: "Bar Codes", f: (r) => esc(r.it.barcode) },
+    { h: "Box", r: 1, key: "box", t: "int", v: (r) => r.boxes, f: (r) => r.boxes },
+    { h: "Labels", r: 1, key: "stk", t: "int", fml: (r) => `ROUNDUP({box}*${r.stkPerBox},0)`, f: (r) => r.stickers.toLocaleString("en-IN") },
+    { h: "Type UPS", r: 1, key: "typeup", t: "int", v: (r) => r.typeUp, f: (r) => r.typeUp },
+    { h: "Sheets Reqd", r: 1, key: "sheets", t: "int", fml: () => upDiv("{stk}", "{typeup}"), f: (r) => r.sheets },
   ];
-  const html = `<div class="title">2 · BARCODE</div><div class="sub">PO NO : ${esc(poHeaderList(ctx))}</div>${tableOf(cols, rows, [{ v: "TOTAL", span: 3 }, { v: sum(rows, "stickers").toLocaleString("en-IN"), r: 1 }, { v: "" }, { v: sum(rows, "sheets"), r: 1 }])}`;
+  const foot = [{ v: "TOTAL", span: 3 }, { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" },
+    { v: sum(rows, "stickers").toLocaleString("en-IN"), r: 1, sum: "stk", t: "int" }, { v: "" },
+    { v: sum(rows, "sheets"), r: 1, sum: "sheets", t: "int" }];
+  const html = `<div class="title">2 · BARCODE</div><div class="sub">PO NO : ${esc(poHeaderList(ctx))}</div>${tableOf(cols, rows, foot)}`;
   return { name: "Barcode_2", html };
 };
 
@@ -243,12 +333,20 @@ B["3"] = (ctx) => {
   const cols = [
     { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "GL Code", f: (r) => esc(r.it.gl) },
     { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) },
-    { h: "Pack/Unit", c: 1, f: (r) => r.packing }, { h: "Description", f: (r) => esc(r.it.description) },
+    { h: "Pack/Unit", c: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
+    { h: "Description", f: (r) => esc(r.it.description) },
     { h: "Bar Codes", f: (r) => esc(r.it.barcode) }, { h: "HSN", f: (r) => esc(r.it.hsn) },
-    { h: "Qty Pcs", r: 1, f: (r) => r.qty.toLocaleString("en-IN") }, { h: "Box", r: 1, f: (r) => r.boxes },
-    { h: "Volumn", r: 1, f: (r) => num(r.volTotal, 2) }, { h: "Total Net", r: 1, f: (r) => num(r.netTotal) }, { h: "Total Gross", r: 1, f: (r) => num(r.grossTotal) },
+    { h: "Qty Pcs", r: 1, key: "qty", t: "int", v: (r) => r.qty, f: (r) => r.qty.toLocaleString("en-IN") },
+    { h: "Box", r: 1, key: "box", t: "int", fml: () => upDiv("{qty}", "{pack}"), f: (r) => r.boxes },
+    { h: "Volumn", r: 1, key: "voltot", t: "num", fml: (r) => `{box}*${Number(r.it.volume) || 0}`, f: (r) => num(r.volTotal, 2) },
+    { h: "Total Net", r: 1, key: "nettot", t: "num", fml: (r) => `{box}*${Number(r.it.netPerBox) || 0}`, f: (r) => num(r.netTotal) },
+    { h: "Total Gross", r: 1, key: "grosstot", t: "num", fml: (r) => `{box}*${Number(r.it.grossPerBox) || 0}`, f: (r) => num(r.grossTotal) },
   ];
-  const foot = [{ v: "TOTAL", span: 9 }, { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1 }, { v: sum(rows, "boxes"), r: 1 }, { v: num(sum(rows, "volTotal"), 2), r: 1 }, { v: num(sum(rows, "netTotal")), r: 1 }, { v: num(sum(rows, "grossTotal")), r: 1 }];
+  const foot = [{ v: "TOTAL", span: 9 }, { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
+    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" },
+    { v: num(sum(rows, "volTotal"), 2), r: 1, sum: "voltot", t: "num" },
+    { v: num(sum(rows, "netTotal")), r: 1, sum: "nettot", t: "num" },
+    { v: num(sum(rows, "grossTotal")), r: 1, sum: "grosstot", t: "num" }];
   const html = `<div class="title">3 · PACKING</div><div class="sub">PO NO : ${esc(poHeaderList(ctx))}</div>${tableOf(cols, rows, foot)}`;
   return { name: "Packing_3", html };
 };
@@ -257,53 +355,88 @@ B["4"] = (ctx) => {
   const rows = orderAgg(ctx);
   const cols = [
     { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Size", c: 1, f: (r) => esc(r.it.size) },
-    { h: "Length", c: 1, f: (r) => esc(r.it.length) }, { h: "Pack/Unit", c: 1, f: (r) => r.packing },
+    { h: "Length", c: 1, f: (r) => esc(r.it.length) },
+    { h: "Pack/Unit", c: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
     { h: "Description", f: (r) => esc(r.it.description) }, { h: "Bar Codes", f: (r) => esc(r.it.barcode) }, { h: "HSN", f: (r) => esc(r.it.hsn) },
-    { h: "Qty Pcs", r: 1, f: (r) => r.qty.toLocaleString("en-IN") }, { h: "Box", r: 1, f: (r) => r.boxes },
-    { h: "Value Unit ₹", r: 1, f: (r) => num(r.valUnit) }, { h: "Value Total ₹", r: 1, f: (r) => num(r.valTotal) },
+    { h: "Qty Pcs", r: 1, key: "qty", t: "int", v: (r) => r.qty, f: (r) => r.qty.toLocaleString("en-IN") },
+    { h: "Box", r: 1, key: "box", t: "int", fml: () => upDiv("{qty}", "{pack}"), f: (r) => r.boxes },
+    { h: "Value Unit ₹", r: 1, key: "valunit", t: "inr", v: (r) => r.valUnit, f: (r) => num(r.valUnit) },
+    { h: "Value Total ₹", r: 1, key: "valtot", t: "inr", fml: "{qty}*{valunit}", f: (r) => num(r.valTotal) },
   ];
-  const foot = [{ v: "TOTAL", span: 8 }, { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1 }, { v: sum(rows, "boxes"), r: 1 }, { v: "" }, { v: num(sum(rows, "valTotal")), r: 1 }];
+  const foot = [{ v: "TOTAL", span: 8 }, { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
+    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" }, { v: "" },
+    { v: num(sum(rows, "valTotal")), r: 1, sum: "valtot", t: "inr" }];
   const html = `<div class="title">4 · PURCHASE</div><div class="sub">PO NO : ${esc(poHeaderList(ctx))}</div>${tableOf(cols, rows, foot)}`;
   return { name: "Purchase_4", html };
 };
 
 B["5"] = (ctx) => {
   const rows = orderAgg(ctx);
+  const ex = exRate(ctx);
   const cols = [
     { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "GL Code", f: (r) => esc(r.it.gl) },
-    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) }, { h: "Pack/Unit", c: 1, f: (r) => r.packing },
+    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) },
+    { h: "Pack/Unit", c: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
     { h: "Description", f: (r) => esc(r.it.description) }, { h: "Bar Codes", f: (r) => esc(r.it.barcode) },
-    { h: "Qty Pcs", r: 1, f: (r) => r.qty.toLocaleString("en-IN") }, { h: "Box", r: 1, f: (r) => r.boxes },
-    { h: "FOB/100 Unit $", r: 1, f: (r) => usd(r.fobPc * 100) }, { h: "FOB Total $", r: 1, f: (r) => usd(r.fobTotal) },
-    { h: "RBI Ref ₹", r: 1, f: (r) => num(r.rbiTotal) },
+    { h: "Qty Pcs", r: 1, key: "qty", t: "int", v: (r) => r.qty, f: (r) => r.qty.toLocaleString("en-IN") },
+    { h: "Box", r: 1, key: "box", t: "int", fml: () => upDiv("{qty}", "{pack}"), f: (r) => r.boxes },
+    { h: "FOB/100 Unit $", r: 1, key: "fob100", t: "usd", v: (r) => r.fobPc * 100, f: (r) => usd(r.fobPc * 100) },
+    { h: "FOB Total $", r: 1, key: "fobtot", t: "usd", fml: "{qty}*{fob100}/100", f: (r) => usd(r.fobTotal) },
+    { h: "RBI Ref ₹", r: 1, key: "rbi", t: "inr", fml: `{fobtot}*${ex}`, f: (r) => num(r.rbiTotal) },
   ];
-  const foot = [{ v: `TOTAL · Rate @ Rs. ${exRate(ctx)}`, span: 8 }, { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1 }, { v: sum(rows, "boxes"), r: 1 }, { v: "" }, { v: usd(sum(rows, "fobTotal")), r: 1 }, { v: num(sum(rows, "rbiTotal")), r: 1 }];
+  const foot = [{ v: `TOTAL · Rate @ Rs. ${ex}`, span: 8 }, { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
+    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" }, { v: "" },
+    { v: usd(sum(rows, "fobTotal")), r: 1, sum: "fobtot", t: "usd" },
+    { v: num(sum(rows, "rbiTotal")), r: 1, sum: "rbi", t: "inr" }];
   const html = `<div class="title">5 · SALES</div><div class="sub">PO NO : ${esc(poHeaderList(ctx))}</div>${tableOf(cols, rows, foot)}`;
   return { name: "Sales_5", html };
 };
 
-B["6"] = (ctx) => {
-  // Supplier purchase order — grouped by supplier
-  const lines = L(ctx), bySup = {};
-  lines.forEach((x) => { (bySup[x.supId] = bySup[x.supId] || []).push(x); });
-  const blocks = Object.entries(bySup).map(([sid, arr]) => {
-    const s = supFor(ctx, sid);
-    const cols = [
-      { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Size", c: 1, f: (r) => esc(r.it.size) },
-      { h: "Description of Goods", f: (r) => esc(r.it.description) }, { h: "HSN", f: (r) => esc(r.it.hsn) },
-      { h: "Quantity (Pcs)", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") }, { h: "Unit Price ₹", r: 1, f: (r) => num(r.valUnit) }, { h: "Total Value ₹", r: 1, f: (r) => num(r.valTotal) },
-    ];
-    const foot = [{ v: "TOTAL", span: 5 }, { v: sum(arr, "pieces").toLocaleString("en-IN"), r: 1 }, { v: "" }, { v: num(sum(arr, "valTotal")), r: 1 }];
-    return `<div class="title">EXPORT PURCHASE ORDER</div>
-      <table style="width:100%"><tr><td style="width:55%">${exporterBlock(ctx)}</td>
-      <td><table style="width:100%"><tr><td class="k">Purchase Order No.</td><td class="b">${esc(ctx.buyer.orderNo)}-${esc(s.code)} DT ${ddmm(ctx.inv.date)}</td></tr>
-      <tr><td class="k">Order of</td><td>PP &amp; NYLON MOULDED FITTINGS</td></tr>
-      <tr><td class="k">Shipping Marks</td><td>${esc(ctx.buyer.brand)}</td></tr></table></td></tr>
-      <tr><td colspan="2" class="k">To: Messrs ${esc(s.name)}, ${esc(s.place)} &nbsp;— GSTIN ${esc(s.gstin)}</td></tr></table>
-      ${tableOf(cols, arr, foot)}`;
-  }).join("<br>");
-  return { name: "Suppliers_PO_6", html: blocks };
-};
+/* Doc 6 — the supplier purchase order, one per supplier.
+
+   Like the inward e-way bill, this is a paper each factory receives on its
+   own: the preview lists them all so the whole order can be read at a glance,
+   and the download is taken supplier by supplier. Shipping marks are left
+   deliberately blank — the buyer's marks are not the supplier's business —
+   and our reference and theirs print underneath it. */
+function supplierPoBlock(ctx, sid, arr) {
+  const s = supFor(ctx, sid);
+  const cols = [
+    { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Size", c: 1, f: (r) => esc(r.it.size) },
+    { h: "Description of Goods", f: (r) => esc(r.it.description) }, { h: "HSN", f: (r) => esc(r.it.hsn) },
+    { h: "Quantity (Pcs)", r: 1, key: "qty", t: "int", v: (r) => r.pieces, f: (r) => r.pieces.toLocaleString("en-IN") },
+    { h: "Unit Price ₹", r: 1, key: "unit", t: "inr", v: (r) => r.valUnit, f: (r) => num(r.valUnit) },
+    { h: "Total Value ₹", r: 1, key: "total", t: "inr", fml: "{qty}*{unit}", f: (r) => num(r.valTotal) },
+  ];
+  const foot = [{ v: "TOTAL", span: 5 }, { v: sum(arr, "pieces").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
+    { v: "" }, { v: num(sum(arr, "valTotal")), r: 1, sum: "total", t: "inr" }];
+  return `<div class="title">EXPORT PURCHASE ORDER — ${esc(s.code || s.name || "")}</div>
+    <table style="width:100%"><tr><td style="width:55%">${exporterBlock(ctx)}</td>
+    <td><table style="width:100%"><tr><td class="k">Purchase Order No.</td><td class="b">${esc(orderRefOf(ctx))}-${esc(s.code)} DT ${ddmm(ctx.inv.date)}</td></tr>
+    <tr><td class="k">Order of</td><td>PP &amp; NYLON MOULDED FITTINGS</td></tr>
+    <tr><td class="k">Shipping Marks</td><td></td></tr>
+    <tr><td class="k">Our Reference</td><td class="b">${esc(ctx.buyer.ourReference || "")}</td></tr>
+    <tr><td class="k">Your Reference</td><td class="b">${esc(s.yourReference || "")}</td></tr></table></td></tr>
+    <tr><td colspan="2" class="k">To: Messrs ${esc(s.name)}, ${esc(s.place)} &nbsp;— GSTIN ${esc(s.gstin)}</td></tr></table>
+    ${tableOf(cols, arr, foot)}`;
+}
+
+/* One supplier purchase order per supplier — for the split download. */
+export function supplierPoDocs(ctx) {
+  const rows = orderRows(ctx);
+  const bySup = {};
+  rows.forEach((x) => { (bySup[x.supId] = bySup[x.supId] || []).push(x); });
+  return Object.entries(bySup).map(([sid, arr]) => {
+    const sp = supFor(ctx, sid);
+    return {
+      supplierId: sid, code: sp.code || sid, name: sp.name || sid,
+      docName: `Suppliers_PO_6_${(sp.code || sid).replace(/[^A-Za-z0-9]+/g, "_")}`,
+      html: supplierPoBlock(ctx, sid, arr),
+    };
+  });
+}
+
+B["6"] = (ctx) => ({ name: "Suppliers_PO_6", html: supplierPoDocs(ctx).map((d) => d.html).join("<br>") });
 
 /* ---------- Stage B · Supplier packing (7A–11) ---------- */
 function supplierTable(ctx, cols, footBuilder, title, sub) {
@@ -311,60 +444,100 @@ function supplierTable(ctx, cols, footBuilder, title, sub) {
   const foot = footBuilder ? footBuilder(rows) : null;
   return `<div class="title">${esc(title)}</div><div class="sub">${esc(sub)}</div>${tableOf(cols, rows, foot)}`;
 }
+/* On the supplier sheets the boxes are the packed fact and the pieces follow
+   from them, so the formulas run the other way round to the buyer sheets:
+   Qty = Box × Packing. */
+const QTY_FROM_BOX = "{box}*{pack}";
+
 B["7A"] = (ctx) => {
+  const ex = exRate(ctx);
   const cols = [
     { h: "Sr No", c: 1, f: (r) => r.range }, { h: "PO No", f: (r) => r.pos.join(", ") },
     { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "OSWIN Code", f: (r) => esc(r.it.oswin) }, { h: "GL Code", f: (r) => esc(r.it.gl) },
-    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) }, { h: "Packing", c: 1, f: (r) => r.packing },
+    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) },
+    { h: "Packing", c: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
     { h: "Description", f: (r) => esc(r.it.description) }, { h: "Bar Codes", f: (r) => esc(r.it.barcode) }, { h: "HSN", f: (r) => esc(r.it.hsn) },
-    { h: "Qty Pcs", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") }, { h: "Box", r: 1, f: (r) => r.boxes },
-    { h: "Vol/Box", r: 1, f: (r) => num(r.it.volume, 3) }, { h: "Total Vol", r: 1, f: (r) => num(r.volTotal, 2) },
-    { h: "BG", r: 1, f: (r) => r.bg }, { h: "PC", r: 1, f: (r) => r.pc }, { h: "TTL", r: 1, f: (r) => r.ttl },
-    { h: "Barcode Stk", r: 1, f: (r) => r.stickers }, { h: "Sheets", r: 1, f: (r) => r.sheets },
-    { h: "Cost/Unit ₹", r: 1, f: (r) => num(r.valUnit) }, { h: "Total Cost ₹", r: 1, f: (r) => num(r.valTotal) },
-    { h: "FOB/pc $", r: 1, f: (r) => usdp(r.fobPc) }, { h: "Total FOB $", r: 1, f: (r) => usd(r.fobTotal) },
-    { h: "RBI Ref ₹", r: 1, f: (r) => num(r.rbiTotal) },
+    { h: "Qty Pcs", r: 1, key: "qty", t: "int", fml: QTY_FROM_BOX, f: (r) => r.pieces.toLocaleString("en-IN") },
+    { h: "Box", r: 1, key: "box", t: "int", v: (r) => r.boxes, f: (r) => r.boxes },
+    { h: "Vol/Box", r: 1, key: "volbox", t: "num3", v: (r) => r.it.volume, f: (r) => num(r.it.volume, 3) },
+    { h: "Total Vol", r: 1, key: "voltot", t: "num", fml: "{box}*{volbox}", f: (r) => num(r.volTotal, 2) },
+    { h: "BG", r: 1, key: "bg", t: "int", v: (r) => r.bg, f: (r) => r.bg },
+    { h: "PC", r: 1, key: "pc", t: "int", v: (r) => r.pc, f: (r) => r.pc },
+    { h: "TTL", r: 1, key: "ttl", t: "num1", v: (r) => r.ttl, f: (r) => r.ttl },
+    { h: "Barcode Stk", r: 1, key: "stk", t: "int", fml: (r) => `ROUNDUP({box}*${r.stkPerBox},0)`, f: (r) => r.stickers },
+    { h: "Sheets", r: 1, key: "sheets", t: "int", fml: (r) => upDiv("{stk}", String(r.typeUp || 0)), f: (r) => r.sheets },
+    { h: "Cost/Unit ₹", r: 1, key: "costunit", t: "inr", v: (r) => r.valUnit, f: (r) => num(r.valUnit) },
+    { h: "Total Cost ₹", r: 1, key: "costtot", t: "inr", fml: "{qty}*{costunit}", f: (r) => num(r.valTotal) },
+    { h: "FOB/pc $", r: 1, key: "fobpc", t: "usd4", v: (r) => r.fobPc, f: (r) => usdp(r.fobPc) },
+    { h: "Total FOB $", r: 1, key: "fobtot", t: "usd", fml: "{qty}*{fobpc}", f: (r) => usd(r.fobTotal) },
+    { h: "RBI Ref ₹", r: 1, key: "rbi", t: "inr", fml: `{fobtot}*${ex}`, f: (r) => num(r.rbiTotal) },
   ];
-  const foot = (rows) => [{ v: "TOTAL", span: 12 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1 }, { v: sum(rows, "boxes"), r: 1 }, { v: "" }, { v: num(sum(rows, "volTotal"), 2), r: 1 }, { v: "", span: 3 }, { v: sum(rows, "stickers"), r: 1 }, { v: sum(rows, "sheets"), r: 1 }, { v: "" }, { v: num(sum(rows, "valTotal")), r: 1 }, { v: "" }, { v: usd(sum(rows, "fobTotal")), r: 1 }, { v: num(sum(rows, "rbiTotal")), r: 1 }];
-  return { name: "Supplier_Master_7A", html: supplierTable(ctx, cols, foot, "7A · MOULDED ORDER MASTER (Supplier)", `PO NO : ${poHeaderList(ctx)} · Rate @ Rs. ${exRate(ctx)}`) };
+  const foot = (rows) => [{ v: "TOTAL", span: 12 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
+    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" }, { v: "" },
+    { v: num(sum(rows, "volTotal"), 2), r: 1, sum: "voltot", t: "num" }, { v: "", span: 3 },
+    { v: sum(rows, "stickers"), r: 1, sum: "stk", t: "int" }, { v: sum(rows, "sheets"), r: 1, sum: "sheets", t: "int" },
+    { v: "" }, { v: num(sum(rows, "valTotal")), r: 1, sum: "costtot", t: "inr" }, { v: "" },
+    { v: usd(sum(rows, "fobTotal")), r: 1, sum: "fobtot", t: "usd" },
+    { v: num(sum(rows, "rbiTotal")), r: 1, sum: "rbi", t: "inr" }];
+  return { name: "Supplier_Master_7A", html: supplierTable(ctx, cols, foot, "7A · MOULDED ORDER MASTER (Supplier)", `PO NO : ${poHeaderList(ctx)} · Rate @ Rs. ${ex}`) };
 };
 B["7"] = (ctx) => {
   const cols = [
     { h: "Sr No", c: 1, f: (r) => r.range }, { h: "PO No", f: (r) => r.pos.join(", ") },
     { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "OSWIN Code", f: (r) => esc(r.it.oswin) },
-    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) }, { h: "Packing", c: 1, f: (r) => r.packing },
+    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) },
+    { h: "Packing", c: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
     { h: "Description", f: (r) => esc(r.it.description) }, { h: "Bar Codes", f: (r) => esc(r.it.barcode) }, { h: "HSN", f: (r) => esc(r.it.hsn) },
-    { h: "Qty Pcs", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") }, { h: "Box", r: 1, f: (r) => r.boxes },
-    { h: "Vol/Box", r: 1, f: (r) => num(r.it.volume, 3) }, { h: "Total Vol", r: 1, f: (r) => num(r.volTotal, 2) },
-    { h: "Total Net Wt", r: 1, f: (r) => num(r.netTotal) }, { h: "Gross Wt", r: 1, f: (r) => num(r.grossTotal) },
+    { h: "Qty Pcs", r: 1, key: "qty", t: "int", fml: QTY_FROM_BOX, f: (r) => r.pieces.toLocaleString("en-IN") },
+    { h: "Box", r: 1, key: "box", t: "int", v: (r) => r.boxes, f: (r) => r.boxes },
+    { h: "Vol/Box", r: 1, key: "volbox", t: "num3", v: (r) => r.it.volume, f: (r) => num(r.it.volume, 3) },
+    { h: "Total Vol", r: 1, key: "voltot", t: "num", fml: "{box}*{volbox}", f: (r) => num(r.volTotal, 2) },
+    { h: "Total Net Wt", r: 1, key: "nettot", t: "num", fml: (r) => `{box}*${Number(r.it.netPerBox) || 0}`, f: (r) => num(r.netTotal) },
+    { h: "Gross Wt", r: 1, key: "grosstot", t: "num", fml: (r) => `{box}*${Number(r.it.grossPerBox) || 0}`, f: (r) => num(r.grossTotal) },
   ];
-  const foot = (rows) => [{ v: "TOTAL", span: 11 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1 }, { v: sum(rows, "boxes"), r: 1 }, { v: "" }, { v: num(sum(rows, "volTotal"), 2), r: 1 }, { v: num(sum(rows, "netTotal")), r: 1 }, { v: num(sum(rows, "grossTotal")), r: 1 }];
+  const foot = (rows) => [{ v: "TOTAL", span: 11 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
+    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" }, { v: "" },
+    { v: num(sum(rows, "volTotal"), 2), r: 1, sum: "voltot", t: "num" },
+    { v: num(sum(rows, "netTotal")), r: 1, sum: "nettot", t: "num" },
+    { v: num(sum(rows, "grossTotal")), r: 1, sum: "grosstot", t: "num" }];
   return { name: "Packing_7", html: supplierTable(ctx, cols, foot, "7 · PACKING (Supplier)", `PO NO : ${poHeaderList(ctx)}`) };
 };
 B["8"] = (ctx) => {
   const cols = [
     { h: "Sr No", c: 1, f: (r) => r.range }, { h: "PO No", f: (r) => r.pos.join(", ") },
     { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "OSWIN Code", f: (r) => esc(r.it.oswin) },
-    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) }, { h: "Packing", c: 1, f: (r) => r.packing },
+    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) },
+    { h: "Packing", c: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
     { h: "Description", f: (r) => esc(r.it.description) }, { h: "Bar Codes", f: (r) => esc(r.it.barcode) }, { h: "HSN", f: (r) => esc(r.it.hsn) },
-    { h: "Qty Pcs", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") }, { h: "Box", r: 1, f: (r) => r.boxes },
-    { h: "Value Unit ₹", r: 1, f: (r) => num(r.valUnit) }, { h: "Value Total ₹", r: 1, f: (r) => num(r.valTotal) },
+    { h: "Qty Pcs", r: 1, key: "qty", t: "int", fml: QTY_FROM_BOX, f: (r) => r.pieces.toLocaleString("en-IN") },
+    { h: "Box", r: 1, key: "box", t: "int", v: (r) => r.boxes, f: (r) => r.boxes },
+    { h: "Value Unit ₹", r: 1, key: "valunit", t: "inr", v: (r) => r.valUnit, f: (r) => num(r.valUnit) },
+    { h: "Value Total ₹", r: 1, key: "valtot", t: "inr", fml: "{qty}*{valunit}", f: (r) => num(r.valTotal) },
   ];
-  const foot = (rows) => [{ v: "TOTAL", span: 11 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1 }, { v: sum(rows, "boxes"), r: 1 }, { v: "" }, { v: num(sum(rows, "valTotal")), r: 1 }];
+  const foot = (rows) => [{ v: "TOTAL", span: 11 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
+    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" }, { v: "" },
+    { v: num(sum(rows, "valTotal")), r: 1, sum: "valtot", t: "inr" }];
   return { name: "Purchase_8", html: supplierTable(ctx, cols, foot, "8 · PURCHASE (Supplier)", `PO NO : ${poHeaderList(ctx)}`) };
 };
 B["9"] = (ctx) => {
+  const ex = exRate(ctx);
   const cols = [
     { h: "Sr No", c: 1, f: (r) => r.range }, { h: "PO No", f: (r) => r.pos.join(", ") },
     { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "GL Code", f: (r) => esc(r.it.gl) },
-    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) }, { h: "Packing", c: 1, f: (r) => r.packing },
+    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) },
+    { h: "Packing", c: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
     { h: "Description", f: (r) => esc(r.it.description) }, { h: "Bar Codes", f: (r) => esc(r.it.barcode) },
-    { h: "Qty Pcs", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") }, { h: "Box", r: 1, f: (r) => r.boxes },
-    { h: "FOB/pc $", r: 1, f: (r) => usdp(r.fobPc) }, { h: "Total FOB $", r: 1, f: (r) => usd(r.fobTotal) },
-    { h: "RBI Ref ₹", r: 1, f: (r) => num(r.rbiTotal) },
+    { h: "Qty Pcs", r: 1, key: "qty", t: "int", fml: QTY_FROM_BOX, f: (r) => r.pieces.toLocaleString("en-IN") },
+    { h: "Box", r: 1, key: "box", t: "int", v: (r) => r.boxes, f: (r) => r.boxes },
+    { h: "FOB/pc $", r: 1, key: "fobpc", t: "usd4", v: (r) => r.fobPc, f: (r) => usdp(r.fobPc) },
+    { h: "Total FOB $", r: 1, key: "fobtot", t: "usd", fml: "{qty}*{fobpc}", f: (r) => usd(r.fobTotal) },
+    { h: "RBI Ref ₹", r: 1, key: "rbi", t: "inr", fml: `{fobtot}*${ex}`, f: (r) => num(r.rbiTotal) },
   ];
-  const foot = (rows) => [{ v: `TOTAL · Rate @ Rs. ${exRate(ctx)}`, span: 10 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1 }, { v: sum(rows, "boxes"), r: 1 }, { v: "" }, { v: usd(sum(rows, "fobTotal")), r: 1 }, { v: num(sum(rows, "rbiTotal")), r: 1 }];
-  return { name: "Sales_9", html: supplierTable(ctx, cols, foot, "9 · SALES (Supplier)", `PO NO : ${poHeaderList(ctx)} · Rate @ Rs. ${exRate(ctx)}`) };
+  const foot = (rows) => [{ v: `TOTAL · Rate @ Rs. ${ex}`, span: 10 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
+    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" }, { v: "" },
+    { v: usd(sum(rows, "fobTotal")), r: 1, sum: "fobtot", t: "usd" },
+    { v: num(sum(rows, "rbiTotal")), r: 1, sum: "rbi", t: "inr" }];
+  return { name: "Sales_9", html: supplierTable(ctx, cols, foot, "9 · SALES (Supplier)", `PO NO : ${poHeaderList(ctx)} · Rate @ Rs. ${ex}`) };
 };
 // Resolve the transport (transporter name + vehicle no) for a supplier on this
 // invoice — from the shipment vehicle details, falling back to the packing pick.
@@ -442,12 +615,25 @@ B["12"] = (ctx) => {
   const rows = Object.entries(bySup).map(([k, g]) => ({ k, ...g }));
   const cols = [
     { h: "Supplier", f: (r) => esc(r.k) }, { h: "HSN", f: (r) => esc(r.hsn) },
-    { h: "Box", r: 1, f: (r) => r.box }, { h: "Volume", r: 1, f: (r) => num(r.vol, 2) }, { h: "Quantity", r: 1, f: (r) => r.qty.toLocaleString("en-IN") },
-    { h: "Net Wt", r: 1, f: (r) => num(r.net) }, { h: "Gross Wt", r: 1, f: (r) => num(r.gross) },
-    { h: "Taxable Purchase ₹", r: 1, f: (r) => num(r.pur) }, { h: "GST 18% ₹", r: 1, f: (r) => num(r.pur * 0.18) },
-    { h: "Taxable Sales $", r: 1, f: (r) => usd(r.sale) }, { h: "Taxable Sales ₹", r: 1, f: (r) => num(r.sale * ex) },
+    { h: "Box", r: 1, key: "box", t: "int", v: (r) => r.box, f: (r) => r.box },
+    { h: "Volume", r: 1, key: "vol", t: "num", v: (r) => r.vol, f: (r) => num(r.vol, 2) },
+    { h: "Quantity", r: 1, key: "qty", t: "int", v: (r) => r.qty, f: (r) => r.qty.toLocaleString("en-IN") },
+    { h: "Net Wt", r: 1, key: "net", t: "num", v: (r) => r.net, f: (r) => num(r.net) },
+    { h: "Gross Wt", r: 1, key: "gross", t: "num", v: (r) => r.gross, f: (r) => num(r.gross) },
+    { h: "Taxable Purchase ₹", r: 1, key: "pur", t: "inr", v: (r) => r.pur, f: (r) => num(r.pur) },
+    { h: "GST 18% ₹", r: 1, key: "gst", t: "inr", fml: "{pur}*0.18", f: (r) => num(r.pur * 0.18) },
+    { h: "Taxable Sales $", r: 1, key: "sale", t: "usd", v: (r) => r.sale, f: (r) => usd(r.sale) },
+    { h: "Taxable Sales ₹", r: 1, key: "saleinr", t: "inr", fml: `{sale}*${ex}`, f: (r) => num(r.sale * ex) },
   ];
-  const foot = [{ v: "TOTAL", span: 2 }, { v: sum(rows, "box"), r: 1 }, { v: num(sum(rows, "vol"), 2), r: 1 }, { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1 }, { v: num(sum(rows, "net")), r: 1 }, { v: num(sum(rows, "gross")), r: 1 }, { v: num(sum(rows, "pur")), r: 1 }, { v: num(sum(rows, "pur") * 0.18), r: 1 }, { v: usd(sum(rows, "sale")), r: 1 }, { v: num(sum(rows, "sale") * ex), r: 1 }];
+  const foot = [{ v: "TOTAL", span: 2 }, { v: sum(rows, "box"), r: 1, sum: "box", t: "int" },
+    { v: num(sum(rows, "vol"), 2), r: 1, sum: "vol", t: "num" },
+    { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
+    { v: num(sum(rows, "net")), r: 1, sum: "net", t: "num" },
+    { v: num(sum(rows, "gross")), r: 1, sum: "gross", t: "num" },
+    { v: num(sum(rows, "pur")), r: 1, sum: "pur", t: "inr" },
+    { v: num(sum(rows, "pur") * 0.18), r: 1, sum: "gst", t: "inr" },
+    { v: usd(sum(rows, "sale")), r: 1, sum: "sale", t: "usd" },
+    { v: num(sum(rows, "sale") * ex), r: 1, sum: "saleinr", t: "inr" }];
   const html = `<div class="title">12 · SHIPMENT BOXES &amp; VOLUME</div><div class="sub">Invoice ${esc(ctx.inv.invoiceNo)} DT ${ddmm(ctx.inv.date)} · Rate @ Rs. ${ex}/$</div>${tableOf(cols, rows, foot)}`;
   return { name: "Shipment_Boxes_Volume_12", html };
 };
@@ -507,12 +693,14 @@ B["17"] = (ctx) => {
   const order = ["piece", "100", "custom"];
   const g = {}; rows.forEach((r) => { const m = fobModeOf(r.it); (g[m] = g[m] || []).push(r); });
   const groups = order.filter((m) => g[m]?.length);
-  const head = `<tr><th>Code</th><th>Size</th><th>Len (MM)</th><th>Pieces</th><th>Rate $</th><th>Total Value $</th></tr>`;
+  const head = `<tr><th>Code</th><th>Size</th><th>Len (MM)</th><th data-k="pieces">Pieces</th><th data-k="rate">Rate $</th><th data-k="amount">Total Value $</th></tr>`;
   const section = (m) => {
     const arr = g[m], per100 = m === "100";
     const body = arr.map((r) => {
       const rate = per100 ? r.fobPc * 100 : r.fobPc;
-      return `<tr><td>${esc(r.it.code)}</td><td class="c">${esc(r.it.size)}</td><td class="c">${esc(r.it.length)}</td><td class="r">${r.pieces.toLocaleString("en-IN")}</td><td class="r">${per100 ? usd(rate) + "/100" : usdp(rate) + "/pc"}</td><td class="r">${usd(r.fobTotal)}</td></tr>`;
+      // Amount = pieces × rate, divided by 100 on the per-hundred basis, so
+      // the download recalculates whichever way the item is quoted.
+      return `<tr><td>${esc(r.it.code)}</td><td class="c">${esc(r.it.size)}</td><td class="c">${esc(r.it.length)}</td><td class="r" data-t="int" data-v="${r.pieces}">${r.pieces.toLocaleString("en-IN")}</td><td class="r" data-t="${per100 ? "usd" : "usd4"}" data-v="${rate}">${per100 ? usd(rate) + "/100" : usdp(rate) + "/pc"}</td><td class="r" data-t="usd" data-f="{pieces}*{rate}${per100 ? "/100" : ""}">${usd(r.fobTotal)}</td></tr>`;
     }).join("");
     return `<tr class="sec"><td colspan="6">${modeLabel(m)}</td></tr>${head}${body}<tr class="sec"><td colspan="3">Subtotal — ${modeLabel(m)}</td><td class="r">${sum(arr, "pieces").toLocaleString("en-IN")}</td><td></td><td class="r">${usd(sum(arr, "fobTotal"))}</td></tr>`;
   };
@@ -531,12 +719,19 @@ B["18"] = (ctx) => {
   const rows = L(ctx), ex = exRate(ctx);
   const cols = [
     { h: "Code", f: (r) => esc(r.it.code) }, { h: "HSN", f: (r) => esc(r.it.hsn) }, { h: "Size", c: 1, f: (r) => esc(r.it.size) },
-    { h: "Pieces", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") }, { h: "Rate $/pc", r: 1, f: (r) => usdp(r.fobPc) },
-    { h: "FOB Amount $", r: 1, f: (r) => usd(r.fobTotal) }, { h: "Taxable ₹", r: 1, f: (r) => num(r.fobTotal * ex) },
-    { h: "GST %", c: 1, f: (r) => (gstRate(r.it.hsn) * 100).toFixed(0) + "%" }, { h: "GST ₹", r: 1, f: (r) => num(r.fobTotal * ex * gstRate(r.it.hsn)) },
+    { h: "Pieces", r: 1, key: "pieces", t: "int", v: (r) => r.pieces, f: (r) => r.pieces.toLocaleString("en-IN") },
+    { h: "Rate $/pc", r: 1, key: "rate", t: "usd4", v: (r) => r.fobPc, f: (r) => usdp(r.fobPc) },
+    { h: "FOB Amount $", r: 1, key: "fob", t: "usd", fml: "{pieces}*{rate}", f: (r) => usd(r.fobTotal) },
+    { h: "Taxable ₹", r: 1, key: "taxable", t: "inr", fml: `{fob}*${ex}`, f: (r) => num(r.fobTotal * ex) },
+    { h: "GST %", c: 1, f: (r) => (gstRate(r.it.hsn) * 100).toFixed(0) + "%" },
+    { h: "GST ₹", r: 1, key: "gst", t: "inr", fml: (r) => `{taxable}*${gstRate(r.it.hsn)}`, f: (r) => num(r.fobTotal * ex * gstRate(r.it.hsn)) },
   ];
   const taxTot = sum(rows, "fobTotal") * ex, gstTot = rows.reduce((s, r) => s + r.fobTotal * ex * gstRate(r.it.hsn), 0);
-  const foot = [{ v: `TOTAL FOB · ${sum(rows, "boxes")} boxes`, span: 3 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1 }, { v: "" }, { v: usd(sum(rows, "fobTotal")), r: 1 }, { v: num(taxTot), r: 1 }, { v: "" }, { v: num(gstTot), r: 1 }];
+  const foot = [{ v: `TOTAL FOB · ${sum(rows, "boxes")} boxes`, span: 3 },
+    { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1, sum: "pieces", t: "int" }, { v: "" },
+    { v: usd(sum(rows, "fobTotal")), r: 1, sum: "fob", t: "usd" },
+    { v: num(taxTot), r: 1, sum: "taxable", t: "inr" }, { v: "" },
+    { v: num(gstTot), r: 1, sum: "gst", t: "inr" }];
   const html = `${masthead(ctx, "18 · CUSTOM INVOICE")}${tableOf(cols, rows, foot)}
     <table style="width:100%"><tr><td class="k">Nett Wt</td><td>${num(sum(rows, "netTotal"))} kg</td><td class="k">Gross Wt</td><td>${num(sum(rows, "grossTotal"))} kg</td><td class="k">FOB Value</td><td class="b">${usd(sum(rows, "fobTotal"))} / ${inr(taxTot)}</td></tr></table>
     <p class="sub">Declaration: We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct. SUPPLY MEANT FOR EXPORT WITH PAYMENT OF INTEGRATED TAX. We intend to claim rewards under RoDTEP. — For ${esc(ctx.EXPORTER.name)}</p>`;
@@ -546,10 +741,18 @@ function packingListDoc(ctx, title, no, boxLabel = "Boxes") {
   const rows = L(ctx), s = ctx.inv.ship || {};
   const cols = [
     { h: "Sr No / Marks", c: 1, f: (r) => r.range }, { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) },
-    { h: "Description", f: (r) => esc(r.it.description) }, { h: "Qty Pcs", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") }, { h: boxLabel, r: 1, f: (r) => r.boxes },
-    { h: "Net Wt kg", r: 1, f: (r) => num(r.netTotal) }, { h: "Gross Wt kg", r: 1, f: (r) => num(r.grossTotal) }, { h: "Volume m³", r: 1, f: (r) => num(r.volTotal, 2) },
+    { h: "Description", f: (r) => esc(r.it.description) },
+    { h: "Qty Pcs", r: 1, key: "qty", t: "int", fml: (r) => `{box}*${Number(r.packing) || 0}`, f: (r) => r.pieces.toLocaleString("en-IN") },
+    { h: boxLabel, r: 1, key: "box", t: "int", v: (r) => r.boxes, f: (r) => r.boxes },
+    { h: "Net Wt kg", r: 1, key: "net", t: "num", fml: (r) => `{box}*${Number(r.it.netPerBox) || 0}`, f: (r) => num(r.netTotal) },
+    { h: "Gross Wt kg", r: 1, key: "gross", t: "num", fml: (r) => `{box}*${Number(r.it.grossPerBox) || 0}`, f: (r) => num(r.grossTotal) },
+    { h: "Volume m³", r: 1, key: "vol", t: "num", fml: (r) => `{box}*${Number(r.it.volume) || 0}`, f: (r) => num(r.volTotal, 2) },
   ];
-  const foot = [{ v: "TOTAL", span: 4 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1 }, { v: sum(rows, "boxes"), r: 1 }, { v: num(sum(rows, "netTotal")), r: 1 }, { v: num(sum(rows, "grossTotal")), r: 1 }, { v: num(sum(rows, "volTotal"), 2), r: 1 }];
+  const foot = [{ v: "TOTAL", span: 4 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
+    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" },
+    { v: num(sum(rows, "netTotal")), r: 1, sum: "net", t: "num" },
+    { v: num(sum(rows, "grossTotal")), r: 1, sum: "gross", t: "num" },
+    { v: num(sum(rows, "volTotal"), 2), r: 1, sum: "vol", t: "num" }];
   const shipRow = `<table style="width:100%"><tr><td class="k">BL</td><td>${esc(s.blNo || "—")} ${s.blDate ? "DT " + ddmm(s.blDate) : ""}</td><td class="k">Vessel</td><td>${esc(s.vessel || "—")}</td></tr>
     <tr><td class="k">Container</td><td>${esc(s.container || "—")}</td><td class="k">Seal</td><td>${esc(s.seal || "—")}</td></tr>
     <tr><td class="k">Marks</td><td>${esc(s.marks || "—")}</td><td class="k">Packages</td><td>${esc(s.pkgs || "—")}</td></tr></table>`;
@@ -560,10 +763,17 @@ B["20"] = (ctx) => {
   const rows = L(ctx);
   const cols = [
     { h: "Marks", c: 1, f: (r) => r.range }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Description", f: (r) => esc(r.it.description) },
-    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Pack/Box", r: 1, f: (r) => r.packing }, { h: "Qty Pcs", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") },
-    { h: "Boxes", r: 1, f: (r) => r.boxes }, { h: "Net kg", r: 1, f: (r) => num(r.netTotal) }, { h: "Gross kg", r: 1, f: (r) => num(r.grossTotal) },
+    { h: "Size", c: 1, f: (r) => esc(r.it.size) },
+    { h: "Pack/Box", r: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
+    { h: "Qty Pcs", r: 1, key: "qty", t: "int", fml: QTY_FROM_BOX, f: (r) => r.pieces.toLocaleString("en-IN") },
+    { h: "Boxes", r: 1, key: "box", t: "int", v: (r) => r.boxes, f: (r) => r.boxes },
+    { h: "Net kg", r: 1, key: "net", t: "num", fml: (r) => `{box}*${Number(r.it.netPerBox) || 0}`, f: (r) => num(r.netTotal) },
+    { h: "Gross kg", r: 1, key: "gross", t: "num", fml: (r) => `{box}*${Number(r.it.grossPerBox) || 0}`, f: (r) => num(r.grossTotal) },
   ];
-  const foot = [{ v: "TOTAL", span: 5 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1 }, { v: sum(rows, "boxes"), r: 1 }, { v: num(sum(rows, "netTotal")), r: 1 }, { v: num(sum(rows, "grossTotal")), r: 1 }];
+  const foot = [{ v: "TOTAL", span: 5 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
+    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" },
+    { v: num(sum(rows, "netTotal")), r: 1, sum: "net", t: "num" },
+    { v: num(sum(rows, "grossTotal")), r: 1, sum: "gross", t: "num" }];
   return { name: "Packing_List_Itemwise_20", html: `${masthead(ctx, "20 · PACKING LIST (Item-wise Details)", { po: 1 })}${tableOf(cols, rows, foot)}` };
 };
 function packagingDeclaration(ctx, title, no) {
@@ -614,11 +824,16 @@ B["23"] = (ctx) => {
 B["24"] = (ctx) => {
   const rows = L(ctx), s = ctx.inv.ship || {};
   const cols = [
-    { h: "Item Code", f: (r) => esc(r.it.code) }, { h: "Quantity Pcs", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") },
-    { h: "FOB/pc $", r: 1, f: (r) => usdp(r.fobPc) }, { h: "FOB Total $", r: 1, f: (r) => usd(r.fobTotal) },
-    { h: "Net Wt kg", r: 1, f: (r) => num(r.netTotal) }, { h: "Rate/kg $", r: 1, f: (r) => num(r.rateKg, 3) },
+    { h: "Item Code", f: (r) => esc(r.it.code) },
+    { h: "Quantity Pcs", r: 1, key: "qty", t: "int", v: (r) => r.pieces, f: (r) => r.pieces.toLocaleString("en-IN") },
+    { h: "FOB/pc $", r: 1, key: "rate", t: "usd4", v: (r) => r.fobPc, f: (r) => usdp(r.fobPc) },
+    { h: "FOB Total $", r: 1, key: "fobtot", t: "usd", fml: "{qty}*{rate}", f: (r) => usd(r.fobTotal) },
+    { h: "Net Wt kg", r: 1, key: "net", t: "num", v: (r) => r.netTotal, f: (r) => num(r.netTotal) },
+    { h: "Rate/kg $", r: 1, key: "ratekg", t: "num3", fml: "IF({net}=0,0,{fobtot}/{net})", f: (r) => num(r.rateKg, 3) },
   ];
-  const foot = [{ v: "TOTAL", span: 1 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1 }, { v: "" }, { v: usd(sum(rows, "fobTotal")), r: 1 }, { v: num(sum(rows, "netTotal")), r: 1 }, { v: "" }];
+  const foot = [{ v: "TOTAL", span: 1 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
+    { v: "" }, { v: usd(sum(rows, "fobTotal")), r: 1, sum: "fobtot", t: "usd" },
+    { v: num(sum(rows, "netTotal")), r: 1, sum: "net", t: "num" }, { v: "" }];
   const html = `<div class="title">24 · ANNEXURE TO INVOICE (BL Annexure)</div>
     <table style="width:100%"><tr><td class="k">Inv No &amp; Dt</td><td class="b">${esc(ctx.inv.invoiceNo)} DT ${ddmm(ctx.inv.date)}</td><td class="k">No of Pkgs</td><td>${esc(s.pkgs || "—")}</td><td class="k">Shipment to</td><td>${esc(s.pod || ctx.buyer.shipTo)}</td></tr></table>
     ${tableOf(cols, rows, foot)}`;
@@ -628,15 +843,18 @@ B["25"] = (ctx) => {
   const rows = L(ctx), ex = exRate(ctx);
   const cols = [
     { h: "Code", f: (r) => esc(r.it.code) }, { h: "HSN", f: (r) => esc(r.it.hsn) }, { h: "Description", f: (r) => esc(r.it.description) },
-    { h: "Qty", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") }, { h: "Taxable ₹", r: 1, f: (r) => num(r.fobTotal * ex) },
-    { h: "IGST %", c: 1, f: (r) => (gstRate(r.it.hsn) * 100).toFixed(0) + "%" }, { h: "IGST ₹", r: 1, f: (r) => num(r.fobTotal * ex * gstRate(r.it.hsn)) },
-    { h: "Total ₹", r: 1, f: (r) => num(r.fobTotal * ex * (1 + gstRate(r.it.hsn))) },
+    { h: "Qty", r: 1, key: "qty", t: "int", v: (r) => r.pieces, f: (r) => r.pieces.toLocaleString("en-IN") },
+    { h: "Taxable ₹", r: 1, key: "taxable", t: "inr", v: (r) => r.fobTotal * ex, f: (r) => num(r.fobTotal * ex) },
+    { h: "IGST %", c: 1, f: (r) => (gstRate(r.it.hsn) * 100).toFixed(0) + "%" },
+    { h: "IGST ₹", r: 1, key: "igst", t: "inr", fml: (r) => `{taxable}*${gstRate(r.it.hsn)}`, f: (r) => num(r.fobTotal * ex * gstRate(r.it.hsn)) },
+    { h: "Total ₹", r: 1, key: "total", t: "inr", fml: "{taxable}+{igst}", f: (r) => num(r.fobTotal * ex * (1 + gstRate(r.it.hsn))) },
   ];
   const tax = sum(rows, "fobTotal") * ex, gst = rows.reduce((a, r) => a + r.fobTotal * ex * gstRate(r.it.hsn), 0);
   const html = `<div class="title">25 · E-INVOICE (IRN)</div>
     <table style="width:100%"><tr><td class="k">Invoice No.</td><td class="b">${esc(ctx.inv.invoiceNo)} DT ${ddmm(ctx.inv.date)}</td><td class="k">IRN</td><td class="sub">5049ef43c7126a4c35bf29795ce49390de0338c2897a4b</td></tr>
     <tr><td class="k">Ack No</td><td>122632432448548</td><td class="k">Ack Dt</td><td>${ddmm(ctx.inv.date)}</td></tr></table>
-    ${tableOf(cols, rows, [{ v: "TOTAL", span: 4 }, { v: num(tax), r: 1 }, { v: "" }, { v: num(gst), r: 1 }, { v: num(tax + gst), r: 1 }])}`;
+    ${tableOf(cols, rows, [{ v: "TOTAL", span: 4 }, { v: num(tax), r: 1, sum: "taxable", t: "inr" }, { v: "" },
+    { v: num(gst), r: 1, sum: "igst", t: "inr" }, { v: num(tax + gst), r: 1, sum: "total", t: "inr" }])}`;
   return { name: "E_Invoice_25", html };
 };
 B["26"] = (ctx) => {
@@ -726,10 +944,16 @@ B["31"] = (ctx) => {
   const rows = L(ctx);
   const cols = [
     { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Description", f: (r) => esc(r.it.description) },
-    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Pieces", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") }, { h: "Boxes", r: 1, f: (r) => r.boxes },
-    { h: "Rate $/pc", r: 1, f: (r) => usdp(r.fobPc) }, { h: "Amount $", r: 1, f: (r) => usd(r.fobTotal) },
+    { h: "Size", c: 1, f: (r) => esc(r.it.size) },
+    { h: "Pieces", r: 1, key: "pieces", t: "int", fml: (r) => `{box}*${Number(r.packing) || 0}`, f: (r) => r.pieces.toLocaleString("en-IN") },
+    { h: "Boxes", r: 1, key: "box", t: "int", v: (r) => r.boxes, f: (r) => r.boxes },
+    { h: "Rate $/pc", r: 1, key: "rate", t: "usd4", v: (r) => r.fobPc, f: (r) => usdp(r.fobPc) },
+    { h: "Amount $", r: 1, key: "amount", t: "usd", fml: "{pieces}*{rate}", f: (r) => usd(r.fobTotal) },
   ];
-  const foot = [{ v: `TOTAL FOB · ${sum(rows, "boxes")} boxes`, span: 4 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1 }, { v: sum(rows, "boxes"), r: 1 }, { v: "" }, { v: usd(sum(rows, "fobTotal")), r: 1 }];
+  const foot = [{ v: `TOTAL FOB · ${sum(rows, "boxes")} boxes`, span: 4 },
+    { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1, sum: "pieces", t: "int" },
+    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" }, { v: "" },
+    { v: usd(sum(rows, "fobTotal")), r: 1, sum: "amount", t: "usd" }];
   const html = `${masthead(ctx, "31 · COMMERCIAL INVOICE (Buyer · USD)", { po: 1 })}${tableOf(cols, rows, foot)}
     <p class="sub">Invoice of PP Extruded Pipes, PP &amp; Nylon Moulded Fittings and Corrugated Boxes. Terms ${esc(ctx.inv.ship?.terms || "FOB MUMBAI")}. Country of Origin: INDIA.</p>`;
   return { name: "Commercial_Invoice_31", html };
@@ -759,13 +983,23 @@ B["34"] = (ctx) => {
 B["35"] = (ctx) => {
   const rows = L(ctx), ex = exRate(ctx);
   const cols = [
-    { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Qty Pcs", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") }, { h: "Box", r: 1, f: (r) => r.boxes },
-    { h: "FOB $", r: 1, f: (r) => usd(r.fobTotal) }, { h: "Realised ₹", r: 1, f: (r) => num(r.fobTotal * ex) },
-    { h: "Purchase ₹", r: 1, f: (r) => num(r.valTotal) }, { h: "Cartons ₹", r: 1, f: (r) => num(r.boxes * 16) },
-    { h: "Overheads ₹", r: 1, f: (r) => num(r.fobTotal * ex * 0.11) }, { h: "Gross Profit ₹", r: 1, f: (r) => num(r.fobTotal * ex - r.valTotal - r.boxes * 16 - r.fobTotal * ex * 0.11) },
+    { h: "GD Code", f: (r) => esc(r.it.gd) },
+    { h: "Qty Pcs", r: 1, key: "qty", t: "int", v: (r) => r.pieces, f: (r) => r.pieces.toLocaleString("en-IN") },
+    { h: "Box", r: 1, key: "box", t: "int", v: (r) => r.boxes, f: (r) => r.boxes },
+    { h: "FOB $", r: 1, key: "fob", t: "usd", v: (r) => r.fobTotal, f: (r) => usd(r.fobTotal) },
+    { h: "Realised ₹", r: 1, key: "real", t: "inr", fml: `{fob}*${ex}`, f: (r) => num(r.fobTotal * ex) },
+    { h: "Purchase ₹", r: 1, key: "pur", t: "inr", v: (r) => r.valTotal, f: (r) => num(r.valTotal) },
+    { h: "Cartons ₹", r: 1, key: "carton", t: "inr", fml: "{box}*16", f: (r) => num(r.boxes * 16) },
+    { h: "Overheads ₹", r: 1, key: "oh", t: "inr", fml: "{real}*0.11", f: (r) => num(r.fobTotal * ex * 0.11) },
+    { h: "Gross Profit ₹", r: 1, key: "gp", t: "inr", fml: "{real}-{pur}-{carton}-{oh}", f: (r) => num(r.fobTotal * ex - r.valTotal - r.boxes * 16 - r.fobTotal * ex * 0.11) },
   ];
   const gp = rows.reduce((a, r) => a + (r.fobTotal * ex - r.valTotal - r.boxes * 16 - r.fobTotal * ex * 0.11), 0);
-  const foot = [{ v: "TOTAL", span: 3 }, { v: usd(sum(rows, "fobTotal")), r: 1 }, { v: num(sum(rows, "fobTotal") * ex), r: 1 }, { v: num(sum(rows, "valTotal")), r: 1 }, { v: "", span: 2 }, { v: num(gp), r: 1 }];
+  const foot = [{ v: "TOTAL", span: 1 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
+    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" },
+    { v: usd(sum(rows, "fobTotal")), r: 1, sum: "fob", t: "usd" },
+    { v: num(sum(rows, "fobTotal") * ex), r: 1, sum: "real", t: "inr" },
+    { v: num(sum(rows, "valTotal")), r: 1, sum: "pur", t: "inr" },
+    { v: "", span: 2 }, { v: num(gp), r: 1, sum: "gp", t: "inr" }];
   const html = `<div class="title">35 · COSTING</div><div class="sub">Invoice ${esc(ctx.inv.invoiceNo)} DT ${ddmm(ctx.inv.date)} · Rate @ Rs. ${ex}</div>${tableOf(cols, rows, foot)}`;
   return { name: "Costing_35", html };
 };
@@ -780,43 +1014,67 @@ function balanceItem(ctx, data) {
   const cols = [
     { h: "Date", c: 1, f: (r) => dmy(r.date) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Description", f: (r) => esc(r.it.description) },
     { h: "PO(s)", f: (r) => r.pos.join(", ") }, { h: "Invoice(s)", f: (r) => [...(r.invoices || [])].join(", ") || "—" },
-    { h: "Qty Pcs", r: 1, f: (r) => r.qty.toLocaleString("en-IN") }, { h: "Vol/Box", r: 1, f: (r) => num(r.it.volume, 3) },
-    { h: "Total Boxes", r: 1, f: (r) => r.ordered }, { h: "Recd Boxes", r: 1, f: (r) => r.recd }, { h: "Pending Boxes", r: 1, f: (r) => r.pending },
-    { h: "Total Vol m³", r: 1, f: (r) => num(r.volume, 2) },
+    { h: "Qty Pcs", r: 1, key: "qty", t: "int", v: (r) => r.qty, f: (r) => r.qty.toLocaleString("en-IN") },
+    { h: "Vol/Box", r: 1, key: "volbox", t: "num3", v: (r) => r.it.volume, f: (r) => num(r.it.volume, 3) },
+    { h: "Total Boxes", r: 1, key: "ordered", t: "int", v: (r) => r.ordered, f: (r) => r.ordered },
+    { h: "Recd Boxes", r: 1, key: "recd", t: "int", v: (r) => r.recd, f: (r) => r.recd },
+    { h: "Pending Boxes", r: 1, key: "pending", t: "int", fml: "{ordered}-{recd}", f: (r) => r.pending },
+    { h: "Total Vol m³", r: 1, key: "vol", t: "num", fml: "{ordered}*{volbox}", f: (r) => num(r.volume, 2) },
   ];
-  return { name: "Balance_Order_Itemwise_37", html: `<div class="title">37 · BALANCE ORDER ITEM WISE</div><div class="sub">As on ${dmy(ctx.inv.date)}</div>${tableOf(cols, rows)}` };
+  const foot = [{ v: "TOTAL", span: 5 }, { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" }, { v: "" },
+    { v: sum(rows, "ordered"), r: 1, sum: "ordered", t: "int" }, { v: sum(rows, "recd"), r: 1, sum: "recd", t: "int" },
+    { v: sum(rows, "pending"), r: 1, sum: "pending", t: "int" }, { v: num(sum(rows, "volume"), 2), r: 1, sum: "vol", t: "num" }];
+  return { name: "Balance_Order_Itemwise_37", html: `<div class="title">37 · BALANCE ORDER ITEM WISE</div><div class="sub">As on ${dmy(ctx.inv.date)}</div>${tableOf(cols, rows, foot)}` };
 }
 function balanceSupplier(ctx, data, no) {
   const rows = data.supRows || [];
   const cols = [
     { h: "Date", c: 1, f: (r) => dmy(r.date) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Supplier", f: (r) => esc(ctx.supCode ? ctx.supCode(r.supplierId) : r.supplierId) },
     { h: "Description", f: (r) => esc(r.it.description) }, { h: "Invoice(s)", f: (r) => [...(r.invoices || [])].join(", ") || "—" },
-    { h: "Recd Boxes", r: 1, f: (r) => r.recd }, { h: "Pending Boxes", r: 1, f: (r) => r.pending },
-    { h: "Total Vol m³", r: 1, f: (r) => num(r.volume, 2) }, { h: "Invoice Value ₹", r: 1, f: (r) => num(r.value) },
+    { h: "Recd Boxes", r: 1, key: "recd", t: "int", v: (r) => r.recd, f: (r) => r.recd },
+    { h: "Pending Boxes", r: 1, key: "pending", t: "int", v: (r) => r.pending, f: (r) => r.pending },
+    { h: "Total Vol m³", r: 1, key: "vol", t: "num", fml: (r) => `{recd}*${Number(r.it.volume) || 0}`, f: (r) => num(r.volume, 2) },
+    { h: "Invoice Value ₹", r: 1, key: "value", t: "inr", v: (r) => r.value, f: (r) => num(r.value) },
   ];
   const title = no === "38" ? "38 · SUPPLY DETAILS (Item wise / Supplier wise)" : "36 · BALANCE ORDER SUPPLIER WISE";
-  return { name: `Balance_Supplierwise_${no}`, html: `<div class="title">${title}</div><div class="sub">As on ${dmy(ctx.inv.date)}</div>${tableOf(cols, rows, [{ v: "TOTAL", span: 5 }, { v: sum(rows, "recd"), r: 1 }, { v: sum(rows, "pending"), r: 1 }, { v: num(sum(rows, "volume"), 2), r: 1 }, { v: num(sum(rows, "value")), r: 1 }])}` };
+  const foot = [{ v: "TOTAL", span: 5 }, { v: sum(rows, "recd"), r: 1, sum: "recd", t: "int" },
+    { v: sum(rows, "pending"), r: 1, sum: "pending", t: "int" },
+    { v: num(sum(rows, "volume"), 2), r: 1, sum: "vol", t: "num" },
+    { v: num(sum(rows, "value")), r: 1, sum: "value", t: "inr" }];
+  return { name: `Balance_Supplierwise_${no}`, html: `<div class="title">${title}</div><div class="sub">As on ${dmy(ctx.inv.date)}</div>${tableOf(cols, rows, foot)}` };
 }
 function balanceBoxes(ctx, data) {
   const rows = data.itemRows || [];
   const cols = [
     { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Description", f: (r) => esc(r.it.description) },
-    { h: "Pending Boxes", r: 1, f: (r) => r.pending }, { h: "Vol/Box", r: 1, f: (r) => num(r.it.volume, 3) },
-    { h: "Pending Vol m³", r: 1, f: (r) => num(r.pending * (r.it.volume || 0), 2) },
-    { h: "Net/Box kg", r: 1, f: (r) => num(r.it.netPerBox) }, { h: "Pending Net kg", r: 1, f: (r) => num(r.pending * (r.it.netPerBox || 0)) },
+    { h: "Pending Boxes", r: 1, key: "pending", t: "int", v: (r) => r.pending, f: (r) => r.pending },
+    { h: "Vol/Box", r: 1, key: "volbox", t: "num3", v: (r) => r.it.volume, f: (r) => num(r.it.volume, 3) },
+    { h: "Pending Vol m³", r: 1, key: "pendvol", t: "num", fml: "{pending}*{volbox}", f: (r) => num(r.pending * (r.it.volume || 0), 2) },
+    { h: "Net/Box kg", r: 1, key: "netbox", t: "num", v: (r) => r.it.netPerBox, f: (r) => num(r.it.netPerBox) },
+    { h: "Pending Net kg", r: 1, key: "pendnet", t: "num", fml: "{pending}*{netbox}", f: (r) => num(r.pending * (r.it.netPerBox || 0)) },
   ];
   const pendVol = rows.reduce((a, r) => a + r.pending * (r.it.volume || 0), 0), pendNet = rows.reduce((a, r) => a + r.pending * (r.it.netPerBox || 0), 0);
-  return { name: "Balance_Boxes_Volume_39", html: `<div class="title">39 · BALANCE ORDERS — BOXES &amp; VOLUME</div><div class="sub">As on ${dmy(ctx.inv.date)}</div>${tableOf(cols, rows, [{ v: "TOTAL", span: 2 }, { v: sum(rows, "pending"), r: 1 }, { v: "" }, { v: num(pendVol, 2), r: 1 }, { v: "" }, { v: num(pendNet), r: 1 }])}` };
+  const foot = [{ v: "TOTAL", span: 2 }, { v: sum(rows, "pending"), r: 1, sum: "pending", t: "int" }, { v: "" },
+    { v: num(pendVol, 2), r: 1, sum: "pendvol", t: "num" }, { v: "" }, { v: num(pendNet), r: 1, sum: "pendnet", t: "num" }];
+  return { name: "Balance_Boxes_Volume_39", html: `<div class="title">39 · BALANCE ORDERS — BOXES &amp; VOLUME</div><div class="sub">As on ${dmy(ctx.inv.date)}</div>${tableOf(cols, rows, foot)}` };
 }
 // Fallback for 36–39 when the live balance register isn't supplied (context = this invoice only).
 function balanceFallback(ctx, title, fname) {
   const rows = L(ctx);
   const cols = [
     { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Supplier", f: (r) => esc(r.sup.code || "—") }, { h: "Description", f: (r) => esc(r.it.description) },
-    { h: "Invoice", f: () => esc(ctx.inv.invoiceNo) }, { h: "Recd Boxes", r: 1, f: (r) => r.boxes }, { h: "Qty Pcs", r: 1, f: (r) => r.pieces.toLocaleString("en-IN") },
-    { h: "Total Vol m³", r: 1, f: (r) => num(r.volTotal, 2) }, { h: "Invoice Value $", r: 1, f: (r) => usd(r.fobTotal) },
+    { h: "Invoice", f: () => esc(ctx.inv.invoiceNo) },
+    { h: "Recd Boxes", r: 1, key: "box", t: "int", v: (r) => r.boxes, f: (r) => r.boxes },
+    { h: "Qty Pcs", r: 1, key: "qty", t: "int", fml: QTY_FROM_BOX, f: (r) => r.pieces.toLocaleString("en-IN") },
+    { h: "Pcs / box", r: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
+    { h: "Total Vol m³", r: 1, key: "vol", t: "num", fml: (r) => `{box}*${Number(r.it.volume) || 0}`, f: (r) => num(r.volTotal, 2) },
+    { h: "FOB/pc $", r: 1, key: "fobpc", t: "usd4", v: (r) => r.fobPc, f: (r) => usdp(r.fobPc) },
+    { h: "Invoice Value $", r: 1, key: "val", t: "usd", fml: "{qty}*{fobpc}", f: (r) => usd(r.fobTotal) },
   ];
-  const foot = [{ v: "TOTAL", span: 4 }, { v: sum(rows, "boxes"), r: 1 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1 }, { v: num(sum(rows, "volTotal"), 2), r: 1 }, { v: usd(sum(rows, "fobTotal")), r: 1 }];
+  const foot = [{ v: "TOTAL", span: 4 }, { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" },
+    { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" }, { v: "" },
+    { v: num(sum(rows, "volTotal"), 2), r: 1, sum: "vol", t: "num" }, { v: "" },
+    { v: usd(sum(rows, "fobTotal")), r: 1, sum: "val", t: "usd" }];
   return { name: fname, html: `<div class="title">${esc(title)}</div><div class="sub">Invoice ${esc(ctx.inv.invoiceNo)} DT ${ddmm(ctx.inv.date)} · open the Reports tab for the full live balance register across all invoices.</div>${tableOf(cols, rows, foot)}` };
 }
 B["36"] = (ctx) => balanceFallback(ctx, "36 · BALANCE ORDER SUPPLIER WISE", "Balance_Supplierwise_36");
@@ -850,8 +1108,10 @@ B["40"] = (ctx) => {
    (Docs/Jaikvin Process/Menu Bar.xlsx) — each key `k` matches a navigation
    entry, so every document lives under the menu it belongs to. */
 export const DOC_GROUPS = [
-  { k: "PO", t: "PO Reports", hint: "Raised when the buyer places an order", docs: ["1", "2", "3", "4", "5", "6"] },
-  { k: "SUP", t: "Suppliers' Reports", hint: "Raised when suppliers deliver boxes", docs: ["7", "8", "9", "10", "11A", "11"] },
+  // PO Reports are raised off the purchase order itself, so they exist the
+  // moment the buyer's order is entered — nothing here waits on an invoice.
+  { k: "PO", t: "PO Reports", hint: "Raised when the buyer places an order", docs: ["1", "2", "3", "4", "5", "6"], source: "po" },
+  { k: "SUP", t: "Suppliers' Reports", hint: "Raised when suppliers deliver boxes", docs: ["7", "8", "9", "10", "11"] },
   { k: "PRE", t: "Pre-Shipment Reports", hint: "Everything customs needs before loading", docs: ["12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "24", "25", "26", "27", "28", "29"] },
   { k: "POST", t: "Post Shipment Reports", hint: "Sent after the container sails, incl. bill regularisation for the bank", docs: ["30", "31", "32", "33", "34", "40"] },
   { k: "OTH", t: "Other Reports", hint: "Costing, supplier details and balance registers", docs: ["35", "23", "38", "36", "37", "39"] },
@@ -867,21 +1127,103 @@ export const DOC_META = {
   "37": "Balance, item", "38": "Supply details", "39": "Balance boxes/vol", "40": "Bill regularisation",
 };
 
-// Build & download any document. `report` (optional) carries the live balance register for 36–39.
-export function buildDocument(no, ctx, report) {
-  let out;
-  if (["36", "37", "38", "39"].includes(no) && report) out = buildBalanceReport(no, ctx, report);
-  else if (B[no]) out = B[no](ctx);
-  if (!out) { alert("Document " + no + " generator not available."); return; }
-  writeXLS(fnameFor(no, out.name, ctx), out.html);
+/* Which documents belong to the purchase-order stage — they are built from a
+   PO, never from an invoice (see DOC_GROUPS above). */
+export const PO_DOCS = DOC_GROUPS.find((g) => g.k === "PO").docs.slice();
+export const isPoDoc = (no) => PO_DOCS.includes(String(no));
+
+/* The two papers each supplier receives on their own, rather than as one
+   combined sheet: the supplier purchase order and the inward e-way bill. */
+export const SUPPLIER_SPLIT_DOCS = { 6: supplierPoDocs, 10: ewaySupplierDocs };
+export function supplierSplitDocs(no, ctx) {
+  const fn = SUPPLIER_SPLIT_DOCS[String(no)];
+  try { return fn ? fn(ctx) : []; } catch (e) { return []; }
 }
+
+function buildOne(no, ctx, report) {
+  if (["36", "37", "38", "39"].includes(no) && report) return buildBalanceReport(no, ctx, report);
+  return B[no] ? B[no](ctx) : null;
+}
+
+/** One document as [{ name, html }] — several entries when it splits per
+ *  supplier, so Excel gets a sheet each and the PDF a page each. */
+export function documentParts(no, ctx, report) {
+  const split = supplierSplitDocs(no, ctx);
+  if (split.length > 1) return split.map((d) => ({ name: `${d.code}`, html: d.html, docName: d.docName }));
+  const out = buildOne(no, ctx, report);
+  return out ? [{ name: DOC_META[no] || out.name, html: out.html, docName: out.name }] : [];
+}
+
+export function documentFilename(no, ctx, report) {
+  const out = buildOne(no, ctx, report);
+  return fnameFor(no, out ? out.name : `Document_${no}`, ctx);
+}
+
 export function hasBuilder(no) { return !!B[no] || ["36", "37", "38", "39"].includes(no); }
 
-// Download the inward e-way bill for a single supplier (the split-by-supplier flow).
-export function downloadEwaySupplier(ctx, supplierId) {
-  const d = ewaySupplierDocs(ctx).find((x) => x.supplierId === supplierId);
-  if (!d) return;
-  writeXLS(`Eway_10_${d.code}_${ctx.inv.invoiceNo.replace(/\//g, "-")}.xls`, d.html);
+/* ---- downloads ----
+   Both formats come off the same parts, so an Excel and a PDF of the same
+   document can never show different figures. */
+export function downloadDocumentExcel(no, ctx, report) {
+  const parts = documentParts(no, ctx, report);
+  if (!parts.length) { alert(`Document ${no} generator not available.`); return false; }
+  downloadDocsExcel(documentFilename(no, ctx, report), parts);
+  return true;
+}
+
+export function downloadDocumentPDF(no, ctx, report) {
+  const parts = documentParts(no, ctx, report);
+  if (!parts.length) { alert(`Document ${no} generator not available.`); return false; }
+  downloadPDF(`${no} · ${DOC_META[no] || ""}`, parts);
+  return true;
+}
+
+/* A whole stage at once. `ctxFor` may be one context or a function of the
+   document number — the full library mixes PO-stage and invoice-stage papers,
+   and each has to be built from its own source. A document whose source does
+   not exist yet is skipped rather than failing the batch. */
+const resolveCtx = (ctxFor, no) => (typeof ctxFor === "function" ? ctxFor(no) : ctxFor);
+
+function stageParts(numbers, ctxFor, report) {
+  return numbers.flatMap((no) => {
+    const ctx = resolveCtx(ctxFor, no);
+    if (!ctx) return [];
+    try { return documentParts(no, ctx, report); } catch (e) { return []; }
+  });
+}
+
+/** The whole of a stage in one workbook — a sheet per document. */
+export function downloadStageExcel(filename, numbers, ctxFor, report) {
+  const parts = numbers.flatMap((no) => {
+    const ctx = resolveCtx(ctxFor, no);
+    if (!ctx) return [];
+    let p = [];
+    try { p = documentParts(no, ctx, report); } catch (e) { return []; }
+    return p.map((x, i) => ({ ...x, name: `${no}${i || p.length > 1 ? ` ${x.name}` : ""}` }));
+  });
+  if (!parts.length) return false;
+  downloadDocsExcel(filename, parts);
+  return true;
+}
+
+export function downloadStagePDF(title, numbers, ctxFor, report) {
+  const parts = stageParts(numbers, ctxFor, report);
+  if (!parts.length) return false;
+  downloadPDF(title, parts);
+  return true;
+}
+
+/* Kept for the screens that offer a single one-click Excel grab. */
+export const buildDocument = (no, ctx, report) => downloadDocumentExcel(no, ctx, report);
+
+/** One supplier's copy of a split document (6 · supplier PO, 10 · e-way). */
+export function downloadSupplierDoc(no, ctx, supplierId, format = "excel") {
+  const d = supplierSplitDocs(no, ctx).find((x) => x.supplierId === supplierId);
+  if (!d) return false;
+  const filename = `${d.docName}_${String(ctx.po || ctx.inv.invoiceNo || "").replace(/[^A-Za-z0-9]+/g, "-")}`;
+  if (format === "pdf") downloadPDF(`${no} · ${DOC_META[no] || ""} · ${d.code}`, [{ html: d.html }]);
+  else downloadDocsExcel(filename, [{ name: d.code, html: d.html }]);
+  return true;
 }
 
 // Return the document's inner HTML (for an on-screen live preview) without downloading.
