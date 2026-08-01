@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { PackageCheck, Check, Search, Boxes } from "lucide-react";
+import { PackageCheck, Check, Search, Boxes, Trash2 } from "lucide-react";
 import {
   Card, CardHead, Btn, Field, Input, Select, Pill, Mono, DataTable, Drawer, Step,
   Empty, SearchInput,
@@ -36,8 +36,20 @@ export default function RecordPackingDrawer({ onClose }) {
   const [supFilter, setSupFilter] = useState("");
 
   const fetched = useGroupedItems({ q: useDebounced(q), supplier_id: supFilter }).data || [];
+  /* The picker above is filtered; the summary below and the supplier swap
+     need the whole master. React Query caches both. */
+  const allGroups = useGroupedItems({}).data || [];
   const supById = (id) => suppliers.find((s) => s.id === id) || {};
   const supCode = (id) => supById(id).code || "—";
+  const supName = (id) => supById(id).name || "—";
+
+  /* item id → the other factories that make the same product, so a line can
+     be moved from one to another straight from the summary. */
+  const siblings = useMemo(() => {
+    const m = {};
+    allGroups.forEach((g) => g.variants.forEach((v) => { m[v.item_id] = g; }));
+    return m;
+  }, [allGroups]);
 
   /* What each item still owes, before this draft. The balance register is the
      same ledger the packing allocation uses, so the projection below matches
@@ -45,10 +57,32 @@ export default function RecordPackingDrawer({ onClose }) {
   const owed = useMemo(() => {
     const m = {};
     (balance?.item || []).forEach((r) => {
-      m[r.item_id] = { boxes: r.pending, pos: r.pending_pos || [] };
+      m[r.item_id] = {
+        boxes: r.pending,
+        pos: r.pending_pos || [],
+        // The open orders in the sequence they will actually be cleared —
+        // oldest first. The API sorts them; nothing here re-sorts them.
+        detail: r.pending_detail || [],
+      };
     });
     return m;
   }, [balance]);
+
+  /* Walk the boxes just typed down the open orders, oldest first, exactly the
+     way the save will allocate them. What comes back is which PO each box
+     goes to — shown under the input as it is typed, so nobody has to trust
+     the word "FIFO" without seeing it. */
+  const fifoFor = (itemId, typed) => {
+    let left = Math.max(0, Math.floor(Number(typed) || 0));
+    if (!left) return { legs: [], spare: 0 };
+    const legs = [];
+    (owed[itemId]?.detail || []).forEach((d) => {
+      if (left <= 0) return;
+      const take = Math.min(d.remaining, left);
+      if (take > 0) { legs.push({ po: d.po, date: d.date, boxes: take, closes: take >= d.remaining }); left -= take; }
+    });
+    return { legs, spare: left };
+  };
 
   /* Pending projected AFTER the boxes typed in this draft. Each supplier's
      row is its own master item, so the group's outstanding balance is the sum
@@ -67,6 +101,22 @@ export default function RecordPackingDrawer({ onClose }) {
 
   const setB = (id, v) => setBoxesBy((p) => ({ ...p, [id]: v }));
 
+  /* Retyping the boxes in the summary is the same edit as retyping them in
+     step 2 — one piece of state, so the two can never disagree. Switching the
+     supplier moves the boxes onto that factory's own master row, which is
+     what decides who we book the goods in from. */
+  const moveSupplier = (fromId, toId) => {
+    if (!toId || toId === fromId) return;
+    setBoxesBy((p) => {
+      const next = { ...p };
+      const moved = Number(next[fromId]) || 0;
+      delete next[fromId];
+      next[toId] = String((Number(next[toId]) || 0) + moved);
+      return next;
+    });
+  };
+  const dropLine = (id) => setBoxesBy((p) => { const n = { ...p }; delete n[id]; return n; });
+
   /* What is still owed goes to the top — that is the work. Items with nothing
      pending sink below, most-owed first within each block, so the list reads
      in the order the boxes actually need entering. */
@@ -78,9 +128,12 @@ export default function RecordPackingDrawer({ onClose }) {
   }, [fetched, owed]);
   const pendingCount = groups.filter((g) => g._owed > 0).length;
 
+  /* The summary is built from the unfiltered master, not from the list above:
+     narrowing the search or the supplier filter must never make a line you
+     have already typed disappear from what you are about to invoice. */
   const rows = useMemo(() => {
     const out = [];
-    groups.forEach((g) => g.variants.forEach((v) => {
+    allGroups.forEach((g) => g.variants.forEach((v) => {
       const b = Number(boxesBy[v.item_id]) || 0;
       if (b > 0) {
         out.push({
@@ -91,7 +144,7 @@ export default function RecordPackingDrawer({ onClose }) {
       }
     }));
     return out;
-  }, [groups, boxesBy]);
+  }, [allGroups, boxesBy]);
 
   const totalBoxes = rows.reduce((s, r) => s + r.boxes, 0);
   const totalVol = rows.reduce((s, r) => s + r.volume, 0);
@@ -163,7 +216,7 @@ export default function RecordPackingDrawer({ onClose }) {
 
         <section>
           <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-end", gap: 10 }}>
-            <Step n="2" title="How many boxes did each supplier pack?" hint="Everything still pending is listed first. The figure on the right updates live as you type." />
+            <Step n="2" title="How many boxes did each supplier pack?" hint="Everything still pending is listed first. Type a figure and the line beneath it names the orders those boxes clear — oldest first." />
             <div className="row" style={{ gap: 8, marginBottom: 10 }}>
               <Select className="input-sm" style={{ width: 210 }} value={supFilter} onChange={(e) => setSupFilter(e.target.value)}>
                 <option value="">All suppliers</option>
@@ -195,19 +248,41 @@ export default function RecordPackingDrawer({ onClose }) {
                         : <Pill tone="green"><Check size={11} /> clear</Pill>}
                     </div>
                     <div className="stack-sm">
-                      {g.variants.map((v, si) => (
-                        <div key={v.item_id} className="row" style={{ justifyContent: "space-between" }}>
-                          <span className="row" style={{ minWidth: 0, gap: 8 }}>
-                            <Pill tone={si ? "" : "teal"}>{supCode(v.supplier_id)}</Pill>
-                            <span style={{ fontSize: 11.5, color: "var(--faint)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                              {supById(v.supplier_id).name}
+                      {g.variants.map((v, si) => {
+                        const fifo = fifoFor(v.item_id, boxesBy[v.item_id]);
+                        return (
+                          <div key={v.item_id} className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                            <span className="row" style={{ minWidth: 0, gap: 8, paddingTop: 5 }}>
+                              <Pill tone={si ? "" : "teal"}>{supCode(v.supplier_id)}</Pill>
+                              <span style={{ fontSize: 11.5, color: "var(--faint)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                {supById(v.supplier_id).name}
+                              </span>
                             </span>
-                          </span>
-                          <Input className={`input-sm num-in${boxesBy[v.item_id] ? " filled" : ""}`} style={{ width: 110 }}
-                            type="number" min="0" placeholder="0"
-                            value={boxesBy[v.item_id] || ""} onChange={(e) => setB(v.item_id, e.target.value)} />
-                        </div>
-                      ))}
+                            {/* The input, and under it — right-aligned, mirroring the
+                                amber "still pending" tag above — which orders these
+                                boxes clear, oldest first, live as you type. */}
+                            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, minWidth: 110 }}>
+                              <Input className={`input-sm num-in${boxesBy[v.item_id] ? " filled" : ""}`} style={{ width: 110 }}
+                                type="number" min="0" placeholder="0"
+                                value={boxesBy[v.item_id] || ""} onChange={(e) => setB(v.item_id, e.target.value)} />
+                              {fifo.legs.length > 0 && (
+                                <span className="fifo-tag">
+                                  <Pill tone="green">
+                                    Cleared : {fifo.legs.map((l) => `PO ${l.po}(${l.boxes})`).join(", ")}
+                                  </Pill>
+                                </span>
+                              )}
+                              {fifo.spare > 0 && (
+                                <span className="fifo-tag">
+                                  <Pill tone="amber">
+                                    {fifo.spare} box{fifo.spare === 1 ? "" : "es"} beyond what is on order
+                                  </Pill>
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                     </div>
                   </div>
@@ -219,7 +294,8 @@ export default function RecordPackingDrawer({ onClose }) {
         </section>
 
         <section>
-          <Step n="3" title="Check before you create the invoice" />
+          <Step n="3" title="Check before you create the invoice"
+            hint="Edit the boxes or switch the supplier right here — step 2 follows along." />
           {rows.length ? (
             <div className="stack-sm">
               <Card>
@@ -228,12 +304,42 @@ export default function RecordPackingDrawer({ onClose }) {
                   columns={[
                     { key: "gd", w: 96, label: "GD code", render: (r) => <Mono>{r.gd}</Mono> },
                     { key: "desc", w: 220, label: "Description", render: (r) => <span style={{ whiteSpace: "pre-line" }}>{r.description}</span> },
-                    { key: "sp", w: 92, label: "Supplier", render: (r) => <Pill>{supCode(r.supplier_id)}</Pill> },
-                    { key: "boxes", w: 78, label: "Boxes", align: "r", strong: true, render: (r) => r.boxes },
+                    {
+                      key: "sp", w: 190, label: "Supplier",
+                      render: (r) => {
+                        const variants = siblings[r.item_id]?.variants || [];
+                        if (variants.length < 2) return <Pill>{supCode(r.supplier_id)}</Pill>;
+                        return (
+                          <Select className="input-sm" style={{ width: 174 }} value={r.item_id}
+                            onChange={(e) => moveSupplier(r.item_id, e.target.value)}>
+                            {variants.map((v) => (
+                              <option key={v.item_id} value={v.item_id}>
+                                {supCode(v.supplier_id)} — {supName(v.supplier_id)}
+                              </option>
+                            ))}
+                          </Select>
+                        );
+                      },
+                    },
+                    {
+                      key: "boxes", w: 116, label: "Boxes", align: "r", strong: true,
+                      render: (r) => (
+                        <Input className="input-sm num-in filled" style={{ width: 100 }} type="number" min="0"
+                          value={boxesBy[r.item_id] ?? ""} onChange={(e) => setB(r.item_id, e.target.value)} />
+                      ),
+                    },
                     { key: "vol", w: 104, label: "Volume m³", align: "r", render: (r) => num(r.volume, 3) },
+                    {
+                      key: "_x", w: 48, label: "", align: "r",
+                      render: (r) => (
+                        <button className="icon-btn bare" title="Remove this line" onClick={() => dropLine(r.item_id)}>
+                          <Trash2 size={14} />
+                        </button>
+                      ),
+                    },
                   ]}
                   rows={rows} rowKey={(r) => r.key}
-                  footer={[{ v: "Total", span: 3 }, { v: totalBoxes, align: "r" }, { v: num(totalVol, 3), align: "r" }]}
+                  footer={[{ v: "Total", span: 3 }, { v: totalBoxes, align: "r" }, { v: num(totalVol, 3), align: "r" }, { v: "" }]}
                 />
               </Card>
               <Card>

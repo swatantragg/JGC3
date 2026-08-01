@@ -48,6 +48,9 @@ class Supplier(Base):
     pin = Column(String, default="")
     state = Column(String, default="")
     weights = Column(String, default="auto")  # "auto" | "manual"
+    # The supplier's own reference for our orders — prints under the shipping
+    # marks on their purchase order, beside our own reference.
+    your_reference = Column(String, default="")
 
 
 class Buyer(Base):
@@ -60,6 +63,9 @@ class Buyer(Base):
     ship_to = Column(String, default="")
     addr = Column(String, default="")
     order_no = Column(String, default="")
+    # Our own file reference for this buyer — prints under the shipping marks
+    # on the supplier purchase order and carries into the Excel exports.
+    our_reference = Column(String, default="")
 
 
 class Item(Base):
@@ -119,7 +125,15 @@ class Transport(Base):
 
 
 class PurchaseOrderLine(Base):
-    """One item line of a buyer purchase order. Rows sharing `po` form one PO."""
+    """One item line of a buyer purchase order. Rows sharing `po` form one PO.
+
+    The four price columns are a *snapshot* taken when the order was placed, so
+    correcting an item's price in Setup never silently rewrites an order that
+    was already agreed. NULL means "no snapshot" (rows written before the
+    columns existed) and falls back to the item master's current price.
+    Setup → Items → "Apply to all pending orders" refreshes the snapshot on
+    every line that still has boxes outstanding; delivered lines keep theirs.
+    """
     __tablename__ = "po_lines"
     id = Column(String, primary_key=True, default=new_id)
     po = Column(String, nullable=False, index=True)
@@ -128,6 +142,10 @@ class PurchaseOrderLine(Base):
     qty = Column(Integer, default=0)
     rbi = Column(Float, default=0.0)
     buyer_id = Column(String, ForeignKey("buyers.id"), nullable=True)
+    unit_value = Column(Float, nullable=True)     # ₹, as agreed on this order
+    value_mode = Column(String, nullable=True)    # piece | 100 | custom
+    unit_fob100 = Column(Float, nullable=True)    # $, as agreed on this order
+    fob_mode = Column(String, nullable=True)      # piece | 100 | custom
 
 
 class Invoice(Base):
@@ -147,12 +165,26 @@ class Invoice(Base):
 
 
 class InvoiceLine(Base):
+    """One item's boxes on a packing invoice.
+
+    The prices are frozen the moment the invoice is created, taken from the
+    purchase orders these boxes actually clear. Once goods are delivered and
+    invoiced, that paperwork is history: the customs invoice, the supplier's
+    bill and the bank documents were all raised at those figures, so
+    re-downloading them a year later must reproduce them exactly — never
+    today's price. NULL means an invoice written before this column existed
+    and falls back to the item master, as it always did.
+    """
     __tablename__ = "invoice_lines"
     id = Column(String, primary_key=True, default=new_id)
     invoice_id = Column(String, ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False)
     item_id = Column(String, ForeignKey("items.id"), nullable=False)
     supplier_id = Column(String, ForeignKey("suppliers.id"), nullable=True)
     boxes = Column(Integer, default=0)
+    unit_value = Column(Float, nullable=True)     # ₹ per piece, as invoiced
+    value_mode = Column(String, nullable=True)    # piece | 100 | custom
+    unit_fob100 = Column(Float, nullable=True)    # $ per piece / per 100, as invoiced
+    fob_mode = Column(String, nullable=True)      # piece | 100 | custom
     invoice = relationship("Invoice", back_populates="lines")
 
 

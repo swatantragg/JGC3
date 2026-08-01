@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Plus, Check, Boxes, FileText, AlertTriangle, ArrowRight, Truck, Hash } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
-  Card, CardHead, Btn, Seg, Pill, Mono, DataTable, Empty, Note, Info, Spinner, ErrorState,
+  Card, CardHead, Btn, Seg, Select, Pill, Mono, DataTable, Empty, Note, Info, Spinner, ErrorState,
 } from "../../components/ui/index.jsx";
 import { useInvoices, useBalance, useItems, useSuppliers, useBuyers } from "../../api/hooks.js";
 import { dmy, num } from "../../lib/format.js";
@@ -23,6 +23,7 @@ export default function PackingPage() {
   const [wizId, setWizId] = useState(null);
   const [editId, setEditId] = useState(null);
   const [tab, setTab] = useState("pending");
+  const [supFilter, setSupFilter] = useState("");
 
   const invq = useInvoices();
   const balq = useBalance();
@@ -41,12 +42,24 @@ export default function PackingPage() {
 
   /* Everything still owed, item by item, oldest order first — that is exactly
      the order the boxes will be allocated in. */
-  const pendingRows = useMemo(
+  const allPending = useMemo(
     () => (balq.data?.item || []).filter((r) => r.pending > 0)
       .sort((a, b) => String(a.oldest || "").localeCompare(String(b.oldest || ""))),
     [balq.data],
   );
+  /* Narrowed to one factory — "what am I still waiting on from Kiran" is the
+     question this page gets asked before every collection. */
+  const pendingRows = useMemo(
+    () => (supFilter ? allPending.filter((r) => r.supplier_id === supFilter) : allPending),
+    [allPending, supFilter],
+  );
   const pendingBoxes = pendingRows.reduce((s, r) => s + r.pending, 0);
+  const allPendingBoxes = allPending.reduce((s, r) => s + r.pending, 0);
+  // Only offer suppliers that actually owe something.
+  const owingSuppliers = useMemo(() => {
+    const ids = new Set(allPending.map((r) => r.supplier_id).filter(Boolean));
+    return suppliers.filter((s) => ids.has(s.id));
+  }, [allPending, suppliers]);
 
   const invList = useMemo(() => invoices.map((inv) => {
     const lines = (inv.lines || []).map((l) => {
@@ -85,23 +98,33 @@ export default function PackingPage() {
       </div>
 
       <Seg options={[
-        ["pending", `Still to pack${pendingBoxes ? ` · ${pendingBoxes}` : ""}`, Boxes],
+        ["pending", `Still to pack${allPendingBoxes ? ` · ${allPendingBoxes}` : ""}`, Boxes],
         ["invoices", `Packing invoices · ${invoices.length}`, FileText],
       ]} value={tab} onChange={setTab} />
 
       {tab === "pending" && (
         <Card>
-          <CardHead icon={Boxes} title={pendingBoxes ? `${pendingBoxes} boxes owed to the buyer` : "Every order is filled"}>
+          <CardHead icon={Boxes} title={pendingBoxes
+            ? `${pendingBoxes} boxes owed${supFilter ? ` by ${supCode(supFilter)}` : " to the buyer"}`
+            : supFilter ? `${supCode(supFilter)} owes nothing` : "Every order is filled"}>
+            <Select className="input-sm" style={{ width: 220 }} value={supFilter} onChange={(e) => setSupFilter(e.target.value)}>
+              <option value="">All suppliers{allPendingBoxes ? ` · ${allPendingBoxes} boxes` : ""}</option>
+              {owingSuppliers.map((s) => {
+                const owed = allPending.filter((r) => r.supplier_id === s.id).reduce((n, r) => n + r.pending, 0);
+                return <option key={s.id} value={s.id}>{s.code} — {s.name} · {owed} boxes</option>;
+              })}
+            </Select>
+            {supFilter && <Btn size="sm" variant="ghost" onClick={() => setSupFilter("")}>Clear</Btn>}
             <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Oldest order first — the order your boxes will be allocated in</span>
           </CardHead>
           {pendingRows.length ? (
             <>
-              <DataTable serial
+              <DataTable serial paginate
                 freeze={5}
                 columns={[
                   { key: "gd", w: 96, label: "GD code", render: (r) => <Mono>{r.gd}</Mono> },
                   { key: "item", w: 220, label: "Item", render: (r) => <span style={{ color: "var(--ink)", whiteSpace: "pre-line" }}>{r.description}</span> },
-                  { key: "sup", w: 118, label: "Primary supplier", render: (r) => <Pill>{supCode(r.supplier_id)}</Pill> },
+                  { key: "sup", w: 118, label: "Primary supplier", render: (r) => <Pill tone={supFilter ? "teal" : ""}>{supCode(r.supplier_id)}</Pill> },
                   { key: "pack", w: 96, label: "Packing", align: "r", render: (r) => `${r.packing} / box` },
                   { key: "pending", w: 116, label: "Boxes pending", align: "r", strong: true, render: (r) => <span style={{ color: "var(--amber-ink)", fontWeight: 700 }}>{r.pending}</span> },
                   { key: "vol", label: "Volume owed m³", align: "r", render: (r) => num(r.pending * r.vol_per_box, 3) },
@@ -111,9 +134,20 @@ export default function PackingPage() {
                 rows={pendingRows} rowKey={(r) => r.item_id}
               />
               <div className="card-foot">
-                <Note tone="amber" icon={AlertTriangle}>Rows are sorted oldest order first — that is exactly the order your boxes will be allocated in.</Note>
+                <Note tone="amber" icon={AlertTriangle}>
+                  Rows are sorted oldest order first — that is exactly the order your boxes will be allocated in.
+                  {supFilter && <> Showing <b>{supCode(supFilter)}</b> only; the whole book still owes <b>{allPendingBoxes}</b> boxes.</>}
+                </Note>
               </div>
             </>
+          ) : supFilter ? (
+            /* Filtered to a supplier who owes nothing — say so, rather than
+               claiming the whole order book is clear. */
+            <Empty icon={Check} title={`${supCode(supFilter)} has delivered everything`}
+              action={<Btn size="sm" variant="ghost" onClick={() => setSupFilter("")}>Show all suppliers</Btn>}>
+              Nothing is outstanding with this supplier.
+              {allPendingBoxes > 0 && <> Other suppliers still owe <b>{allPendingBoxes}</b> boxes.</>}
+            </Empty>
           ) : (
             <Empty icon={Check} title="Nothing pending" action={<Btn variant="ghost" icon={ArrowRight} onClick={() => nav("/shipments")}>Go to shipment details</Btn>}>
               Every box ordered has been delivered and invoiced. Add shipment details next.
@@ -128,7 +162,7 @@ export default function PackingPage() {
             <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Click a row to open the invoice</span>
           </CardHead>
           {invoices.length ? (
-            <DataTable serial
+            <DataTable serial paginate
               freeze={5}
               onRowClick={(r) => setSelId(r.inv.id)}
               columns={[

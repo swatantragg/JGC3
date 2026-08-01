@@ -71,22 +71,60 @@ def stickers_per_box(item) -> float:
     return _round_half_up(total) if getattr(item, "sticker_round", False) else total
 
 
-def fob_usd(item, qty) -> float:
+def prices_of(item, snapshot=None) -> dict:
+    """The four price fields to work a line out with.
+
+    A purchase-order line carries a snapshot of the prices the order was
+    agreed at, so correcting an item in Setup does not silently restate an
+    order already placed. A line written before snapshots existed — or one
+    never given a price — has NULL there and falls back to the item master,
+    which is exactly how the system behaved before.
+    """
+    def pick(field):
+        if snapshot is None:
+            return None
+        return getattr(snapshot, field, None) if not isinstance(snapshot, dict) else snapshot.get(field)
+
+    uv, vm = pick("unit_value"), pick("value_mode")
+    uf, fm = pick("unit_fob100"), pick("fob_mode")
+    return {
+        "unit_value": float(item.unit_value or 0) if uv is None else float(uv or 0),
+        "value_mode": (item.value_mode or "piece") if not vm else vm,
+        "unit_fob100": float(item.unit_fob100 or 0) if uf is None else float(uf or 0),
+        "fob_mode": (item.fob_mode or "100") if not fm else fm,
+    }
+
+
+def prices_differ(item, snapshot) -> bool:
+    """True when a line's agreed prices no longer match the item master —
+    i.e. the price was edited in Setup after the order was placed."""
+    p = prices_of(item, snapshot)
+    return (
+        abs(p["unit_value"] - float(item.unit_value or 0)) > 1e-9
+        or abs(p["unit_fob100"] - float(item.unit_fob100 or 0)) > 1e-9
+        or p["value_mode"] != (item.value_mode or "piece")
+        or p["fob_mode"] != (item.fob_mode or "100")
+    )
+
+
+def fob_usd(item, qty, prices=None) -> float:
     """FOB value of `qty`. `fob_mode` says what unit_fob100 is quoted in —
     per 100 pieces on the PP/GRN sheets, per piece (or metre) on Oswin."""
-    unit = float(item.unit_fob100 or 0)
-    per_100 = (item.fob_mode or "100") == "100"
+    p = prices or prices_of(item)
+    unit = float(p["unit_fob100"] or 0)
+    per_100 = (p["fob_mode"] or "100") == "100"
     return (qty or 0) * unit / 100 if per_100 else (qty or 0) * unit
 
 
-def purchase_inr(item, qty) -> float:
+def purchase_inr(item, qty, prices=None) -> float:
     """Purchase value of `qty`. `value_mode` mirrors `fob_mode`; every sheet
     in the current workbook quotes ₹ per piece (Oswin tubes: ₹ per metre)."""
-    unit = float(item.unit_value or 0)
-    return (qty or 0) * unit / 100 if (item.value_mode or "piece") == "100" else (qty or 0) * unit
+    p = prices or prices_of(item)
+    unit = float(p["unit_value"] or 0)
+    return (qty or 0) * unit / 100 if (p["value_mode"] or "piece") == "100" else (qty or 0) * unit
 
 
-def derive_line(item, qty, rbi=0.0) -> dict:
+def derive_line(item, qty, rbi=0.0, snapshot=None) -> dict:
     """Every derived figure of one master row, for `qty` pieces (or metres).
 
     `boxes_exact` is the workbook's own division and drives volume, weights
@@ -99,6 +137,7 @@ def derive_line(item, qty, rbi=0.0) -> dict:
     qty = float(qty or 0)
     rbi = float(rbi or 0)
     packing = int(item.packing or 0)
+    prices = prices_of(item, snapshot)
 
     boxes_exact = qty / packing if packing else 0.0
     boxes = math.ceil(boxes_exact) if boxes_exact else 0
@@ -109,8 +148,8 @@ def derive_line(item, qty, rbi=0.0) -> dict:
     type_up = int(item.type_up or 0)
     sheets = math.ceil(labels / type_up) if type_up and labels else 0
 
-    total_value_inr = purchase_inr(item, qty)
-    total_fob_usd = fob_usd(item, qty)
+    total_value_inr = purchase_inr(item, qty, prices)
+    total_fob_usd = fob_usd(item, qty, prices)
     rbi_ref_inr = rbi * total_fob_usd
 
     return {
@@ -133,11 +172,14 @@ def derive_line(item, qty, rbi=0.0) -> dict:
         "labels": labels,
         "type_up": type_up,
         "sheets": sheets,
-        "unit_value": float(item.unit_value or 0),
+        "unit_value": prices["unit_value"],
+        "value_mode": prices["value_mode"],
         "total_value_inr": total_value_inr,
-        "unit_fob": float(item.unit_fob100 or 0),
-        "fob_mode": item.fob_mode or "100",
+        "unit_fob": prices["unit_fob100"],
+        "fob_mode": prices["fob_mode"],
         "total_fob_usd": total_fob_usd,
+        # True when this line was agreed at a price the item no longer carries.
+        "price_pinned": snapshot is not None and prices_differ(item, snapshot),
         "rbi_ref_inr": rbi_ref_inr,
         "rate": (rbi_ref_inr / qty) if qty else 0.0,
     }
@@ -163,7 +205,7 @@ def build_order_master(po, po_lines, items_by_id) -> dict:
         it = items_by_id.get(r.item_id)
         if not it:
             continue
-        d = derive_line(it, r.qty, r.rbi)
+        d = derive_line(it, r.qty, r.rbi, snapshot=r)
         frm, to = serial, serial + d["boxes"] - 1
         serial += d["boxes"]
         out.append({
@@ -186,6 +228,10 @@ def build_supplier_master(supplier_id, po_lines, items_by_id,
     Quantities for the same item on different purchase orders are added up
     and the orders listed together, because the supplier makes them in one
     run. Carton numbers are then allotted down the whole sheet.
+
+    Two orders for the same item can have been agreed at different prices, so
+    the money columns are summed line by line rather than re-derived from one
+    unit price; the unit price shown is the latest order's.
     """
     groups: dict = {}
     for r in po_lines:
@@ -196,16 +242,29 @@ def build_supplier_master(supplier_id, po_lines, items_by_id,
             continue
         if date_to and r.date > date_to:
             continue
-        g = groups.setdefault(it.id, {"it": it, "pos": [], "qty": 0, "rbi": r.rbi})
+        g = groups.setdefault(it.id, {
+            "it": it, "pos": [], "qty": 0, "rbi": r.rbi, "last": r,
+            "value_inr": 0.0, "fob_usd": 0.0, "lines": 0,
+        })
         if r.po not in g["pos"]:
             g["pos"].append(r.po)
         g["qty"] += (r.qty or 0)
         g["rbi"] = r.rbi          # the most recently seen rate for that item
+        g["last"] = r
+        g["lines"] += 1
+        p = prices_of(it, r)
+        g["value_inr"] += purchase_inr(it, r.qty, p)
+        g["fob_usd"] += fob_usd(it, r.qty, p)
 
     out, serial = [], 1
     for g in sorted(groups.values(), key=lambda x: str(x["it"].gd or x["it"].code)):
         it = g["it"]
-        d = derive_line(it, g["qty"], g["rbi"])
+        d = derive_line(it, g["qty"], g["rbi"], snapshot=g["last"])
+        # Line-by-line money wins over the single-price derivation above.
+        d["total_value_inr"] = g["value_inr"]
+        d["total_fob_usd"] = g["fob_usd"]
+        d["rbi_ref_inr"] = float(g["rbi"] or 0) * g["fob_usd"]
+        d["rate"] = (d["rbi_ref_inr"] / d["qty"]) if d["qty"] else 0.0
         frm, to = serial, serial + d["boxes"] - 1
         serial += d["boxes"]
         out.append({
@@ -322,12 +381,15 @@ def compute_ledger(po_lines, invoices, items_by_id) -> dict:
         ordered = boxes_for(r.qty, it.packing)
         by_item.setdefault(r.item_id, {"item": it, "demands": []})
         by_item[r.item_id]["demands"].append({
+            "line_id": r.id, "line": r,
             "po": r.po, "date": r.date, "buyer_id": r.buyer_id, "qty": r.qty,
             "rbi": r.rbi, "ordered": ordered, "remaining": ordered, "allocated": 0,
             "invoices": set(), "supplier_id": it.supplier_id,
         })
     for b in by_item.values():
-        b["demands"].sort(key=lambda d: d["date"])
+        # Oldest order first — and a stable tie-break, so two lines dated the
+        # same day always allocate in the same sequence run after run.
+        b["demands"].sort(key=lambda d: (d["date"], d["po"], d["line_id"]))
 
     receipts = []
     for inv in sorted(invoices, key=lambda x: x.date):
@@ -348,6 +410,70 @@ def compute_ledger(po_lines, invoices, items_by_id) -> dict:
                 d["allocated"] += take
                 d["invoices"].add(rc["invoice_no"])
     return by_item
+
+
+def invoiced_prices(item, boxes, demands) -> dict:
+    """The prices to invoice `boxes` of `item` at.
+
+    Boxes clear the oldest open order first, so the price they are invoiced at
+    is the price those orders were agreed at — not whatever the item master
+    says on the day the invoice is raised. Where a delivery spans two orders
+    agreed at different prices, the unit price is the average weighted by the
+    boxes each order takes, which makes the line total exactly the sum of the
+    two parts. Boxes beyond anything on order fall back to the item master.
+
+    `demands` is the item's open demands, oldest first, each carrying the
+    purchase-order line it came from — i.e. `compute_ledger(...)["demands"]`
+    filtered to those still owing.
+    """
+    boxes = int(boxes or 0)
+    if boxes <= 0:
+        return prices_of(item)
+
+    left = boxes
+    val_sum = fob_sum = taken = 0.0
+    modes = None
+    for d in demands:
+        if left <= 0:
+            break
+        take = min(int(d.get("remaining") or 0), left)
+        if take <= 0:
+            continue
+        p = prices_of(item, d.get("line"))
+        val_sum += take * p["unit_value"]
+        fob_sum += take * p["unit_fob100"]
+        taken += take
+        left -= take
+        if modes is None:                      # the oldest order sets the basis
+            modes = (p["value_mode"], p["fob_mode"])
+
+    if not taken:
+        return prices_of(item)
+
+    base = prices_of(item)
+    # Anything over-packed beyond the order book is valued at today's price.
+    if left > 0:
+        val_sum += left * base["unit_value"]
+        fob_sum += left * base["unit_fob100"]
+        taken += left
+
+    vm, fm = modes or (base["value_mode"], base["fob_mode"])
+    return {
+        "unit_value": val_sum / taken,
+        "value_mode": vm,
+        "unit_fob100": fob_sum / taken,
+        "fob_mode": fm,
+    }
+
+
+def open_demands_by_item(po_lines, invoices, items_by_id) -> dict:
+    """Item id → its still-open demands, oldest first. What the next packing
+    will be allocated against."""
+    ledger = compute_ledger(po_lines, invoices, items_by_id)
+    return {
+        iid: [d for d in b["demands"] if d["remaining"] > 0]
+        for iid, b in ledger.items()
+    }
 
 
 def _po_dates(po_lines) -> dict:
@@ -422,7 +548,9 @@ def build_po_list(po_lines, invoices, items_by_id) -> list:
             b = ledger.get(r.item_id)
             dem = None
             if b:
-                dem = next((d for d in b["demands"] if d["po"] == po and d["date"] == r.date), None)
+                # Matched on the line itself: one PO can carry the same item
+                # twice on the same day, and (po, date) would conflate them.
+                dem = next((d for d in b["demands"] if d["line_id"] == r.id), None)
             ordv = boxes_for(r.qty, it.packing)
             alloc = dem["allocated"] if dem else 0
             rem = dem["remaining"] if dem else ordv
@@ -449,9 +577,16 @@ def build_po_list(po_lines, invoices, items_by_id) -> list:
 
 
 # ---------------- Item-wise order detail (doc 37) ----------------
-def build_item_order_detail(po_lines, items_by_id) -> dict:
+def build_item_order_detail(po_lines, items_by_id, invoices=None) -> dict:
+    """The buyers' summary — one row per item, a column per purchase order.
+
+    `recd` / `pending` come from the same FIFO ledger the packing screen and
+    the balance register read, so the three can never disagree about how many
+    boxes an item still owes.
+    """
     po_date = _po_dates(po_lines)
     pos = sorted(po_date, key=lambda p: (po_date[p], p))
+    ledger = compute_ledger(po_lines, invoices or [], items_by_id)
     by_item: dict = {}
     for r in po_lines:
         it = items_by_id.get(r.item_id)
@@ -464,15 +599,121 @@ def build_item_order_detail(po_lines, items_by_id) -> dict:
     for e in by_item.values():
         it = e["it"]
         boxes = boxes_for(e["qty"], it.packing)
+        dem = ledger.get(it.id, {}).get("demands", [])
+        pending = sum(d["remaining"] for d in dem)
+        recd = sum(d["allocated"] for d in dem)
         rows.append({
             "item_id": it.id, "gd": it.gd, "code": it.code, "size": it.size,
             "length": it.length, "packing": it.packing, "per_po": e["per_po"],
-            "qty": e["qty"], "boxes": boxes,
+            "qty": e["qty"], "boxes": boxes, "recd": recd, "pending": pending,
+            "supplier_id": it.supplier_id,
             "vol_per_box": it.volume or 0, "total_vol": boxes * (it.volume or 0),
             "net_per_box": it.net_per_box or 0, "net_total": boxes * (it.net_per_box or 0),
         })
     rows.sort(key=lambda x: str(x["gd"]))
     return {"pos": pos, "po_date": po_date, "rows": rows}
+
+
+# ---------------- Supply details, item wise / supplier wise (doc 38) --------
+def build_supply_details(po_lines, invoices, items_by_id, mode="po",
+                         supplier_id=None, date_from=None, date_to=None) -> dict:
+    """Doc 38 — one row per item, one column per purchase order or invoice.
+
+    The workbook's own shape: code, description, packing (unit / box), a
+    pieces column per document, then total pieces and boxes = total ÷ box.
+    Boxes stay fractional exactly as the sheet's `=H6/E6` does, so a part-full
+    carton reads as 0.71 rather than being rounded away.
+
+    `mode="po"` with no date range lists only the orders still short and the
+    pieces still owed on them — the live pending book. Give it a date range
+    and it lists every order raised in that window at its ordered quantity,
+    which is how the cleared history is read back. `mode="invoice"` lists the
+    packing invoices and the pieces actually delivered on each.
+    """
+    ledger = compute_ledger(po_lines, invoices, items_by_id)
+
+    def keep(it) -> bool:
+        return not supplier_id or it.supplier_id == supplier_id
+
+    def in_range(d) -> bool:
+        if date_from and d < date_from:
+            return False
+        if date_to and d > date_to:
+            return False
+        return True
+
+    ranged = bool(date_from or date_to)
+    cols: dict = {}          # key -> date
+    cells: dict = {}         # item_id -> {col key: pieces}
+    seen: dict = {}          # item_id -> item
+
+    if mode == "invoice":
+        for inv in invoices:
+            if not in_range(inv.date):
+                continue
+            for l in inv.lines:
+                it = items_by_id.get(l.item_id)
+                if not it or not keep(it):
+                    continue
+                pieces = int(l.boxes or 0) * int(it.packing or 0)
+                if not pieces:
+                    continue
+                cols.setdefault(inv.invoice_no, inv.date)
+                seen[it.id] = it
+                row = cells.setdefault(it.id, {})
+                row[inv.invoice_no] = row.get(inv.invoice_no, 0) + pieces
+    else:
+        for b in ledger.values():
+            it = b["item"]
+            if not keep(it):
+                continue
+            for d in b["demands"]:
+                if ranged:
+                    if not in_range(d["date"]):
+                        continue
+                    pieces = int(d["qty"] or 0)
+                elif d["remaining"] > 0:
+                    # Still owed: the boxes outstanding, back in pieces.
+                    pieces = int(d["remaining"]) * int(it.packing or 0)
+                else:
+                    continue
+                if not pieces:
+                    continue
+                cols.setdefault(d["po"], d["date"])
+                seen[it.id] = it
+                row = cells.setdefault(it.id, {})
+                row[d["po"]] = row.get(d["po"], 0) + pieces
+
+    col_list = [{"key": k, "date": v} for k, v in
+                sorted(cols.items(), key=lambda kv: (kv[1], kv[0]))]
+
+    rows = []
+    for iid, it in seen.items():
+        per = cells.get(iid, {})
+        total = sum(per.values())
+        box = int(it.packing or 0)
+        rows.append({
+            "item_id": iid, "code": it.code, "gd": it.gd,
+            "description": it.description, "supplier_id": it.supplier_id,
+            "unit": int(it.pack_unit or 0), "box": box,
+            "per_col": per, "total": total,
+            # The sheet's own division — deliberately not rounded up.
+            "boxes": (total / box) if box else 0.0,
+            "vol_per_box": float(it.volume or 0),
+            "volume": ((total / box) if box else 0.0) * float(it.volume or 0),
+        })
+    rows.sort(key=lambda r: (str(r["gd"] or ""), str(r["code"] or "")))
+
+    return {
+        "mode": mode, "ranged": ranged, "cols": col_list, "rows": rows,
+        "totals": {
+            "total": sum(r["total"] for r in rows),
+            "boxes": sum(r["boxes"] for r in rows),
+            "volume": sum(r["volume"] for r in rows),
+            "per_col": {c["key"]: sum(r["per_col"].get(c["key"], 0) for r in rows)
+                        for c in col_list},
+        },
+    }
 
 
 # ---------------- Costing sheet ----------------
@@ -493,11 +734,14 @@ def compute_costing(line, p) -> dict:
     per_box = cur * box
     sheets = math.ceil(box / 125) if box else 0
     barcode_box = sheets * float(p.barcode_sheet or 0)
+    # The carton itself — one per box, at the price set with the other
+    # container-wide charges.
+    carton_box = float(getattr(p, "carton_price", 0) or 0)
     transport_box = math.ceil(float(p.transport_fcl or 0) / bf) if bf else 0
     # floor(x + .5), not round(): Python's round() is banker's rounding and
     # would disagree with the client's sheet on exact halves.
     other_box = math.floor(float(p.other_fcl or 0) / bf + 0.5) if bf else 0
-    total_box = per_box + barcode_box + transport_box + other_box
+    total_box = per_box + barcode_box + carton_box + transport_box + other_box
     per_pc = (total_box / box) if box else 0.0
     fob_cost = (per_pc / float(p.ex_rate)) if p.ex_rate else 0.0
 
@@ -510,10 +754,21 @@ def compute_costing(line, p) -> dict:
 
     return {
         "diff": diff, "diffPct": diff_pct, "perBox": per_box, "sheets": sheets,
-        "barcodeBox": barcode_box, "transportBox": transport_box, "otherBox": other_box,
+        "barcodeBox": barcode_box, "cartonBox": carton_box,
+        "transportBox": transport_box, "otherBox": other_box,
         "totalBox": total_box, "perPc": per_pc, "fobCost": fob_cost,
         "fobDiff": fob_diff, "fobPct": fob_pct, "profitPc": profit_pc, "profitPct": profit_pct,
     }
+
+
+# One 20' container's usable volume — also what "boxes per FCL" defaults to
+# when a costing line has not been given one.
+CONTAINER_M3 = 68.0
+
+
+def boxes_per_fcl(item) -> int:
+    vol = float(getattr(item, "volume", 0) or 0)
+    return int(CONTAINER_M3 // vol) if vol > 0 else 0
 
 
 COSTING_FORMULAS = [
@@ -522,11 +777,12 @@ COSTING_FORMULAS = [
     ["Purchase / box (₹)", "New price × pcs per box"],
     ["Barcode sheets / box", "RoundUp ( pcs per box ÷ 125 )"],
     ["Barcode cost / box (₹)", "Sheets × ₹ per sheet"],
+    ["Carton / box (₹)", "The carton price set with the container charges"],
     ["Transport / box (₹)", "RoundUp ( transport ₹/FCL ÷ boxes per FCL )"],
     ["Other charges / box (₹)", "Round ( other ₹/FCL ÷ boxes per FCL )"],
-    ["Total cost / box (₹)", "Purchase + barcodes + transport + other"],
+    ["Total cost / box (₹)", "Purchase + barcodes + carton + transport + other"],
     ["Cost / pc (₹)", "Total cost per box ÷ pcs per box"],
-    ["Our cost, FOB ($)", "Cost per pc ÷ exchange rate ₹/$"],
+    ["Final sell price, FOB ($)", "Cost per pc ÷ exchange rate ₹/$"],
     ["FOB rise ($ · %)", "Sell now − sell old · ×100 ÷ old"],
     ["Profit / pc (₹)", "Sell now × realisation ₹/$ − cost per pc"],
     ["Profit %", "Profit per pc × 100 ÷ cost per pc"],

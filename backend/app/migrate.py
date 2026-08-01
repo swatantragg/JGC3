@@ -31,8 +31,11 @@ BACKFILL = {
         "uom": "'PCS'",
         "source_sheet": "''",
     },
-    "suppliers": {"addr": "''", "pin": "''", "state": "''"},
+    "suppliers": {"addr": "''", "pin": "''", "state": "''", "your_reference": "''"},
+    "buyers": {"our_reference": "''"},
     "transports": {"supplier_ids": None},   # JSON — leave NULL, read as []
+    # po_lines price columns are deliberately absent: NULL is meaningful there
+    # ("no snapshot — read the item master"), so they must not be backfilled.
 }
 
 
