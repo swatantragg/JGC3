@@ -16,7 +16,7 @@ import { useToast } from "../../providers/ToastProvider.jsx";
 import { useIsMobile } from "../../lib/useIsMobile.js";
 import { docCtx, poCtx } from "../../lib/docCtx.js";
 import {
-  renderDocument, DOC_META, DOC_GROUPS, PREVIEW_CSS, isPoDoc, PO_DOCS,
+  renderDocument, DOC_META, DOC_GROUPS, PREVIEW_CSS, isPoDoc, PO_DOCS, isPdfOnly,
   supplierSplitDocs, downloadSupplierDoc, downloadDocumentExcel, downloadDocumentPDF,
   downloadStageExcel, downloadStagePDF,
 } from "../../lib/docs.js";
@@ -38,6 +38,18 @@ import ShipmentWizard from "../shipments/ShipmentWizard.jsx";
    the PO / Suppliers' / Pre- / Post-Shipment Reports entries reuse it. */
 
 const shipComplete = (s) => !!(s && s.blNo && s.vessel && s.container && s.pod);
+
+/* Both formats, unless the paper only makes sense as one: the e-way bill is a
+   form for the portal and the despatch instruction is a letter, so those offer
+   the print on its own rather than a spreadsheet of their text. */
+const DocDownloads = ({ no, onExcel, onPDF }) => (isPdfOnly(no)
+  ? (
+    <Btn variant="teal" size="sm" icon={FileDown} onClick={onPDF}
+      title="Download as PDF — opens your browser's print dialog">
+      PDF
+    </Btn>
+  )
+  : <DownloadPair onExcel={onExcel} onPDF={onPDF} />);
 
 /* Editable shipment details above the Pre-Shipment set. Saving writes to the
    invoice, so every document built from it changes with the same click. */
@@ -281,9 +293,12 @@ export default function DocumentsPage({ group }) {
                   <button key={no} className={`doc-item${!mobile && open === no ? " on" : ""}`} onClick={() => setOpen(no)}>
                     <span className="doc-no">{no}</span>
                     <span className="doc-name">{DOC_META[no]}</span>
-                    <span className="icon-btn bare" onClick={(e) => { e.stopPropagation(); grabExcel(no); }} title="Download Excel" style={{ width: 24, height: 24 }}>
-                      <FileSpreadsheet size={14} />
-                    </span>
+                    {/* The e-way form and the despatch letter are paper only. */}
+                    {!isPdfOnly(no) && (
+                      <span className="icon-btn bare" onClick={(e) => { e.stopPropagation(); grabExcel(no); }} title="Download Excel" style={{ width: 24, height: 24 }}>
+                        <FileSpreadsheet size={14} />
+                      </span>
+                    )}
                     <span className="icon-btn bare" onClick={(e) => { e.stopPropagation(); grabPDF(no); }} title="Download PDF" style={{ width: 24, height: 24 }}>
                       <FileDown size={14} />
                     </span>
@@ -311,7 +326,8 @@ export default function DocumentsPage({ group }) {
                       <Pill tone="teal">{d.code}</Pill>
                       <span style={{ fontSize: 12 }}>{d.name}</span>
                     </span>
-                    <DownloadPair
+                    <DocDownloads
+                      no={open}
                       onExcel={() => { downloadSupplierDoc(open, ctx, d.supplierId, "excel"); toast(`Document ${open} · ${d.code} — Excel`); }}
                       onPDF={() => { downloadSupplierDoc(open, ctx, d.supplierId, "pdf"); toast(`Document ${open} · ${d.code} — opening print dialog`); }}
                     />
@@ -326,7 +342,7 @@ export default function DocumentsPage({ group }) {
             <span style={{ fontSize: 11.5, color: "var(--faint)" }}>
               {poMode ? <>PO {po.po} · {dmyNum(po.date)}</> : <>{inv.invoice_no} · {dmy(inv.date)}</>}
             </span>
-            <DownloadPair onExcel={() => grabExcel(open)} onPDF={() => grabPDF(open)} />
+            <DocDownloads no={open} onExcel={() => grabExcel(open)} onPDF={() => grabPDF(open)} />
           </CardHead>
           <div className="docprev-shell">
             {split.length > 0 && (
@@ -340,7 +356,8 @@ export default function DocumentsPage({ group }) {
                           <Pill tone="teal">{d.code}</Pill>
                           <span style={{ fontSize: 12 }}>{d.name}</span>
                         </span>
-                        <DownloadPair
+                        <DocDownloads
+                          no={open}
                           onExcel={() => { downloadSupplierDoc(open, ctx, d.supplierId, "excel"); toast(`Document ${open} · ${d.code} — Excel`); }}
                           onPDF={() => { downloadSupplierDoc(open, ctx, d.supplierId, "pdf"); toast(`Document ${open} · ${d.code} — opening print dialog`); }}
                         />
@@ -372,7 +389,9 @@ export default function DocumentsPage({ group }) {
           <DownloadPair size="md" variant="dark"
             onExcel={() => {
               const nums = catalogue.flatMap((g) => g.docs);
-              if (downloadStageExcel(`${heading.replace(/[^A-Za-z0-9]+/g, "_")}_${stamp}`, nums, ctxFor)) toast(`Downloading all ${nums.length} sheets`);
+              // The PDF-only papers are not in the workbook, so they are not counted.
+              const sheets = nums.filter((n) => !isPdfOnly(n)).length;
+              if (downloadStageExcel(`${heading.replace(/[^A-Za-z0-9]+/g, "_")}_${stamp}`, nums, ctxFor)) toast(`Downloading all ${sheets} sheets`);
             }}
             onPDF={() => {
               const nums = catalogue.flatMap((g) => g.docs);

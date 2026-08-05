@@ -61,7 +61,7 @@ def _body(name: str, code: str, minutes: int, reason: str) -> tuple[str, str]:
       </p>
     </div>
     <div style="padding:14px 26px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:11px">
-      Maintained and developed by Avita Technologies · V-5.4
+      Maintained and developed by Avita Technologies · V-5.5
     </div>
   </div>
 </div>"""

@@ -108,11 +108,13 @@ const PRINT_CSS = `
      Arial on a black hairline grid, green codes, bold barcodes — so the paper,
      the preview and the .xlsx are the same sheet. */
   table.wb { font-family: Arial, Helvetica, sans-serif; color: #000; }
-  table.wb.fit { table-layout: fixed; }
   /* Codes and figures are single tokens — never let the printer split one
-     across two lines to save a column; the description takes the slack. */
-  table.wb td, table.wb th { border: 1px solid #000 !important; padding: 3px 4px; font-size: 8.5pt; vertical-align: middle; word-break: normal; white-space: nowrap; }
-  table.wb .desc { white-space: normal; }
+     across two lines to save a column. Everything else wraps, so a wide sheet
+     grows its rows instead of running off the edge of the paper. */
+  table.wb td, table.wb th { border: 1px solid #000 !important; padding: 3px 4px; font-size: 8.5pt; vertical-align: middle; word-break: normal; white-space: normal; }
+  table.wb .gd, table.wb .gdc, table.wb .bh, table.wb .code,
+  table.wb td.c, table.wb td.r { white-space: nowrap; }
+  table.wb td.po { white-space: normal; text-align: center; max-width: 150px; }
   table.wb th { background: #fff !important; color: #000 !important; font-weight: 700; text-align: center; }
   table.wb tr.po td { background: #fff !important; color: #000 !important; font-weight: 700; text-align: left; }
   table.wb tr.po.rule td { border-left: none !important; border-right: none !important; border-top: none !important; }
@@ -146,6 +148,50 @@ const PRINT_CSS = `
   table.wb.letter .buyer { color: #f00 !important; text-decoration: underline; }
   table.wb.letter tr td.l, table.wb.letter tr.band td { border-top: 1px solid #000 !important; border-bottom: 1px solid #000 !important; }
   .pgbrk { page-break-before: always; }
+
+  /* 10 · E-way bill — the portal's entry form, printed as their format sheet. */
+  .ew { font-family: Arial, Helvetica, sans-serif; font-size: 9pt; color: #000; }
+  .ew table { border-collapse: collapse; width: 100%; margin: 0 0 3px; }
+  .ew td { border: none !important; padding: 2px 4px; vertical-align: middle; }
+  .ew .lbl { background: none !important; color: #000 !important; font-weight: 400; white-space: nowrap; }
+  .ew .hd { font-weight: 400; padding-top: 7px; }
+  .ew .fld { border: 1px solid #000 !important; }
+  .ew .ph { color: #999 !important; }
+  .ew .b { font-weight: 700; }
+  .ew .c { text-align: center; }
+  .ew .i { font-style: italic; text-align: center; }
+  .ew .on { font-weight: 700; font-style: normal; }
+  .ew .ewtop td { padding-bottom: 9px; }
+  .ew .ewband td { border-top: 1px solid #000 !important; border-bottom: 1px solid #000 !important; padding: 5px 4px; }
+  .ew .ewband td:first-child { border-left: 1px solid #000 !important; }
+  .ew .ewband td:last-child { border-right: 1px solid #000 !important; }
+  .ew .ewitems .hd td, .ew .ewtot .hd td { text-align: center; border: none !important; }
+  .ew .ewgrid .gap td { height: 12px; }
+  .ew .ewpart { width: auto; margin-left: 110px; }
+  .ew .ewpart .lbl { padding-right: 10px; }
+  .ew .ewline .fld { min-width: 110px; }
+
+  /* 11 · Despatch instructions — the letter, on the letterhead. */
+  .dl { font-family: Calibri, Arial, sans-serif; font-size: 10.5pt; color: #000; line-height: 1.45; }
+  .dl table { border-collapse: collapse; width: 100%; margin: 0; }
+  .dl td { border: none !important; padding: 0; vertical-align: top; }
+  .dl .brand { font-family: Centaur, Georgia, serif; font-size: 34pt; font-weight: 700; color: #8b0000 !important; letter-spacing: 1px; line-height: 1; }
+  .dl .sub { font-family: Centaur, Georgia, serif; font-size: 13pt; color: #8b0000 !important; letter-spacing: 2px; padding-left: 48px; }
+  .dl .lg { width: 100px; text-align: right; }
+  .dl .lg img { width: 86px; height: auto; }
+  .dl .rule { border-top: 1px solid #c00; margin: 6px 0 12px; }
+  .dl .ref { margin-bottom: 14px; }
+  .dl p { margin: 0 0 10px; font-size: 10.5pt; line-height: 1.45; }
+  .dl .to { margin-bottom: 14px; }
+  .dl .refline .k { display: inline-block; min-width: 30px; }
+  .dl .k { background: none !important; color: #000 !important; font-weight: 400; }
+  .dl .b { font-weight: 700; }
+  .dl .sign { margin-top: 38px; }
+  .dl .ins { margin: 0 0 10px; width: auto; }
+  .dl .ins td { padding: 0 0 3px; }
+  .dl .ins .n { width: 50px; padding-left: 22px; }
+  .dl .dlfoot { margin-top: 2px; font-size: 9pt; color: #8b0000 !important; }
+  .dl .dlfoot .r { text-align: right; }
 `;
 
 const escHtml = (s) => String(s ?? "")

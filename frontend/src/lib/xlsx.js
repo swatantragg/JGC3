@@ -153,6 +153,10 @@ const FONTS = [
   { key: "refb", xml: '<font><b/><sz val="10"/><name val="Arial"/><family val="2"/></font>' },
   { key: "refg", xml: '<font><b/><sz val="10"/><color rgb="FF339966"/><name val="Arial"/><family val="2"/></font>' },
   { key: "refr", xml: '<font><b/><sz val="10"/><color rgb="FFFF0000"/><name val="Arial"/><family val="2"/></font>' },
+  // The supplier packing sheet writes its codes in a darker green than the
+  // buyer sheets do — their two workbooks were built years apart.
+  { key: "refgd", xml: '<font><b/><sz val="10"/><color rgb="FF008000"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "refb11", xml: '<font><b/><sz val="11"/><name val="Arial"/><family val="2"/></font>' },
   /* The supplier purchase order is a printed letter, not a table: their
      letterhead is Centaur in maroon, the form's labels are blue, and a few
      words on it are underlined. */
@@ -313,8 +317,11 @@ function sheetXml(sheet, styleOf) {
   const fmtPr = `<sheetFormatPr${sheet.defaultColWidth ? ` defaultColWidth="${sheet.defaultColWidth}"` : ""} defaultRowHeight="${sheet.defaultRowHeight || 15}"/>`;
   const m = (page && page.margins) || { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 };
   const margins = `<pageMargins left="${m.left}" right="${m.right}" top="${m.top}" bottom="${m.bottom}" header="${m.header ?? 0.3}" footer="${m.footer ?? 0.3}"/>`;
+  // fitH: 0 fits the sheet to one page across and lets it run on downwards —
+  // what a list of unknown length wants.
+  const fitH = page && page.fitH != null ? ` fitToHeight="${page.fitH}"` : "";
   const setup = page
-    ? `<pageSetup paperSize="${page.paper || 9}" scale="${page.scale || 100}" orientation="${page.orientation || "portrait"}"/>`
+    ? `<pageSetup paperSize="${page.paper || 9}" scale="${page.scale || 100}"${fitH} orientation="${page.orientation || "portrait"}"/>`
     : "";
 
   // A sheet with a picture on it points at its own drawing part.

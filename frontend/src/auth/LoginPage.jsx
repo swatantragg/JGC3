@@ -262,7 +262,7 @@ export default function LoginPage() {
             </button>
           )}
         </div>
-        <div className="login-foot">Maintained and developed by <b>Avita Technologies</b> · V-5.4</div>
+        <div className="login-foot">Maintained and developed by <b>Avita Technologies</b> · V-5.5</div>
       </div>
     </div>
   );
