@@ -147,6 +147,22 @@ const FONTS = [
   { key: "title", xml: '<font><b/><sz val="15"/><color rgb="FF0B2C4D"/><name val="Calibri"/></font>' },
   { key: "h2", xml: '<font><b/><sz val="12"/><color rgb="FF0B2C4D"/><name val="Calibri"/></font>' },
   { key: "sub", xml: '<font><sz val="9.5"/><color rgb="FF516170"/><name val="Calibri"/></font>' },
+  /* Arial 10 — the client's own workbooks, so a document rebuilt cell for cell
+     against one of them (2 · Barcode) opens looking like the file it copies. */
+  { key: "ref", xml: '<font><sz val="10"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "refb", xml: '<font><b/><sz val="10"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "refg", xml: '<font><b/><sz val="10"/><color rgb="FF339966"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "refr", xml: '<font><b/><sz val="10"/><color rgb="FFFF0000"/><name val="Arial"/><family val="2"/></font>' },
+  /* The supplier purchase order is a printed letter, not a table: their
+     letterhead is Centaur in maroon, the form's labels are blue, and a few
+     words on it are underlined. */
+  { key: "refbb", xml: '<font><b/><sz val="10"/><color rgb="FF0000FF"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "refbl", xml: '<font><sz val="10"/><color rgb="FF3366FF"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "refmn", xml: '<font><sz val="10"/><color rgb="FF800000"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "brand", xml: '<font><b/><sz val="18"/><color rgb="FF800000"/><name val="Centaur"/><family val="1"/></font>' },
+  { key: "refbu", xml: '<font><b/><u/><sz val="10"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "refun", xml: '<font><u/><sz val="10"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "refur", xml: '<font><u/><sz val="10"/><color rgb="FFFF0000"/><name val="Arial"/><family val="2"/></font>' },
 ];
 const FILLS = [
   { key: "none", xml: '<fill><patternFill patternType="none"/></fill>' },
@@ -156,6 +172,12 @@ const FILLS = [
   { key: "sec", xml: '<fill><patternFill patternType="solid"><fgColor rgb="FFE6EDF4"/><bgColor indexed="64"/></patternFill></fill>' },
   { key: "tot", xml: '<fill><patternFill patternType="solid"><fgColor rgb="FFFBE6C2"/><bgColor indexed="64"/></patternFill></fill>' },
 ];
+/* Black hairline edges, as Excel's own grid draws them — `box` is all four,
+   the rest are the partial frames the client's sheets use on a banner row. */
+const edge = '<color indexed="64"/>';
+const side = (on, name) => (on ? `<${name} style="thin">${edge}</${name}>` : `<${name}/>`);
+const frame = (l, r, t, b) =>
+  `<border>${side(l, "left")}${side(r, "right")}${side(t, "top")}${side(b, "bottom")}<diagonal/></border>`;
 const BORDERS = [
   { key: "none", xml: "<border><left/><right/><top/><bottom/><diagonal/></border>" },
   {
@@ -167,9 +189,34 @@ const BORDERS = [
 const fontIx = (k) => Math.max(0, FONTS.findIndex((f) => f.key === k));
 const fillIx = (k) => Math.max(0, FILLS.findIndex((f) => f.key === k));
 
-/* A style is { font, fill, border, align, wrap, fmt }. */
+/* `border` is false for none, undefined for the app's own thin grey grid, or
+   the edges to rule as a string of l/r/t/b — "lrtb" (aliased "box") for a full
+   cell, "tb" for a banner, "l" for the left edge of a printed form. Every
+   combination a sheet asks for is registered as it is met. */
+const borderKey = (b) => (b === "box" ? "lrtb" : String(b).toLowerCase().replace(/[^lrtb]/g, ""));
+function borderRegistry() {
+  const list = BORDERS.map((x) => x.xml);
+  const seen = new Map(BORDERS.map((x, i) => [x.key, i]));
+  return {
+    index(b) {
+      if (b === false) return 0;
+      if (typeof b !== "string") return 1;
+      const key = borderKey(b);
+      if (!key) return 0;
+      if (seen.has(key)) return seen.get(key);
+      const xml = frame(key.includes("l"), key.includes("r"), key.includes("t"), key.includes("b"));
+      seen.set(key, list.length);
+      list.push(xml);
+      return list.length - 1;
+    },
+    xml: () => list,
+  };
+}
+
+/* A style is { font, fill, border, align, valign, wrap, quote, fmt }. */
 function styleXfs(specs) {
   const numFmts = [];
+  const borders = borderRegistry();
   const fmtId = (name) => {
     if (!name) return 0;
     const pattern = FORMATS[name] || name;
@@ -182,8 +229,11 @@ function styleXfs(specs) {
       `numFmtId="${fmtId(s.fmt)}"`,
       `fontId="${fontIx(s.font || "base")}"`,
       `fillId="${fillIx(s.fill || "none")}"`,
-      `borderId="${s.border === false ? 0 : 1}"`,
+      `borderId="${borders.index(s.border)}"`,
       'xfId="0"',
+      // A barcode is digits that must stay text; the quote prefix is how Excel
+      // remembers that when the client edits the cell.
+      s.quote ? 'quotePrefix="1"' : "",
       s.fmt ? 'applyNumberFormat="1"' : "",
       "applyFont=\"1\" applyFill=\"1\" applyBorder=\"1\" applyAlignment=\"1\"",
     ].filter(Boolean).join(" ");
@@ -197,15 +247,18 @@ function styleXfs(specs) {
   const nf = numFmts.length
     ? `<numFmts count="${numFmts.length}">${numFmts.map((p, i) => `<numFmt numFmtId="${164 + i}" formatCode="${X(p)}"/>`).join("")}</numFmts>`
     : "";
+  const bd = borders.xml();
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${nf}<fonts count="${FONTS.length}">${FONTS.map((f) => f.xml).join("")}</fonts><fills count="${FILLS.length}">${FILLS.map((f) => f.xml).join("")}</fills><borders count="${BORDERS.length}">${BORDERS.map((b) => b.xml).join("")}</borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${xfs.length}">${xfs.join("")}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${nf}<fonts count="${FONTS.length}">${FONTS.map((f) => f.xml).join("")}</fonts><fills count="${FILLS.length}">${FILLS.map((f) => f.xml).join("")}</fills><borders count="${bd.length}">${bd.join("")}</borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${xfs.length}">${xfs.join("")}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 }
 
 /* ---- turning one sheet's rows into worksheet XML ---- */
 function sheetXml(sheet, styleOf) {
   const rows = sheet.rows || [];
+  const heights = sheet.heights || [];
   const body = rows.map((row, ri) => {
     const r = ri + 1;
+    const ht = Number(heights[ri]) > 0 ? ` ht="${Number(heights[ri])}" customHeight="1"` : "";
     const cells = (row || []).map((raw, ci) => {
       if (raw == null || raw === "") return "";
       const cell = (typeof raw === "object") ? raw : { v: raw };
@@ -227,12 +280,18 @@ function sheetXml(sheet, styleOf) {
       if (!text) return sAttr ? `<c r="${ref}"${sAttr}/>` : "";
       return `<c r="${ref}"${sAttr} t="inlineStr"><is><t xml:space="preserve">${X(text)}</t></is></c>`;
     }).filter(Boolean).join("");
-    return cells ? `<row r="${r}">${cells}</row>` : "";
+    return cells ? `<row r="${r}"${ht}>${cells}</row>` : "";
   }).filter(Boolean).join("");
 
   const widths = sheet.widths || [];
+  // A width copied off one of the client's sheets is kept to the character
+  // fraction Excel stored it at; the app's own guesses are whole characters.
+  const width = (w) => String(Math.round(Math.max(2, Math.min(255, Number(w) || 12)) * 1e6) / 1e6);
+  // The column's own default — what a cell typed in below the table inherits.
+  // A copied workbook states it, so the client's font carries on down the sheet.
+  const cs = sheet.colStyle ? ` style="${styleOf(sheet.colStyle)}"` : "";
   const cols = widths.length
-    ? `<cols>${widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${Math.max(4, Math.min(70, Number(w) || 12)).toFixed(2)}" customWidth="1"/>`).join("")}</cols>`
+    ? `<cols>${widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${width(w)}"${cs} customWidth="1"/>`).join("")}</cols>`
     : "";
 
   const merges = (sheet.merges || []).filter(Boolean);
@@ -244,8 +303,35 @@ function sheetXml(sheet, styleOf) {
     ? `<sheetView workbookViewId="0"><pane ySplit="${sheet.freeze}" topLeftCell="A${sheet.freeze + 1}" activePane="bottomLeft" state="frozen"/></sheetView>`
     : '<sheetView workbookViewId="0"/>';
 
+  /* Tab colour and the printed page. A sheet says nothing here and gets the
+     app's defaults; one that copies a client workbook states what that file
+     states, so it prints on the same paper at the same scale. */
+  const page = sheet.page || null;
+  const pr = (sheet.tabColor || page)
+    ? `<sheetPr>${sheet.tabColor ? `<tabColor rgb="${X(sheet.tabColor)}"/>` : ""}${page && page.fit ? '<pageSetUpPr fitToPage="1"/>' : ""}</sheetPr>`
+    : "";
+  const fmtPr = `<sheetFormatPr${sheet.defaultColWidth ? ` defaultColWidth="${sheet.defaultColWidth}"` : ""} defaultRowHeight="${sheet.defaultRowHeight || 15}"/>`;
+  const m = (page && page.margins) || { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 };
+  const margins = `<pageMargins left="${m.left}" right="${m.right}" top="${m.top}" bottom="${m.bottom}" header="${m.header ?? 0.3}" footer="${m.footer ?? 0.3}"/>`;
+  const setup = page
+    ? `<pageSetup paperSize="${page.paper || 9}" scale="${page.scale || 100}" orientation="${page.orientation || "portrait"}"/>`
+    : "";
+
+  // A sheet with a picture on it points at its own drawing part.
+  const drawing = sheet.image ? '<drawing r:id="rIdDr"/>' : "";
+  const rNs = sheet.image ? ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"' : "";
+
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews>${pane}</sheetViews><sheetFormatPr defaultRowHeight="15"/>${cols}<sheetData>${body}</sheetData>${mergeXml}<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/></worksheet>`;
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"${rNs}>${pr}<sheetViews>${pane}</sheetViews>${fmtPr}${cols}<sheetData>${body}</sheetData>${mergeXml}${margins}${setup}${drawing}</worksheet>`;
+}
+
+/* A picture anchored to a cell — the letterhead mark on the supplier order.
+   `image` is { data, ext, col, row, colOff, rowOff, cx, cy }, sizes in EMU
+   (914400 to the inch), anchored one-cell so it keeps its shape whatever the
+   client does to the column widths. */
+function drawingXml(img) {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><xdr:oneCellAnchor><xdr:from><xdr:col>${img.col || 0}</xdr:col><xdr:colOff>${img.colOff || 0}</xdr:colOff><xdr:row>${img.row || 0}</xdr:row><xdr:rowOff>${img.rowOff || 0}</xdr:rowOff></xdr:from><xdr:ext cx="${img.cx}" cy="${img.cy}"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="1" name="Logo"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${img.cx}" cy="${img.cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor></xdr:wsDr>`;
 }
 
 /* Excel forbids : \ / ? * [ ] in a sheet name, and caps it at 31 characters. */
@@ -283,11 +369,34 @@ export function buildXLSX(workbook) {
   // Styles must be collected before styles.xml is written, so render first.
   const sheetXmls = sheets.map((s) => sheetXml(s, styleOf));
 
+  /* Pictures. A sheet carrying one gets a drawing part of its own, the image
+     goes into xl/media, and the worksheet gets a rels file pointing at it. */
+  const pics = sheets.map((s, i) => (s.image?.data ? { sheet: i, img: s.image, n: 0 } : null)).filter(Boolean);
+  pics.forEach((p, k) => { p.n = k + 1; });
+  const picFiles = pics.flatMap((p) => [
+    { name: `xl/media/image${p.n}.${p.img.ext || "png"}`, data: p.img.data },
+    { name: `xl/drawings/drawing${p.n}.xml`, data: utf8(drawingXml(p.img)) },
+    {
+      name: `xl/drawings/_rels/drawing${p.n}.xml.rels`,
+      data: utf8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${p.n}.${p.img.ext || "png"}"/></Relationships>`),
+    },
+    {
+      name: `xl/worksheets/_rels/sheet${p.sheet + 1}.xml.rels`,
+      data: utf8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdDr" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${p.n}.xml"/></Relationships>`),
+    },
+  ]);
+  const picTypes = pics.length
+    ? [...new Set(pics.map((p) => p.img.ext || "png"))].map((e) => `<Default Extension="${e}" ContentType="image/${e === "jpg" ? "jpeg" : e}"/>`).join("")
+      + pics.map((p) => `<Override PartName="/xl/drawings/drawing${p.n}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`).join("")
+    : "";
+
   const files = [
     {
       name: "[Content_Types].xml",
       data: utf8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`),
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${picTypes}<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`),
     },
     {
       name: "_rels/.rels",
@@ -306,6 +415,7 @@ export function buildXLSX(workbook) {
     },
     { name: "xl/styles.xml", data: utf8(styleXfs(specs)) },
     ...sheetXmls.map((xml, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: utf8(xml) })),
+    ...picFiles,
   ];
 
   return zipBlob(files);

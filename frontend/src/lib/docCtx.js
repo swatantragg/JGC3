@@ -22,7 +22,7 @@ export const docItem = (i) => ({
   description: i.description, barcode: i.barcode, hsn: i.hsn,
   volume: i.volume, netPerBox: i.net_per_box, grossPerBox: i.gross_per_box,
   bgPerBox: i.bg_per_box, pPerBox: i.p_per_box, typeUp: i.type_up,
-  stickerMult: i.sticker_mult, stickerRound: i.sticker_round,
+  stickerMult: i.sticker_mult, stickerRound: i.sticker_round, stickerRule: i.sticker_rule,
   stickersFixed: i.stickers_fixed, labelSpoilage: i.label_spoilage,
   uom: i.uom, valueMode: i.value_mode, unitValue: i.unit_value,
   fobMode: i.fob_mode, unitFob100: i.unit_fob100,
