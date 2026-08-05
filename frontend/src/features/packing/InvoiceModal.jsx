@@ -4,7 +4,7 @@ import { Modal, Btn, Seg, Pill, Mono, DataTable, Note } from "../../components/u
 import { useItems, useBuyers, useSuppliers, usePoLines, useInvoices } from "../../api/hooks.js";
 import { useToast } from "../../providers/ToastProvider.jsx";
 import { dmy, num } from "../../lib/format.js";
-import { hidePriceCols, PRICE_HIDDEN_NOTE } from "../../lib/priceCols.js";
+import { hidePriceCols } from "../../lib/priceCols.js";
 import { docCtx } from "../../lib/docCtx.js";
 import { buildDocument, DOC_META } from "../../lib/docs.js";
 import { INV_STATUS_TONE } from "../../lib/constants.js";
@@ -113,12 +113,8 @@ export default function InvoiceModal({ inv, onEditShip, onClose }) {
 
       <div style={{ marginBottom: 12 }}>
         {done
-          ? <Note tone="teal" icon={CheckCircle2}>Shipment details are in — every one of the 40 documents will render fully populated for this invoice.</Note>
-          : <Note tone="amber" icon={AlertTriangle}>The <b>customs invoice (18)</b> unlocks once you add the BL number, vessel, container and port of discharge. Use <b>Edit shipment details</b> below. The proforma (17) is ready now.</Note>}
-      </div>
-
-      <div style={{ marginBottom: 12 }}>
-        <Note tone="teal">{PRICE_HIDDEN_NOTE}</Note>
+          ? <Note tone="teal" icon={CheckCircle2}>Shipment details complete.</Note>
+          : <Note tone="amber" icon={AlertTriangle}>The <b>customs invoice (18)</b> needs the BL number, vessel, container and port of discharge — use <b>Edit shipment details</b> below.</Note>}
       </div>
 
       {tab === "buyer" ? (

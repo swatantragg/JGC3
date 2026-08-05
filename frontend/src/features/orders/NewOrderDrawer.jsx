@@ -84,7 +84,7 @@ export default function NewOrderDrawer({ onClose }) {
   };
 
   return (
-    <Drawer title="New buyer order" subtitle="Three steps. Everything else is worked out for you."
+    <Drawer title="New buyer order"
       icon={ClipboardList} onClose={onClose}
       footer={<>
         <span style={{ fontSize: 12, color: "var(--muted)" }}>
@@ -233,12 +233,6 @@ export default function NewOrderDrawer({ onClose }) {
                 ]}
               />
               <div className="card-foot">
-                <Note tone="teal">
-                  Boxes are shown undivided — <b>{boxesExact(t.boxes_exact || 0)}</b> against{" "}
-                  <b>{t.boxes || 0}</b> cartons actually packed. A figure like 0.71 is telling you the
-                  order is under a full carton. Purchase and FOB prices are held off screen; they are
-                  saved with the order and print in full on every download.
-                </Note>
               </div>
             </Card>
           ) : (

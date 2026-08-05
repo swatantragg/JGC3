@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Truck, Container, Ship, Check, ChevronRight, ChevronLeft, SkipForward, Lock } from "lucide-react";
 import { Modal, Btn, Field, Input, Select, Pill, Note, Step } from "../../components/ui/index.jsx";
+import { useIsMobile } from "../../lib/useIsMobile.js";
 import { useSuppliers, useTransports, useInvoiceMutations } from "../../api/hooks.js";
 import { useToast } from "../../providers/ToastProvider.jsx";
 import { INV_STATUS_TONE } from "../../lib/constants.js";
@@ -23,6 +24,8 @@ export default function ShipmentWizard({ inv, onClose }) {
   const transports = useTransports().data || [];
   const { update } = useInvoiceMutations();
   const toast = useToast();
+
+  const mobile = useIsMobile();
 
   const supById = (id) => suppliers.find((s) => s.id === id) || {};
   const sups = [...new Set((inv.lines || []).map((l) => l.supplier_id).filter(Boolean))];
@@ -142,6 +145,13 @@ export default function ShipmentWizard({ inv, onClose }) {
             <input type="checkbox" checked={!!skip.vehicle} onChange={(e) => setSkp("vehicle", e.target.checked)} />
             <SkipForward size={13} /> Skip this step for now
           </label>
+          {mobile && (
+            <div className="wiz-save">
+              <Btn size="lg" icon={Check} disabled={update.isPending} onClick={save}>
+                {update.isPending ? "Saving…" : "Save shipment details"}
+              </Btn>
+            </div>
+          )}
         </div>
       )}
 
@@ -160,6 +170,13 @@ export default function ShipmentWizard({ inv, onClose }) {
             <input type="checkbox" checked={!!skip.container} onChange={(e) => setSkp("container", e.target.checked)} />
             <SkipForward size={13} /> Skip this step for now
           </label>
+          {mobile && (
+            <div className="wiz-save">
+              <Btn size="lg" icon={Check} disabled={update.isPending} onClick={save}>
+                {update.isPending ? "Saving…" : "Save shipment details"}
+              </Btn>
+            </div>
+          )}
         </div>
       )}
 
@@ -185,6 +202,13 @@ export default function ShipmentWizard({ inv, onClose }) {
             <SkipForward size={13} /> Skip this step for now
           </label>
           <Note tone="teal">Once all three steps are filled or skipped, the invoice status becomes <b>Shipped</b> and every downstream document is populated.</Note>
+          {mobile && (
+            <div className="wiz-save">
+              <Btn size="lg" icon={Check} disabled={update.isPending} onClick={save}>
+                {update.isPending ? "Saving…" : "Save shipment details"}
+              </Btn>
+            </div>
+          )}
         </div>
       )}
     </Modal>

@@ -13,7 +13,7 @@ import {
 } from "../../api/hooks.js";
 import { num, inr, usd, usdp, todayISO } from "../../lib/format.js";
 import { useDebounced } from "../../lib/useDebounced.js";
-import { hidePriceCols, PRICE_HIDDEN_NOTE } from "../../lib/priceCols.js";
+import { hidePriceCols } from "../../lib/priceCols.js";
 import { downloadGridExcel, downloadGridPDF } from "../../lib/download.js";
 import AddItemDrawer from "./AddItemDrawer.jsx";
 import ItemEditModal from "./ItemEditModal.jsx";
@@ -113,8 +113,6 @@ function ColumnManager({ cols, catalogue, onSave, onClose }) {
           <Btn size="sm" icon={Check} onClick={() => onSave(list)}>Save view</Btn>
         </div>
       </>}>
-      <Note tone="teal">Drag to reorder, untick to hide, and use the bin to drop a column entirely. The first five stay frozen while you scroll sideways.</Note>
-
       <div style={{ maxHeight: 340, overflowY: "auto", margin: "12px 0" }}>
         {list.map((c, i) => (
           <div key={c.key} draggable
@@ -219,7 +217,7 @@ function ItemPicker({ suppliers, onPick, onClose }) {
         <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
       </>}>
       <div className="row wrap" style={{ gap: 10, marginBottom: 12 }}>
-        <SearchInput value={q} onChange={setQ} placeholder="Code, GD, OSWIN, description…" style={{ flex: 1, minWidth: 240 }} />
+        <SearchInput value={q} onChange={setQ} placeholder="Code, GD, OSWIN, description…" style={{ flex: 1, minWidth: "min(240px, 100%)" }} />
         <Select style={{ width: 230 }} value={sup} onChange={(e) => setSup(e.target.value)}>
           <option value="">All suppliers</option>
           {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}
@@ -362,7 +360,6 @@ export default function ItemsPanel() {
         />
         <span style={{ fontSize: 11.5, color: "var(--muted)" }} className="row">
           {preset === "custom" ? "Your saved column layout." : PRESETS[preset].hint}
-          <Info>These are saved views of the same item master — switching a view never changes your data. Purchase and FOB prices are held back from every on-screen view; downloads always contain every column.</Info>
         </span>
       </div>
 
@@ -386,14 +383,9 @@ export default function ItemsPanel() {
                   The master is empty. Add items here, or load the client's workbook with
                   {" "}<span className="mono">python backend/scripts/import_masters.py</span>.
                 </Empty>}
-        <div className="card-foot stack-sm">
-          <Note tone="teal" icon={EyeOff}>{PRICE_HIDDEN_NOTE} Open an item with the pencil to see or change them.</Note>
-          <Note tone="amber">Constant fields only — these never change with an order. Quantities, totals, labels, sheets and rate are calculated per order.</Note>
-        </div>
       </Card>
 
-      <FormulaPanel title="What gets calculated from these fields?" rows={formulas}
-        intro="An item stores only what is constant. Everything below depends on the order quantity and the day's RBI rate, so it is derived when the order is placed — never stored, never stale." />
+      <FormulaPanel title="What gets calculated from these fields?" rows={formulas} />
 
       {addItem && <AddItemDrawer onClose={() => setAddItem(false)} />}
       {picking && (

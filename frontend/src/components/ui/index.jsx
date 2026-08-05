@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import {
-  X, Pencil, Inbox, Loader2, AlertTriangle, Eye, EyeOff,
+  X, Pencil, Inbox, Loader2, AlertTriangle, Eye, EyeOff, Check, Circle,
   HelpCircle, Search, ChevronRight, ChevronDown, FileSpreadsheet, FileDown,
 } from "lucide-react";
+import { passwordRules } from "../../lib/password.js";
+import { useIsMobile } from "../../lib/useIsMobile.js";
 
 /* ============================================================
    Shared UI atoms. Styling lives in src/index.css (the design
@@ -49,12 +51,25 @@ export const Note = ({ tone = "teal", icon: Icon, children }) => (
 
 /* Hover-to-explain "?" — how the jargon (FIFO, 2A, RBI rate…) gets taught
    without a manual. */
-export const Info = ({ children }) => (
-  <span className="tip">
-    <span className="tip-trigger"><HelpCircle size={13} /></span>
-    <span className="tip-body">{children}</span>
-  </span>
-);
+export function Info({ children }) {
+  // Centred on the icon normally; flipped to hug whichever edge it is near, so
+  // the bubble is never half off the screen on a narrow window or a phone.
+  const [side, setSide] = useState("mid");
+  const ref = useRef(null);
+  const place = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    const mid = r.left + r.width / 2;
+    const half = Math.min(124, (window.innerWidth - 24) / 2);
+    setSide(mid - half < 12 ? "start" : mid + half > window.innerWidth - 12 ? "end" : "mid");
+  };
+  return (
+    <span ref={ref} className={`tip tip-${side}`} onMouseEnter={place} onFocus={place}>
+      <span className="tip-trigger" tabIndex={0}><HelpCircle size={13} /></span>
+      <span className="tip-body">{children}</span>
+    </span>
+  );
+}
 
 export const Field = ({ label, hint, children, style }) => (
   <label className="field" style={style}>
@@ -70,7 +85,12 @@ export const SearchInput = ({ value, onChange, placeholder = "Search…", style 
   </div>
 );
 
-export const Input = (props) => <input {...props} className={`input ${props.className || ""}`} />;
+/* Forwards its ref so a caller can focus the box — the passcode step puts the
+   cursor there on arrival and again after a wrong code. */
+export const Input = forwardRef((props, ref) => (
+  <input {...props} ref={ref} className={`input ${props.className || ""}`} />
+));
+Input.displayName = "Input";
 
 /* A password box with an eye to reveal what was typed — the only way to catch
    a typo in a field the browser masks. Reveal is per-field and resets on
@@ -100,6 +120,25 @@ export function PasswordInput({ value, onChange, placeholder = "•••••�
         {shown ? <EyeOff size={15} /> : <Eye size={15} />}
       </button>
     </span>
+  );
+}
+
+/* The password rule, ticking itself off as the box is typed into. Shown while
+   a password is being *set* — never on a sign-in box, where listing the rules
+   would only tell a stranger what to try. `identity` is the name and email on
+   the account, so the "not your own name" rule can check against them. */
+export function PasswordRules({ value, identity, show = true }) {
+  const rules = useMemo(() => passwordRules(value, identity), [value, identity]);
+  if (!show) return null;
+  return (
+    <ul className="pw-rules">
+      {rules.map((r) => (
+        <li key={r.label} className={r.ok ? "ok" : ""}>
+          {r.ok ? <Check size={12} /> : <Circle size={12} />}
+          <span>{r.label}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 export const Select = ({ children, ...p }) => <select {...p} className={`select ${p.className || ""}`}>{children}</select>;
@@ -150,8 +189,10 @@ export const ErrorState = ({ error, onRetry }) => (
   </Empty>
 );
 
-/* Modal — a centred panel at ~75% width with enlarged type (see .modal in CSS). */
-export function Modal({ title, icon: Icon, onClose, children, footer }) {
+/* Modal — a centred panel at ~75% width with enlarged type (see .modal in CSS).
+   `size="sm"` narrows it to a column: right for a question with a short answer,
+   where the full width would leave a confirmation stranded in white space. */
+export function Modal({ title, icon: Icon, onClose, children, footer, size }) {
   useEffect(() => {
     const h = (e) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", h);
@@ -159,7 +200,7 @@ export function Modal({ title, icon: Icon, onClose, children, footer }) {
   }, [onClose]);
   return (
     <div className="backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className={`modal${size === "sm" ? " modal-sm" : ""}`} onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>{Icon && <Icon size={17} style={{ color: "var(--teal)" }} />}{title}</h3>
           <IconBtn bare icon={X} size={18} onClick={onClose} title="Close" />
@@ -214,7 +255,14 @@ export const Step = ({ n, title, hint }) => (
    serial:  prepend a "#" column numbering the rows on screen. It counts what
             is displayed, so it renumbers when a filter narrows the list —
             that is what makes it useful for reading a long table aloud.
-            It is part of the frozen block and of any footer span. */
+            It is part of the frozen block and of any footer span.
+
+   On a phone the same columns are rendered as one card per row instead: a wide
+   table dragged sideways under a thumb is unreadable, and every screen in this
+   app is a table. Two optional column flags steer that and change nothing on a
+   desktop:
+     primary     — this column is the card's heading (default: the first one)
+     hideOnMobile — leave this column out of the card entirely */
 const FREEZE_W = 120;
 
 const SERIAL_COL = {
@@ -231,6 +279,7 @@ export function DataTable({
   columns, rows, rowKey, freeze = 0, serial = false, onRowClick, footer, maxHeight,
   paginate = false, pageSize: initialPageSize = 25,
 }) {
+  const mobile = useIsMobile();
   const [size, setSize] = useState(initialPageSize);
   const [page, setPage] = useState(0);
   const total = rows.length;
@@ -311,6 +360,72 @@ export function DataTable({
       )}
     </div>
   );
+
+  /* A table footer is positional — "Total" spanning four columns, then a value
+     per column after it. On a card there are no columns to line up under, so
+     each value is paired with the label of the column it was sitting in. */
+  const mobileTotals = useMemo(() => {
+    if (!mobile || !foot) return null;
+    let idx = 0;
+    let title = "Total";
+    const out = [];
+    foot.forEach((f, i) => {
+      const span = f.span || 1;
+      if (i === 0 && span > 1) title = f.v;
+      else if (f.v !== "" && f.v !== undefined && f.v !== null) out.push({ label: cols[idx]?.label, v: f.v });
+      idx += span;
+    });
+    return out.length ? { title, rows: out } : null;
+  }, [mobile, foot, cols]);
+
+  /* Phones get the same rows as cards. The serial number becomes the card's
+     corner index rather than a column, and a right-aligned column keeps its
+     right alignment as the value side of the pair. */
+  if (mobile) {
+    const body = cols.filter((c) => c.key !== "_sr" && !c.hideOnMobile);
+    const head = body.find((c) => c.primary) || body[0];
+    const rest = body.filter((c) => c !== head);
+    return (
+      <>
+        <div className="dt-cards">
+          {shown.map((r, ri) => (
+            <div key={rowKey ? rowKey(r, ri) : ri}
+              className={`dt-card${onRowClick ? " click" : ""}`}
+              onClick={onRowClick ? () => onRowClick(r) : undefined}>
+              <div className="dt-card-head">
+                <span className="dt-card-title">{head?.render ? head.render(r, ri) : r[head?.key]}</span>
+                {serial && <span className="dt-card-n">#{first + ri + 1}</span>}
+              </div>
+              <dl className="dt-card-body">
+                {rest.map((c) => {
+                  const v = c.render ? c.render(r, ri) : r[c.key];
+                  if (v === null || v === undefined || v === "") return null;
+                  return (
+                    <div key={c.key} className="dt-pair">
+                      <dt>{c.label}</dt>
+                      <dd className={c.align === "r" ? "r" : ""}>{v}</dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            </div>
+          ))}
+          {!rows.length && <div className="dt-empty">Nothing to show yet.</div>}
+          {mobileTotals && rows.length > 0 && (
+            <div className="dt-card dt-card-total">
+              <div className="dt-card-head"><span className="dt-card-title">{mobileTotals.title}</span></div>
+              <dl className="dt-card-body">
+                {mobileTotals.rows.map((t, i) => (
+                  <div key={i} className="dt-pair"><dt>{t.label}</dt><dd className="r">{t.v}</dd></div>
+                ))}
+              </dl>
+            </div>
+          )}
+        </div>
+        {pager}
+      </>
+    );
+  }
 
   return (
     <>

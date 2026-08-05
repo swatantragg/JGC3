@@ -54,10 +54,6 @@ export default function ShipmentsPage() {
     <div className="stack">
       <div className="page-head">
         <h2 className="h1">Shipment details</h2>
-        <p className="sub">
-          Open an invoice and fill three gated steps — <b>vehicle details</b> (supplier-wise), <b>container details</b>, then <b>BL &amp; shipping</b>.
-          Each unlocks the next, and the status moves from <b>Ready to dispatch</b> → <b>Dispatched</b> → <b>Ready to Ship</b> → <b>Shipped</b>.
-        </p>
       </div>
 
       <div className="grid-4">
@@ -102,7 +98,6 @@ export default function ShipmentsPage() {
         )}
         {invoices.length > 0 && (
           <div className="card-foot">
-            <Note tone="teal">Fill the three shipment steps and every one of the 40 papers is populated from this invoice — same PO, dates, BL, container and quantities on every sheet.</Note>
           </div>
         )}
       </Card>

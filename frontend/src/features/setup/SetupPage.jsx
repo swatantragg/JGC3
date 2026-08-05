@@ -4,6 +4,7 @@ import {
   Card, CardHead, Btn, Seg, Field, Input, Select, Pill, Mono, EditBtn, Empty, Note, Step,
 } from "../../components/ui/index.jsx";
 import { useAuth } from "../../auth/AuthProvider.jsx";
+import { useIsMobile } from "../../lib/useIsMobile.js";
 import { useToast } from "../../providers/ToastProvider.jsx";
 import {
   useSuppliers, useCreateSupplier, useUpdateSupplier, useDeleteSupplier,
@@ -22,7 +23,23 @@ import RecordModal from "./RecordModal.jsx";
    buyers, suppliers and transports are short lists, so each is a list beside
    the form that adds to it. */
 
-function PartyPanel({ title, icon, count, children, form }) {
+/* A list of what is already saved, and the form that adds to it.
+
+   On a desktop the two sit side by side, which is what makes adding five
+   suppliers in a row quick. A phone has no room for both, so the form becomes
+   an "Add" button at the top of the list and opens as a dialog — the saved
+   records stay the first thing on screen either way. */
+function PartyPanel({ title, icon, count, children, form, mobile, addLabel, onAdd }) {
+  if (mobile) {
+    return (
+      <Card>
+        <CardHead icon={icon} title={`${count} ${title}`}>
+          <Btn size="sm" icon={Plus} onClick={onAdd}>{addLabel}</Btn>
+        </CardHead>
+        <div>{children}</div>
+      </Card>
+    );
+  }
   return (
     <div className="split" style={{ gridTemplateColumns: "minmax(0,1.35fr) minmax(0,1fr)" }}>
       <Card>
@@ -73,7 +90,10 @@ export default function SetupPage() {
   const canParties = has("setup.parties");
   const [tab, setTab] = useState(canItems ? "items" : canParties ? "buyers" : "users");
   const [editing, setEditing] = useState(null);
+  // On a phone the add form is a dialog rather than a column beside the list.
+  const [creating, setCreating] = useState(null);
   const [failed, setFailed] = useState("");
+  const mobile = useIsMobile();
 
   const suppliers = useSuppliers().data || [];
   const buyers = useBuyers().data || [];
@@ -106,10 +126,6 @@ export default function SetupPage() {
     <div className="stack">
       <div className="page-head">
         <h2 className="h1">Setup</h2>
-        <p className="sub">
-          Your single source of truth. Set an item, a buyer or a supplier up once and every order, invoice and document downstream reads from it — so placing an order only ever needs a code and a quantity.
-          {isAdmin && <> Under <b>Users</b> you decide who sees which part of the system.</>}
-        </p>
       </div>
 
       <Seg options={[
@@ -125,6 +141,7 @@ export default function SetupPage() {
       {/* ---------------- BUYERS ---------------- */}
       {tab === "buyers" && (
         <PartyPanel title={`buyer${buyers.length === 1 ? "" : "s"}`} icon={Globe} count={buyers.length}
+          mobile={mobile} addLabel="Add buyer" onAdd={() => setCreating({ type: "buyer" })}
           form={<>
             <div style={{ marginBottom: 14 }}><Step n="+" title="Add a buyer" hint="Nothing technical — it is just a form." /></div>
             <div className="stack-sm">
@@ -178,6 +195,7 @@ export default function SetupPage() {
       {/* ---------------- SUPPLIERS ---------------- */}
       {tab === "suppliers" && (
         <PartyPanel title="suppliers" icon={Truck} count={suppliers.length}
+          mobile={mobile} addLabel="Add supplier" onAdd={() => setCreating({ type: "supplier" })}
           form={<>
             <div style={{ marginBottom: 14 }}><Step n="+" title="Add a supplier" hint="Name, GSTIN and address print on the supplier PO and the e-way bill." /></div>
             <div className="stack-sm">
@@ -232,6 +250,7 @@ export default function SetupPage() {
       {/* ---------------- TRANSPORT ---------------- */}
       {tab === "transports" && (
         <PartyPanel title={`transport${transports.length === 1 ? "" : "s"}`} icon={Route} count={transports.length}
+          mobile={mobile} addLabel="Add transport" onAdd={() => setCreating({ type: "transport" })}
           form={<>
             <div style={{ marginBottom: 14 }}><Step n="+" title="Add a transport" hint="You pick this carrier when filling a shipment's vehicle details." /></div>
             <div className="stack-sm">
@@ -287,6 +306,34 @@ export default function SetupPage() {
       )}
 
       {tab === "users" && isAdmin && <UsersPanel />}
+
+      {creating?.type === "buyer" && (
+        <RecordModal title="Add a buyer" cols={4} schema={BUYER_SCHEMA} value={BLANK_BUYER}
+          saving={createBuyer.isPending} onClose={() => setCreating(null)}
+          onSave={(body) => createBuyer.mutate(body, {
+            onError: (e) => setFailed(e.message),
+            onSuccess: () => { toast(`Buyer ${body.name} added`); setCreating(null); },
+          })} />
+      )}
+      {creating?.type === "supplier" && (
+        <RecordModal title="Add a supplier" cols={4} schema={SUPPLIER_SCHEMA} value={{ ...EMPTY_SUPPLIER, ...BLANK_SUPPLIER }}
+          saving={createSupplier.isPending} onClose={() => setCreating(null)}
+          onSave={(body) => createSupplier.mutate(
+            { ...body, code: body.code || (body.name || "").slice(0, 2).toUpperCase() },
+            {
+              onError: (e) => setFailed(e.message),
+              onSuccess: () => { toast(`Supplier ${body.name} added`); setCreating(null); },
+            },
+          )} />
+      )}
+      {creating?.type === "transport" && (
+        <RecordModal title="Add a transport" cols={4} schema={TRANSPORT_SCHEMA} value={BLANK_TRANSPORT}
+          saving={createTransport.isPending} onClose={() => setCreating(null)}
+          onSave={(body) => createTransport.mutate(body, {
+            onError: (e) => setFailed(e.message),
+            onSuccess: () => { toast(`Transport ${body.name} added`); setCreating(null); },
+          })} />
+      )}
 
       {editing?.type === "buyer" && (
         <RecordModal title={`Edit buyer · ${editing.value.name}`} cols={4} schema={BUYER_SCHEMA} value={editing.value}

@@ -5,7 +5,7 @@ matter which directory you launch uvicorn from.
 """
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
@@ -28,11 +28,61 @@ class Settings(BaseSettings):
     # Session tokens. Override JWT_SECRET in production — the default is a
     # development convenience only.
     jwt_secret: str = "jaikvin-dev-secret-change-me"
-    jwt_expire_minutes: int = 60 * 12
+    # 24 hours: every session — user and admin — expires a day after sign-in.
+    jwt_expire_minutes: int = 60 * 24
+
+    # Encrypts the readable-back copy of each password (see app/vault.py).
+    # Blank derives one from JWT_SECRET, so an existing deployment needs no
+    # second secret; changing either makes stored copies unreadable.
+    password_vault_key: str = ""
+    # How long a passcode-confirmed "yes, it is really me" lasts before an
+    # admin must confirm again to reveal or change another password.
+    stepup_ttl_minutes: int = 10
+
+    # ---------- Email one-time passcodes ----------
+    # A user verifies their address once, on first sign-in. An admin re-verifies
+    # whenever their last verification is older than `otp_admin_reverify_hours`,
+    # i.e. once per session lifetime.
+    otp_enabled: bool = True
+    otp_length: int = 6
+    otp_ttl_minutes: int = 10          # how long a mailed code stays valid
+    otp_max_attempts: int = 5          # wrong tries before the code is burned
+    otp_resend_seconds: int = 30       # cooldown between "send it again"
+    otp_admin_reverify_hours: int = 24
+    # Development escape hatch: return the code in the API response when no
+    # mailbox is reachable. NEVER enable in production.
+    otp_dev_echo: bool = False
+
+    # ---------- SMTP (Gmail: smtp.gmail.com:587 with an App Password) ----------
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_starttls: bool = True     # 587 → STARTTLS; set false and port 465 for SSL
+    smtp_ssl: bool = False         # implicit TLS (port 465)
+    smtp_from: str = ""            # defaults to smtp_user when blank
+    smtp_from_name: str = "Jaikvin Global Export System"
+    smtp_timeout: int = 20
+
+    # Google shows an App Password as "abcd efgh ijkl mnop" and people paste it
+    # exactly like that. The spaces are presentation only — strip them, rather
+    # than let a correct password fail authentication over four blanks.
+    @field_validator("smtp_password", mode="before")
+    @classmethod
+    def _strip_app_password(cls, v):
+        return "".join(str(v or "").split())
 
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def mail_configured(self) -> bool:
+        return bool(self.smtp_host and (self.smtp_from or self.smtp_user))
+
+    @property
+    def mail_sender(self) -> str:
+        return self.smtp_from or self.smtp_user
 
 
 settings = Settings()

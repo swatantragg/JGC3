@@ -190,11 +190,6 @@ export default function CostingPanel() {
             ))}
           </div>
           <div style={{ marginTop: 12 }}>
-            <Note tone="teal">
-              The <b>carton price</b> is what one box costs to pack, added to every line.{" "}
-              <b>Exchange ₹/$</b> is what turns the landed cost per piece into the{" "}
-              <b>final sell price</b> in step 3.
-            </Note>
           </div>
         </Card>
       </section>
@@ -288,11 +283,6 @@ export default function CostingPanel() {
         <Card>
           <CardHead icon={Calculator} title={`Cost working · ${rows.length} line${rows.length === 1 ? "" : "s"}`}>
             {preview.isFetching && <span style={{ fontSize: 11.5, color: "var(--faint)" }}>working…</span>}
-            <Info>
-              Every figure here comes back from the API, worked out with the same formulas the saved
-              sheet and the download use — so the three can never disagree. Boxes per container default
-              from the item's own volume when you have not set one.
-            </Info>
           </CardHead>
 
           {showFormulas && (

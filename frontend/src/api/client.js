@@ -23,6 +23,24 @@ export function setToken(next) {
   } catch (e) { /* private mode */ }
 }
 
+/* When the stored session token stops being valid, in epoch milliseconds —
+   read straight off the token's own `exp` claim, so the browser and the API
+   agree on the moment without a round trip. Null when there is no token or it
+   carries no expiry. Reading the payload needs no signature check: nothing is
+   trusted from it, it only decides when to show the login screen again. */
+export function tokenExpiresAt() {
+  if (!token) return null;
+  try {
+    const raw = token.split(".")[1];
+    if (!raw) return null;
+    const b64 = raw.replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "=")));
+    return payload.exp ? payload.exp * 1000 : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 export class ApiError extends Error {
   constructor(message, status) {
     super(message);
@@ -30,8 +48,8 @@ export class ApiError extends Error {
   }
 }
 
-async function request(method, path, body) {
-  const headers = {};
+async function request(method, path, body, extraHeaders) {
+  const headers = { ...(extraHeaders || {}) };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (token) headers.Authorization = `Bearer ${token}`;
 
@@ -57,7 +75,11 @@ async function request(method, path, body) {
   return res.json();
 }
 
-export const apiGet = (path) => request("GET", path);
-export const apiPost = (path, body) => request("POST", path, body ?? {});
-export const apiPut = (path, body) => request("PUT", path, body ?? {});
+/* `headers` carries the step-up grant (`X-Step-Up`) on the two calls that read
+   or set a password — see app/deps.py:require_stepup. */
+export const apiGet = (path, headers) => request("GET", path, undefined, headers);
+export const apiPost = (path, body, headers) => request("POST", path, body ?? {}, headers);
+export const apiPut = (path, body, headers) => request("PUT", path, body ?? {}, headers);
 export const apiDelete = (path) => request("DELETE", path);
+
+export const stepUpHeader = (grant) => (grant ? { "X-Step-Up": grant } : undefined);

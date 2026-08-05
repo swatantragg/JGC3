@@ -1,15 +1,23 @@
 /* Typed-ish endpoint helpers, grouped by resource. One place that knows the
    REST shape of the backend; components never build URLs themselves. */
-import { apiGet, apiPost, apiPut, apiDelete } from "./client.js";
+import { apiGet, apiPost, apiPut, apiDelete, stepUpHeader } from "./client.js";
 
 export const auth = {
   status: () => apiGet("/api/auth/status"),
   permissions: () => apiGet("/api/auth/permissions"),
   bootstrap: (b) => apiPost("/api/auth/bootstrap", b),
   register: (b) => apiPost("/api/auth/register", b),
+  // Answers with a session token, or with { otp_required, challenge, … } when
+  // the address still has to be proved by a mailed code.
   login: (b) => apiPost("/api/auth/login", b),
+  verifyOtp: (b) => apiPost("/api/auth/verify-otp", b),
+  resendOtp: (b) => apiPost("/api/auth/resend-otp", b),
   me: () => apiGet("/api/auth/me"),
-  changePassword: (b) => apiPost("/api/auth/change-password", b),
+  // Reading a password back or setting one needs a code answered minutes ago:
+  // start → verify hands back a grant that rides on the two calls below.
+  stepUpStart: () => apiPost("/api/auth/step-up/start"),
+  stepUpVerify: (b) => apiPost("/api/auth/step-up/verify", b),
+  changePassword: (b, grant) => apiPost("/api/auth/change-password", b, stepUpHeader(grant)),
 };
 
 export const users = {
@@ -17,6 +25,9 @@ export const users = {
   create: (b) => apiPost("/api/users", b),
   update: (id, b) => apiPut(`/api/users/${id}`, b),
   remove: (id) => apiDelete(`/api/users/${id}`),
+  password: (id, grant) => apiGet(`/api/users/${id}/password`, stepUpHeader(grant)),
+  setPassword: (id, newPassword, grant) =>
+    apiPut(`/api/users/${id}/password`, { new_password: newPassword }, stepUpHeader(grant)),
 };
 
 export const costing = {
