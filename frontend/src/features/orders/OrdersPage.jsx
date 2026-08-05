@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   Plus, ClipboardList, Truck, Check, ChevronRight, Boxes,
-  Pencil, Trash2, EyeOff,
+  Pencil, Trash2, EyeOff, Monitor,
 } from "lucide-react";
 import {
   Card, CardHead, Btn, Seg, Field, Input, Select, Pill, Mono, DataTable, Modal,
@@ -14,7 +14,8 @@ import {
 import { useToast } from "../../providers/ToastProvider.jsx";
 import { dmy, dmyNum, num, boxesExact, todayISO } from "../../lib/format.js";
 import { downloadGridExcel, downloadGridPDF } from "../../lib/download.js";
-import { hidePriceCols, PRICE_HIDDEN_NOTE } from "../../lib/priceCols.js";
+import { hidePriceCols } from "../../lib/priceCols.js";
+import { useIsMobile } from "../../lib/useIsMobile.js";
 import NewOrderDrawer from "./NewOrderDrawer.jsx";
 
 /* Purchase Orders — everything the buyer has asked for.
@@ -216,6 +217,46 @@ function poSummaryColumns(supCode, brand) {
   ];
 }
 
+/* The PO summary on a phone: the number in bold, who it is for, what is still
+   owed and which factories owe it. What has already been delivered is left to
+   the desktop — on a phone this screen answers "what is outstanding", and the
+   received count and the progress bar only crowd that out. */
+function PoSummaryCards({ rows, supCode, brand, onOpen }) {
+  return (
+    <div className="dt-cards">
+      {rows.map((p) => (
+        <div key={p.po} className="dt-card click" onClick={() => onOpen(p)}>
+          <div className="dt-card-head">
+            <span className="dt-card-title"><span className="mono">{p.po}</span></span>
+            <span className="dt-card-n">{dmyNum(p.date)}</span>
+          </div>
+          <dl className="dt-card-body">
+            <div className="dt-pair"><dt>Buyer</dt><dd className="r">{brand(p.buyer_id)}</dd></div>
+            <div className="dt-pair">
+              <dt>Boxes pending</dt>
+              <dd className="r">
+                <b style={{ color: p.pending ? "var(--amber-ink)" : "var(--green-ink)" }}>{p.pending || "—"}</b>
+              </dd>
+            </div>
+
+            <div className="dt-pair">
+              <dt>Suppliers</dt>
+              <dd className="r">
+                {p.open_suppliers.length
+                  ? <span className="row wrap" style={{ gap: 4, justifyContent: "flex-end" }}>
+                    {p.open_suppliers.map((s) => <Pill key={s}>{supCode(s)}</Pill>)}
+                  </span>
+                  : <Pill tone="green"><Check size={11} /> all delivered</Pill>}
+              </dd>
+            </div>
+            <div className="dt-pair"><dt>Volume m³</dt><dd className="r">{num(p.volume, 3)}</dd></div>
+          </dl>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const PO_SUMMARY_EXPORT = (supCode, brand) => [
   { h: "PO", key: "po", f: (p) => p.po },
   { h: "Date", key: "date", f: (p) => dmyNum(p.date) },
@@ -231,6 +272,7 @@ const PO_SUMMARY_EXPORT = (supCode, brand) => [
 
 /* ============================================================ */
 export default function OrdersPage() {
+  const mobile = useIsMobile();
   const [tab, setTab] = useState("po");
   const [drawer, setDrawer] = useState(false);
   const [selPo, setSelPo] = useState(null);
@@ -330,15 +372,13 @@ export default function OrdersPage() {
         <DownloadPair disabled={!rows.length}
           onExcel={() => downloadGridExcel(`${title.replace(/[^A-Za-z0-9]+/g, "_")}_${todayISO()}`, title, summaryExport, rows, { title, subtitle })}
           onPDF={() => downloadGridPDF(title, summaryExport, rows, { subtitle })} />
-        <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Click a row for item-wise detail</span>
+        {!mobile && <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Click a row for item-wise detail</span>}
       </CardHead>
       {rows.length
-        ? <DataTable serial paginate freeze={5} onRowClick={setSelPo} columns={summaryCols} rows={rows} rowKey={(p) => p.po} maxHeight={560} />
+        ? (mobile
+          ? <PoSummaryCards rows={rows} supCode={supCode} brand={brand} onOpen={setSelPo} />
+          : <DataTable serial paginate freeze={5} onRowClick={setSelPo} columns={summaryCols} rows={rows} rowKey={(p) => p.po} maxHeight={560} />)
         : empty}
-      <div className="card-foot stack-sm">
-        <Note tone="teal">Deliveries recorded under <b>Shipment → Packing</b> flow straight into this table. Boxes always clear the <b>oldest open order first</b> — you never choose which PO gets filled.</Note>
-        <Note tone="teal" icon={EyeOff}>{PRICE_HIDDEN_NOTE}</Note>
-      </div>
     </Card>
   );
 
@@ -347,7 +387,6 @@ export default function OrdersPage() {
       <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
         <div className="page-head" style={{ margin: 0 }}>
           <h2 className="h1">Purchase Orders</h2>
-          <p className="sub">Everything the buyer has asked for. Enter an order once — boxes, volume, labels, sheets and value are derived from the item master, so nothing is typed twice.</p>
         </div>
         <Btn size="lg" icon={Plus} onClick={() => setDrawer(true)}>New buyer order</Btn>
       </div>
@@ -368,11 +407,17 @@ export default function OrdersPage() {
       )}
 
       {/* ---------- Buyers Summary (one row per item, a column per PO) ---------- */}
-      {tab === "itemdetail" && (
+      {tab === "itemdetail" && (mobile ? (
+        <Card>
+          <Empty icon={Monitor} title="Open this on a desktop">
+            Buyers Summary is one row per item with a column for every purchase order — a grid
+            that cannot be made to read on a phone. Everything else on this page works here.
+          </Empty>
+        </Card>
+      ) : (
         <>
           <Card pad>
             <div className="row wrap" style={{ gap: 12, justifyContent: "space-between", alignItems: "center" }}>
-              <Note tone="teal">One row per item, a column per PO holding that PO's ordered pieces — then total pieces, the boxes <b>received</b> and the boxes still <b>pending</b>. This is the buyers' balance sheet, item wise.</Note>
               <DownloadPair disabled={!detail.rows.length}
                 onExcel={() => downloadGridExcel(`Buyers_Summary_${todayISO()}`, "Buyers Summary", buyersExport, detail.rows, { title: "Buyers Summary", subtitle: `Item wise · as on ${todayISO()}` })}
                 onPDF={() => downloadGridPDF("Buyers Summary", buyersExport, detail.rows, { subtitle: `Item wise · as on ${todayISO()}` })} />
@@ -384,35 +429,33 @@ export default function OrdersPage() {
               <DataTable serial freeze={5} maxHeight={520} columns={buyersCols} rows={detail.rows} rowKey={(r) => r.item_id} />
             ) : <Empty icon={Boxes} title="No orders yet">Add a buyer order to see the item-wise summary.</Empty>}
             <div className="card-foot">
-              <Note tone="teal">Received and pending come from the same FIFO ledger the packing screen uses, so this table and the balance register can never disagree.</Note>
             </div>
           </Card>
         </>
-      )}
+      ))}
 
       {/* ---------- Supplier summary — the PO summary, one factory at a time ---------- */}
       {tab === "supplier" && (
         <>
           <Card pad>
             <div className="row wrap" style={{ gap: 14, alignItems: "flex-end" }}>
-              <Field label="Supplier" style={{ minWidth: 280 }}>
+              <Field label="Supplier" style={{ minWidth: "min(280px, 100%)" }}>
                 <Select value={sup} onChange={(e) => setSup(e.target.value)}>
                   <option value="">All suppliers</option>
                   {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}
                 </Select>
               </Field>
               <span className="grow" />
-              <Pill tone="teal">{summaryRows.length} order(s) involving {sup ? supCode(sup) : "any supplier"}</Pill>
+              <Pill tone="teal">
+                {(mobile ? summaryRows.filter((p) => p.pending > 0) : summaryRows).length} order(s)
+                {mobile ? " still owed by " : " involving "}{sup ? supCode(sup) : "any supplier"}
+              </Pill>
             </div>
             <div style={{ marginTop: 12 }}>
-              <Note tone="teal">
-                The same table as the PO summary, narrowed by supplier: <b>pending</b> and <b>received</b>
-                {" "}here count only that factory's lines, so it answers "what does Kiran still owe me, on which order".
-              </Note>
             </div>
           </Card>
           <SummaryCard
-            rows={summaryRows}
+            rows={mobile ? summaryRows.filter((p) => p.pending > 0) : summaryRows}
             title={summaryTitle}
             subtitle={`${sup ? supCode(sup) : "All suppliers"} · as on ${todayISO()}`}
             empty={<Empty icon={Truck} title="Nothing on order for this supplier">Pick another supplier, or enter a buyer order that includes them.</Empty>}
@@ -420,8 +463,7 @@ export default function OrdersPage() {
         </>
       )}
 
-      <FormulaPanel title="How are boxes, labels and value calculated?" rows={formulas}
-        intro="These depend on the order quantity and the day's RBI rate, so they are computed per order — never stored on the item. Barcode stickers follow each item's own rule out of the master workbook." />
+      <FormulaPanel title="How are boxes, labels and value calculated?" rows={formulas} />
 
       {drawer && <NewOrderDrawer onClose={() => setDrawer(false)} />}
       {selPo && selPoLive && <PoModal po={selPoLive} onClose={() => setSelPo(null)} onEdit={() => { setEditPo(selPoLive); setSelPo(null); }} />}

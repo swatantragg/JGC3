@@ -94,7 +94,10 @@ export default function RecordModal({ title, schema, value, onSave, onClose, sav
           <Btn size="sm" icon={Check} disabled={saving} onClick={submit}>{saving ? "Saving…" : "Save"}</Btn>
         </div>
       </>}>
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))`, gap: 12 }}>
+      {/* One field per line on a phone: four columns squeezed into 390px turns
+          "Buyer order no." into a box three characters wide. The class carries
+          the collapse so the inline `span`s below can be ignored with it. */}
+      <div className="rec-grid" style={{ "--rec-cols": cols }}>
         {schema.map((s, i) => s.section ? (
           <div key={`sec-${i}`} style={{ gridColumn: "1 / -1", marginTop: i ? 8 : 0 }}>
             <div className="eyebrow">{s.section}</div>

@@ -13,6 +13,7 @@ import {
   useInvoiceMutations, usePoList,
 } from "../../api/hooks.js";
 import { useToast } from "../../providers/ToastProvider.jsx";
+import { useIsMobile } from "../../lib/useIsMobile.js";
 import { docCtx, poCtx } from "../../lib/docCtx.js";
 import {
   renderDocument, DOC_META, DOC_GROUPS, PREVIEW_CSS, isPoDoc, PO_DOCS,
@@ -41,6 +42,7 @@ const shipComplete = (s) => !!(s && s.blNo && s.vessel && s.container && s.pod);
 /* Editable shipment details above the Pre-Shipment set. Saving writes to the
    invoice, so every document built from it changes with the same click. */
 function PreShipPanel({ inv, onWizard }) {
+  const mobile = useIsMobile();
   const { update } = useInvoiceMutations();
   const toast = useToast();
   const [f, setF] = useState({ ...(inv.ship || {}) });
@@ -68,15 +70,18 @@ function PreShipPanel({ inv, onWizard }) {
           <Btn variant="ghost" size="sm" icon={Truck} onClick={onWizard}>3-step shipment</Btn>
         </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 12 }}>
+      {/* Twelve fields four-across is right on a desktop and unusable at 390px,
+          where "No & kinds of pkgs" gets a box four characters wide. On a phone
+          they run one per line and Save sits full-width under the last of them. */}
+      <div className="ship-fields">
         {F.map(([k, label, type]) => (
           <Field key={k} label={label}>
             <Input className="input-sm" type={type} value={f[k] ?? ""} onChange={(e) => setF((p) => ({ ...p, [k]: e.target.value }))} />
           </Field>
         ))}
       </div>
-      <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
-        <Btn size="sm" icon={Check} disabled={update.isPending}
+      <div className="ship-save">
+        <Btn size={mobile ? "lg" : "sm"} icon={Check} disabled={update.isPending}
           onClick={() => update.mutate({ id: inv.id, body: { ship: f } }, {
             onSuccess: () => toast(`Shipment details saved for ${inv.invoice_no}`),
           })}>
@@ -90,6 +95,7 @@ function PreShipPanel({ inv, onWizard }) {
 export default function DocumentsPage({ group }) {
   const nav = useNavigate();
   const toast = useToast();
+  const mobile = useIsMobile();
   const [params, setParams] = useSearchParams();
 
   const invq = useInvoices();
@@ -157,24 +163,14 @@ export default function DocumentsPage({ group }) {
       <div className="stack">
         <div className="page-head">
           <h2 className="h1">{heading}</h2>
-          <p className="sub">
-            {needPo
-              ? "PO documents are raised from a purchase order — no invoice needed."
-              : "Export documents, generated from a single invoice."}
-          </p>
         </div>
         <Card>
           {needPo ? (
             <Empty icon={ClipboardList} title="No purchase order to build documents from"
-              action={<Btn icon={ArrowRight} onClick={() => nav("/orders")}>Enter a buyer order</Btn>}>
-              These papers read their figures from the buyer's order. Enter one and every PO document
-              fills itself in — nothing here waits on a packing invoice.
-            </Empty>
+              action={<Btn icon={ArrowRight} onClick={() => nav("/orders")}>Enter a buyer order</Btn>} />
           ) : (
             <Empty icon={FileText} title="No invoice to build documents from"
-              action={<Btn icon={ArrowRight} onClick={() => nav("/packing")}>Record packing first</Btn>}>
-              Shipment documents read their figures from an invoice — create one and every paper fills itself in.
-            </Empty>
+              action={<Btn icon={ArrowRight} onClick={() => nav("/packing")}>Record packing first</Btn>} />
           )}
         </Card>
       </div>
@@ -211,20 +207,13 @@ export default function DocumentsPage({ group }) {
     <div className="stack">
       <div className="page-head">
         <h2 className="h1">{heading}</h2>
-        <p className="sub">
-          {groupMeta
-            ? <>{groupMeta.hint} — {total} document{total === 1 ? "" : "s"}, generated live from the {poMode ? "purchase order" : "invoice"} you pick below.</>
-            : <>Every export document, generated live. The PO papers read the purchase order; the rest read the invoice.</>}{" "}
-          The same PO, dates, buyer, BL, container and quantities flow into every one{" "}
-          <Info>Nothing is retyped. Change one figure and every document changes with it — that is the whole point of the system.</Info>{" "}
-          Preview on the right, then download as Excel (formulas intact) or PDF.
-        </p>
+        <p className="sub">{total} document{total === 1 ? "" : "s"}</p>
       </div>
 
       <Card pad>
         <div className="row wrap" style={{ gap: 14, alignItems: "flex-end" }}>
           {poMode ? (
-            <Field label="Build documents from purchase order" style={{ minWidth: 340 }}>
+            <Field label="Build documents from purchase order" style={{ minWidth: "min(340px, 100%)" }}>
               <Select value={po.po} onChange={(e) => setPoNo(e.target.value)}>
                 {pos.map((p) => (
                   <option key={p.po} value={p.po}>
@@ -234,7 +223,7 @@ export default function DocumentsPage({ group }) {
               </Select>
             </Field>
           ) : (
-            <Field label="Build documents from invoice" style={{ minWidth: 340 }}>
+            <Field label="Build documents from invoice" style={{ minWidth: "min(340px, 100%)" }}>
               <Select value={inv.id} onChange={(e) => setInvId(e.target.value)}>
                 {invoices.map((x) => (
                   <option key={x.id} value={x.id}>
@@ -250,7 +239,7 @@ export default function DocumentsPage({ group }) {
               ? <Pill tone="green"><Check size={11} /> shipment details complete</Pill>
               : <Pill tone="amber"><AlertTriangle size={11} /> shipment details pending</Pill>}
           <span className="grow" />
-          <div style={{ minWidth: 240 }}><SearchInput value={q} onChange={setQ} placeholder="Find a document…" /></div>
+          <div style={{ minWidth: "min(240px, 100%)" }}><SearchInput value={q} onChange={setQ} placeholder="Find a document…" /></div>
         </div>
         {!poMode && !done && (
           <div style={{ marginTop: 12 }}>
@@ -289,7 +278,7 @@ export default function DocumentsPage({ group }) {
                   </span>
                 </div>
                 {g.docs.map((no) => (
-                  <button key={no} className={`doc-item${open === no ? " on" : ""}`} onClick={() => setOpen(no)}>
+                  <button key={no} className={`doc-item${!mobile && open === no ? " on" : ""}`} onClick={() => setOpen(no)}>
                     <span className="doc-no">{no}</span>
                     <span className="doc-name">{DOC_META[no]}</span>
                     <span className="icon-btn bare" onClick={(e) => { e.stopPropagation(); grabExcel(no); }} title="Download Excel" style={{ width: 24, height: 24 }}>
@@ -306,6 +295,32 @@ export default function DocumentsPage({ group }) {
           </div>
         </Card>
 
+        {mobile ? (
+          /* No preview on a phone: a document laid out for A4 is unreadable at
+             390px, and what is actually wanted here is the file. The list
+             beside this already downloads each one; this card carries the
+             per-supplier split, which is the only download that lived inside
+             the preview. */
+          split.length > 0 && (
+            <Card style={{ overflow: "hidden" }}>
+              <CardHead icon={Truck} title={<span>Document <Mono>{open}</Mono> · supplier-wise</span>} />
+              <div className="stack-sm" style={{ padding: "12px 14px" }}>
+                {split.map((d) => (
+                  <div key={d.supplierId} className="row wrap" style={{ gap: 8, justifyContent: "space-between" }}>
+                    <span className="row" style={{ gap: 8 }}>
+                      <Pill tone="teal">{d.code}</Pill>
+                      <span style={{ fontSize: 12 }}>{d.name}</span>
+                    </span>
+                    <DownloadPair
+                      onExcel={() => { downloadSupplierDoc(open, ctx, d.supplierId, "excel"); toast(`Document ${open} · ${d.code} — Excel`); }}
+                      onPDF={() => { downloadSupplierDoc(open, ctx, d.supplierId, "pdf"); toast(`Document ${open} · ${d.code} — opening print dialog`); }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )
+        ) : (
         <Card style={{ overflow: "hidden" }}>
           <CardHead icon={FileText} title={<span>Document <Mono>{open}</Mono> · {DOC_META[open]}</span>}>
             <span style={{ fontSize: 11.5, color: "var(--faint)" }}>
@@ -317,8 +332,7 @@ export default function DocumentsPage({ group }) {
             {split.length > 0 && (
               <div style={{ marginBottom: 12 }}>
                 <Note tone="teal" icon={Truck}>
-                  <b>Download this one supplier-wise</b> — a separate file per supplier, not a single
-                  combined sheet. The preview below shows every supplier for reference.
+                  <b>Download supplier-wise</b> — one file per supplier.
                   <div className="stack-sm" style={{ marginTop: 8 }}>
                     {split.map((d) => (
                       <div key={d.supplierId} className="row wrap" style={{ gap: 8, justifyContent: "space-between" }}>
@@ -344,6 +358,7 @@ export default function DocumentsPage({ group }) {
             </div>
           </div>
         </Card>
+        )}
       </div>
 
       <Card pad>
@@ -351,11 +366,7 @@ export default function DocumentsPage({ group }) {
           <div className="row" style={{ gap: 10 }}>
             <span className="stat-i" style={{ width: 30, height: 30 }}><Layers size={15} /></span>
             <div>
-              <div style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>Need the whole set?</div>
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                Every {groupMeta ? `${heading} document` : "document"} in one go — Excel gives you a single
-                workbook with a sheet per document.
-              </div>
+              <div style={{ fontSize: 13, fontWeight: 650, color: "var(--ink)" }}>Download all</div>
             </div>
           </div>
           <DownloadPair size="md" variant="dark"

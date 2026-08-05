@@ -1,9 +1,10 @@
-import { useMemo } from "react";
-import { Boxes, Ship, ClipboardList, Container } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Boxes, Ship, ClipboardList, Container, ChevronRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { Card, CardHead, Pill, Mono, DataTable, Empty, Spinner, ErrorState } from "../../components/ui/index.jsx";
+import { Card, CardHead, Pill, Mono, Select, DataTable, Empty, Spinner, ErrorState } from "../../components/ui/index.jsx";
 import { useDashboardMatrix, useInvoices, useItems, useBuyers } from "../../api/hooks.js";
 import { dmy, num } from "../../lib/format.js";
+import { useIsMobile } from "../../lib/useIsMobile.js";
 import { INV_STATUS_TONE } from "../../lib/constants.js";
 
 /* Dashboard — the client's "Balance Orders, Boxes & Volume" sheet (doc 39),
@@ -11,8 +12,105 @@ import { INV_STATUS_TONE } from "../../lib/constants.js";
    and volume in each cell, a TOTAL row and estimated containers. Below it the
    invoices with their dispatch → ship status. Clicking a PO or an invoice
    jumps straight to it. */
+/* The balance matrix on a phone: suppliers across the top of a wide grid does
+   not survive a 390px screen, so one supplier is chosen at a time and their
+   open POs are listed down the page with the boxes and volume still owed. */
+function BalanceCards({ M, onOpenPo }) {
+  const [sup, setSup] = useState("");           // "" = every supplier
+  const row = M.rows.find((r) => r.supplier.id === sup);
+  const cells = row ? row.cells : M.totals.cells;
+  const totBox = row ? row.totBox : M.totals.totBox;
+  const totVol = row ? row.totVol : M.totals.totVol;
+  const open = M.pos.filter((po) => (cells[po]?.boxes || 0) > 0 || (cells[po]?.vol || 0) > 0);
+
+  return (
+    <>
+      <div className="mob-tabs">
+        <button className={sup === "" ? "on" : ""} onClick={() => setSup("")}>All suppliers</button>
+        {M.rows.map((r) => (
+          <button key={r.supplier.id} className={sup === r.supplier.id ? "on" : ""}
+            onClick={() => setSup(r.supplier.id)}>{r.supplier.code}</button>
+        ))}
+      </div>
+
+      <div className="dt-cards">
+        {open.length ? open.map((po) => (
+          <div key={po} className="dt-card click" onClick={onOpenPo}>
+            <div className="dt-card-head">
+              <span className="dt-card-title">PO {po}</span>
+              <span className="dt-card-n">{dmy(M.po_date[po])}</span>
+            </div>
+            <dl className="dt-card-body">
+              <div className="dt-pair"><dt>Boxes pending</dt><dd className="r"><b>{cells[po].boxes || "—"}</b></dd></div>
+              <div className="dt-pair"><dt>Volume m³</dt><dd className="r">{cells[po].vol ? num(cells[po].vol, 2) : "—"}</dd></div>
+              {!sup && (
+                <div className="dt-pair">
+                  <dt>Suppliers</dt>
+                  <dd className="r">
+                    <span className="row wrap" style={{ gap: 4, justifyContent: "flex-end" }}>
+                      {M.rows.filter((r) => (r.cells[po]?.boxes || 0) > 0).map((r) => (
+                        <Pill key={r.supplier.id}>{r.supplier.code}</Pill>
+                      ))}
+                    </span>
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </div>
+        )) : <div className="dt-empty">Nothing pending {sup ? "from this supplier" : "on any order"}.</div>}
+
+        {open.length > 0 && (
+          <div className="dt-card dt-card-total">
+            <div className="dt-card-head">
+              <span className="dt-card-title">
+                {row ? `${row.supplier.code} · total` : "All suppliers · total"}
+              </span>
+            </div>
+            <dl className="dt-card-body">
+              <div className="dt-pair"><dt>Boxes pending</dt><dd className="r"><b>{totBox}</b></dd></div>
+              <div className="dt-pair"><dt>Volume m³</dt><dd className="r">{num(totVol, 2)}</dd></div>
+              <div className="dt-pair"><dt>Containers</dt><dd className="r">{totVol > 0 ? (totVol / M.cntr_vol).toFixed(2) : "—"}</dd></div>
+            </dl>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/* Invoices on a phone: date, buyer, volume, container and status per card. */
+function InvoiceCards({ rows, brand, onOpen }) {
+  return (
+    <div className="dt-cards">
+      {rows.map(({ inv, boxes, volume }) => (
+        <div key={inv.id} className="dt-card click" onClick={onOpen}>
+          <div className="dt-card-head">
+            <span className="dt-card-title"><Mono>{inv.invoice_no}</Mono></span>
+            <ChevronRight size={15} style={{ color: "var(--faint)", flexShrink: 0 }} />
+          </div>
+          <dl className="dt-card-body">
+            <div className="dt-pair"><dt>Date</dt><dd className="r">{dmy(inv.date)}</dd></div>
+            <div className="dt-pair"><dt>Buyer</dt><dd className="r">{brand(inv.buyer_id)}</dd></div>
+            <div className="dt-pair"><dt>Boxes</dt><dd className="r"><b>{boxes}</b></dd></div>
+            <div className="dt-pair"><dt>Volume m³</dt><dd className="r">{num(volume, 3)}</dd></div>
+            <div className="dt-pair">
+              <dt>Container</dt>
+              <dd className="r">{inv.ship?.container ? <Mono>{inv.ship.container}</Mono> : "—"}</dd>
+            </div>
+            <div className="dt-pair">
+              <dt>Status</dt>
+              <dd className="r"><Pill tone={INV_STATUS_TONE[inv.status] || ""}>{inv.status}</Pill></dd>
+            </div>
+          </dl>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const nav = useNavigate();
+  const mobile = useIsMobile();
   const mq = useDashboardMatrix();
   const invq = useInvoices();
   const items = useItems().data || [];
@@ -42,14 +140,15 @@ export default function DashboardPage() {
     <div className="stack">
       <div className="page-head">
         <h2 className="h1">Dashboard</h2>
-        <p className="sub">Balance orders — boxes &amp; volume still owed, supplier by supplier, across every open purchase order. Click a PO to open it, or an invoice below to open the shipment.</p>
       </div>
 
       <Card>
         <CardHead icon={Boxes} title="Balance orders · boxes & volume">
-          <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Pending only · click a PO header to open it</span>
+          {!mobile && <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Pending only · click a PO header to open it</span>}
         </CardHead>
-        {M.rows.length ? (
+        {M.rows.length ? (mobile ? (
+          <BalanceCards M={M} onOpenPo={() => nav("/orders")} />
+        ) : (
           <div className="tbl-wrap">
             <table className="matrix">
               <thead>
@@ -101,7 +200,7 @@ export default function DashboardPage() {
               </tfoot>
             </table>
           </div>
-        ) : (
+        )) : (
           <Empty icon={Boxes} title="Every order is filled">No boxes are pending across any purchase order.</Empty>
         )}
         <div className="card-foot">
@@ -115,9 +214,11 @@ export default function DashboardPage() {
 
       <Card>
         <CardHead icon={Ship} title={`${invoices.length} invoice${invoices.length === 1 ? "" : "s"} · dispatch status`}>
-          <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Click a row to open the shipment</span>
+          {!mobile && <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Click a row to open the shipment</span>}
         </CardHead>
-        {invoices.length ? (
+        {invoices.length ? (mobile ? (
+          <InvoiceCards rows={invRows} brand={brand} onOpen={() => nav("/shipments")} />
+        ) : (
           <DataTable serial
             freeze={5}
             columns={[
@@ -132,7 +233,7 @@ export default function DashboardPage() {
             rows={invRows} rowKey={(r) => r.inv.id}
             onRowClick={() => nav("/shipments")}
           />
-        ) : <Empty icon={Ship} title="No invoices yet">Record packing to create the first invoice.</Empty>}
+        )) : <Empty icon={Ship} title="No invoices yet">Record packing to create the first invoice.</Empty>}
       </Card>
     </div>
   );

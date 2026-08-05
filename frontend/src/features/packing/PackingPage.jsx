@@ -88,11 +88,6 @@ export default function PackingPage() {
       <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
         <div className="page-head" style={{ margin: 0 }}>
           <h2 className="h1">Shipment</h2>
-          <p className="sub">
-            Record the boxes each supplier delivers. They automatically clear the <b>oldest open order first</b>,{" "}
-            <Info>Known in the trade as FIFO — first in, first out. You never choose which purchase order a box belongs to; the system always fills the oldest one, so nothing ages silently.</Info>{" "}
-            and the balance register updates everywhere at once.
-          </p>
         </div>
         <Btn size="lg" icon={Plus} onClick={() => setDrawer(true)}>Record packing</Btn>
       </div>

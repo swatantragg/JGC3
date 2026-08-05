@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  Anchor, Sun, Moon, LogOut, Search, ChevronDown, CornerDownLeft, FileText,
+  Anchor, Sun, Moon, LogOut, Search, ChevronDown, CornerDownLeft, FileText, Menu, X,
 } from "lucide-react";
 import { IconBtn } from "../ui/index.jsx";
 import { useAuth } from "../../auth/AuthProvider.jsx";
@@ -102,6 +102,18 @@ export default function AppShell() {
     return () => window.removeEventListener("keydown", h);
   }, []);
 
+  /* On a phone the tab bar cannot hold nine sections, so it becomes a sheet
+     that drops from the header. It closes on every navigation — leaving it
+     open over the page it just opened is the classic way to lose people. */
+  const [drawer, setDrawer] = useState(false);
+  useEffect(() => setDrawer(false), [pathname]);
+  useEffect(() => {
+    if (!drawer) return undefined;
+    const h = (e) => e.key === "Escape" && setDrawer(false);
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [drawer]);
+
   const [crumb, title] = ROUTE_TITLES[pathname] || ["", "Jaikvin Global"];
 
   // A dropdown keeps only the entries this user can reach, and disappears
@@ -152,6 +164,11 @@ export default function AppShell() {
     <div className="app">
       <header className="topnav">
         <div className="topnav-inner">
+          <button className="nav-burger" onClick={() => setDrawer((d) => !d)}
+            aria-label={drawer ? "Close menu" : "Open menu"} aria-expanded={drawer}>
+            {drawer ? <X size={20} /> : <Menu size={20} />}
+          </button>
+
           <div className="brand">
             <div className="brand-mark"><Anchor size={19} color="#0b2c4d" strokeWidth={2.6} /></div>
             <div>
@@ -178,6 +195,34 @@ export default function AppShell() {
             </div>
           </div>
         </div>
+
+        {/* The same menu, flattened: on a phone a hover dropdown has nothing to
+            hover, so every sub-page is listed under its section heading. */}
+        {drawer && (
+          <>
+            <div className="nav-sheet-veil" onClick={() => setDrawer(false)} />
+            <nav className="nav-sheet">
+              {[...menu, ...((has(SETUP.perm) || isAdmin) ? [SETUP] : [])].map((n) => (
+                <div key={n.id} className="ns-group">
+                  <button className={`ns-item${isActive(n) ? " on" : ""}`}
+                    onClick={() => nav(n.children ? n.children[0].to : n.to)}>
+                    <n.icon size={17} strokeWidth={2.1} />
+                    <span className="grow">{n.label}</span>
+                    {badgeOf(n) > 0 && <span className="nav-count">{badgeOf(n)}</span>}
+                  </button>
+                  {n.children && n.children.map((c) => (
+                    <button key={c.id} className={`ns-item ns-sub${pathname === c.to ? " on" : ""}`}
+                      onClick={() => nav(c.to)}>
+                      <c.icon size={15} strokeWidth={2.1} />
+                      <span className="grow">{c.label}</span>
+                      {badges[c.id] > 0 && <span className="nav-count">{badges[c.id]}</span>}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </nav>
+          </>
+        )}
       </header>
 
       <div className="main">
@@ -201,8 +246,8 @@ export default function AppShell() {
         </div>
 
         <footer className="footer">
-          <span>Maintained and Developed By <b style={{ color: "var(--ink)" }}>Avita Technology</b></span>
-          <span className="mono">V-4.0</span>
+          <span>Maintained and Developed By <b style={{ color: "var(--ink)" }}>Avita Technologies</b></span>
+          <span className="mono">V-5.4</span>
         </footer>
       </div>
 

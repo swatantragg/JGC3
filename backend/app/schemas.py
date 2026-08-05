@@ -18,6 +18,14 @@ class UserOut(ORMModel):
     access: list[str] = []
     created_at: Optional[datetime] = None
     last_login: Optional[datetime] = None
+    # True once the person has typed a mailed passcode at least once.
+    email_verified: bool = False
+    email_verified_at: Optional[datetime] = None
+
+    @field_validator("email_verified", mode="before")
+    @classmethod
+    def _none_is_false(cls, v):
+        return bool(v)
 
 
 class LoginRequest(BaseModel):
@@ -28,13 +36,60 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     token: str
     user: UserOut
+    # Present so one response shape covers both halves of the sign-in.
+    otp_required: bool = False
 
 
+class OtpChallenge(BaseModel):
+    """Returned instead of a session when a passcode must be typed first."""
+    otp_required: bool = True
+    challenge: str            # short-lived ticket naming the waiting account
+    email: str                # masked, e.g. pr•••a@jaikvinglobal.com
+    reason: str               # user_first_login | admin_session_renewal
+    expires_in: int           # seconds the code stays valid
+    resend_in: int            # seconds before "send it again" is allowed
+    delivered: bool = True    # False when SMTP is unset (code is in the log)
+    dev_code: Optional[str] = None  # only when OTP_DEV_ECHO=true
+
+
+class OtpVerifyRequest(BaseModel):
+    challenge: str
+    code: str
+
+
+class OtpResendRequest(BaseModel):
+    challenge: str
+
+
+class StepUpGrant(BaseModel):
+    """Proof an admin just answered a code — sent back on `X-Step-Up`."""
+    grant: str
+    expires_in: int
+
+
+class RevealedPassword(BaseModel):
+    """What an admin sees after confirming a code."""
+    user_id: str
+    email: str
+    password: Optional[str] = None
+    # False for accounts whose password was set before the readable-back copy
+    # existed, or after the vault key changed — the only cure is a new one.
+    recoverable: bool = True
+
+
+class PasswordSet(BaseModel):
+    """An admin setting somebody's password (their own included)."""
+    new_password: str
+
+
+# Passwords are not length-checked here: `app.passwords.check_password` runs in
+# every route that takes one and answers with a single readable 400 listing all
+# the broken rules, which a pydantic `min_length` would pre-empt with a 422.
 class RegisterRequest(BaseModel):
     """Self sign-up. The account is created pending until an admin approves."""
     name: str
     email: str
-    password: str = Field(min_length=8)
+    password: str
 
 
 class BootstrapRequest(RegisterRequest):
@@ -44,7 +99,7 @@ class BootstrapRequest(RegisterRequest):
 class UserCreate(BaseModel):
     name: str
     email: str
-    password: str = Field(min_length=8)
+    password: str
     role: str = "user"
     status: str = "active"
     access: list[str] = []
@@ -53,7 +108,7 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
-    password: Optional[str] = Field(default=None, min_length=8)
+    password: Optional[str] = None
     role: Optional[str] = None
     status: Optional[str] = None
     access: Optional[list[str]] = None
@@ -61,7 +116,7 @@ class UserUpdate(BaseModel):
 
 class PasswordChange(BaseModel):
     current_password: str
-    new_password: str = Field(min_length=8)
+    new_password: str
 
 
 # ---------- Supplier ----------

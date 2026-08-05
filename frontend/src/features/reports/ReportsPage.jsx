@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { BarChart3, ClipboardList, Layers, Truck, Boxes, Check, Calculator, EyeOff } from "lucide-react";
+import { BarChart3, ClipboardList, Layers, Truck, Boxes, Check, Calculator } from "lucide-react";
 import {
   Card, CardHead, Btn, Seg, Pill, Mono, DataTable, Input, Note, Info, Empty, Stat,
   Spinner, ErrorState, DownloadPair,
@@ -8,7 +8,7 @@ import { useAuth } from "../../auth/AuthProvider.jsx";
 import { useBalance, useSuppliers, useBuyers } from "../../api/hooks.js";
 import { dmy, dmyNum, num, todayISO } from "../../lib/format.js";
 import { downloadGridExcel, downloadGridPDF } from "../../lib/download.js";
-import { hidePriceCols, PRICE_HIDDEN_NOTE } from "../../lib/priceCols.js";
+import { hidePriceCols } from "../../lib/priceCols.js";
 import CostingPanel from "../costing/CostingPanel.jsx";
 import SupplyDetailsPanel from "./SupplyDetailsPanel.jsx";
 
@@ -91,23 +91,6 @@ export default function ReportsPage() {
       <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
         <div className="page-head" style={{ margin: 0 }}>
           <h2 className="h1">Other Reports</h2>
-          <p className="sub">
-            {tab === "costing" ? (
-              <>The Cost Working sheet, live. Type a new price against an item and the landed cost and the
-              final sell price are worked out with the exact formulas from the Excel — this is the
-              go / no-go sheet before production.</>
-            ) : tab === "item" ? (
-              <>Supply details, item wise and supplier wise — the client's sheet 38, reproduced column
-              for column. What is still owed, order by order; or what has actually been delivered,
-              invoice by invoice.</>
-            ) : (
-              <>
-                The balance register, rebuilt from scratch every time you open it.{" "}
-                <Info>Nothing is stored. It is recomputed from the orders and the packing invoices, so it can never drift out of sync with reality.</Info>{" "}
-                Which order is short, and what cleared the rest of it.
-              </>
-            )}
-          </p>
         </div>
         {tab === "po" && (
           <DownloadPair size="md" disabled={!cfg.rows.length}
@@ -144,10 +127,6 @@ export default function ReportsPage() {
                     {cfg.rows.length
                       ? <DataTable serial columns={cfg.cols} rows={cfg.rows} rowKey={cfg.key} freeze={5} maxHeight={520} />
                       : <Empty icon={BarChart3} title="Nothing to report yet">Record a packing invoice and the balance register fills in.</Empty>}
-                    <div className="card-foot stack-sm">
-                      <Note tone="teal">{cfg.foot}</Note>
-                      <Note tone="teal" icon={EyeOff}>{PRICE_HIDDEN_NOTE}</Note>
-                    </div>
                   </Card>
                 </>
               )}

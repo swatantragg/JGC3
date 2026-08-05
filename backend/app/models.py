@@ -22,17 +22,37 @@ def new_id() -> str:
 class User(Base):
     """An account. `role` is "admin" (everything, plus user management) or
     "user" (only the leaf permissions ticked in `access`). New sign-ups land
-    as status="pending" until an admin approves them."""
+    as status="pending" until an admin approves them.
+
+    Email verification: a user proves the address once — a one-time passcode
+    on their very first sign-in — and `email_verified` stays true from then on,
+    so every later sign-in is just email + password. An admin re-proves it once
+    per session lifetime: `otp_verified_at` records the last passcode they
+    passed, and a sign-in more than OTP_ADMIN_REVERIFY_HOURS later asks again.
+    The pending challenge itself lives in `otp_*` and is cleared once used.
+    """
     __tablename__ = "users"
     id = Column(String, primary_key=True, default=new_id)
     email = Column(String, nullable=False, unique=True, index=True)
     password_hash = Column(String, nullable=False)
+    # A second, reversible copy of the same password, so an admin can read one
+    # back after confirming a passcode. Sign-in never looks at it — see
+    # app/vault.py for what this costs and why it is here.
+    password_enc = Column(String, nullable=True)
     name = Column(String, nullable=False)
     role = Column(String, nullable=False, default="user")     # admin | user
     status = Column(String, nullable=False, default="pending")  # pending | active | disabled
     access = Column(JSON, nullable=False, default=list)        # ["orders.entry", ...]
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
+    # Email verification / one-time passcode state
+    email_verified = Column(Boolean, nullable=False, default=False)
+    email_verified_at = Column(DateTime, nullable=True)
+    otp_verified_at = Column(DateTime, nullable=True)   # last passcode passed
+    otp_hash = Column(String, nullable=True)            # HMAC of the live code
+    otp_expires_at = Column(DateTime, nullable=True)
+    otp_sent_at = Column(DateTime, nullable=True)       # for the resend cooldown
+    otp_attempts = Column(Integer, nullable=False, default=0)
 
 
 class Supplier(Base):

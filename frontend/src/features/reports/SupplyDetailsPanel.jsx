@@ -109,7 +109,7 @@ export default function SupplyDetailsPanel() {
       <Card pad>
         <div className="row wrap" style={{ gap: 14, alignItems: "flex-end" }}>
           <Seg options={[["po", "PO", ClipboardList], ["invoice", "Invoice", FileText]]} value={mode} onChange={setMode} />
-          <Field label="Supplier" style={{ minWidth: 250 }}>
+          <Field label="Supplier" style={{ minWidth: "min(250px, 100%)" }}>
             <Select value={sup} onChange={(e) => setSup(e.target.value)}>
               <option value="">All suppliers</option>
               {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}
@@ -124,21 +124,6 @@ export default function SupplyDetailsPanel() {
           <DownloadPair disabled={!rows.length}
             onExcel={() => downloadGridExcel(fileStem, `${label} wise`, exportCols, rows, { title, subtitle })}
             onPDF={() => downloadGridPDF(title, exportCols, rows, { subtitle })} />
-        </div>
-        <div style={{ marginTop: 12 }}>
-          <Note tone="teal">
-            {mode === "po" ? (
-              ranged
-                ? <>Every purchase order raised between these dates — the cleared ones included — at the quantity ordered. Each column is a PO with the day it was raised beneath it.</>
-                : <>The orders still short, and the pieces still owed on each. <Info>With no date range this is the live pending book. Set a range to read back the history instead, cleared orders and all.</Info> Each column is a PO with the day it was raised beneath it.</>
-            ) : (
-              ranged
-                ? <>Every packing invoice raised between these dates, and the pieces delivered on each.</>
-                : <>Every packing invoice, and the pieces delivered on each. Set a date range to narrow it.</>
-            )}{" "}
-            <b>Boxes</b> is total pieces ÷ pieces per box, left undivided — 0.71 means the quantity is
-            under a full carton. The Excel download keeps that as a live formula.
-          </Note>
         </div>
       </Card>
 

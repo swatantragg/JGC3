@@ -31,6 +31,9 @@ BACKFILL = {
         "uom": "'PCS'",
         "source_sheet": "''",
     },
+    # Accounts that pre-date email verification start out unverified — their
+    # owner proves the address on the next sign-in, exactly like a new user.
+    "users": {"email_verified": "false", "otp_attempts": "0"},
     "suppliers": {"addr": "''", "pin": "''", "state": "''", "your_reference": "''"},
     "buyers": {"our_reference": "''"},
     "transports": {"supplier_ids": None},   # JSON — leave NULL, read as []

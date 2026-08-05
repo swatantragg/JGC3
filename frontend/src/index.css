@@ -723,7 +723,12 @@ textarea {
   display: inline-flex;
   align-items: center;
 }
+/* `display: none` when idle, not merely transparent: an absolutely positioned
+   box still counts towards the page's scrollable width even at opacity 0, and
+   a 248px bubble hanging off a help icon near the right edge was quietly
+   making the whole document wider than the window. */
 .tip > .tip-body {
+  display: none;
   position: absolute;
   bottom: calc(100% + 8px);
   left: 50%;
@@ -735,20 +740,32 @@ textarea {
   font-size: 12.5px;
   line-height: 1.45;
   width: 248px;
+  max-width: calc(100vw - 24px);
   z-index: 70;
   box-shadow: var(--shadow-2);
-  opacity: 0;
   pointer-events: none;
-  transition: opacity 0.12s ease;
   font-weight: 400;
   text-align: left;
+}
+/* Which way it opens is decided when it is opened (see `Info`), so a tip
+   beside the right-hand edge grows inwards instead of off the screen. */
+.tip-start > .tip-body {
+  left: 0;
+  transform: none;
+}
+.tip-end > .tip-body {
+  left: auto;
+  right: 0;
+  transform: none;
 }
 [data-theme="dark"] .tip > .tip-body {
   background: var(--surface-3);
   border: 1px solid var(--border-2);
 }
-.tip:hover > .tip-body {
-  opacity: 1;
+.tip:hover > .tip-body,
+.tip:focus-within > .tip-body {
+  display: block;
+  animation: fade 0.12s ease;
 }
 .tip-trigger {
   border: none;
@@ -1217,12 +1234,22 @@ textarea {
   transform-origin: center center;
   animation: pop 0.16s ease;
 }
+/* A question with a short answer — a confirmation — reads as one column, not
+   as three-quarters of the screen with the buttons a hand-span apart. */
+.modal-sm {
+  width: 440px;
+  max-width: 92vw;
+  max-height: 74vh;
+}
 @media (max-width: 1100px) {
   .modal,
   .drawer {
     width: 78vw;
     max-height: 72vh;
     transform: scale(1.1);
+  }
+  .modal-sm {
+    width: 430px;
   }
 }
 @media (max-width: 720px) {
@@ -1231,6 +1258,10 @@ textarea {
     width: 94vw;
     max-height: 84vh;
     transform: none;
+  }
+  .modal-sm {
+    width: 94vw;
+    max-height: 86vh;
   }
 }
 @keyframes pop {
@@ -1522,6 +1553,12 @@ textarea {
   display: grid;
   gap: 18px;
   grid-template-columns: 310px minmax(0, 1fr);
+}
+/* Setup → Users needs a wider left column than the standard split: an account
+   is a name, a role, an address and three buttons, and 430px makes the address
+   break mid-word. */
+.split.split-users {
+  grid-template-columns: 520px minmax(0, 1fr);
 }
 
 /* ============================================================
@@ -1905,6 +1942,7 @@ textarea {
 
 @media (max-width: 1180px) {
   .split,
+  .split.split-users,
   .split-docs {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1944,6 +1982,248 @@ textarea {
   .subbar-inner,
   .topnav-inner {
     padding: 0 14px;
+  }
+}
+
+/* ============================================================
+   Phones and small tablets.
+
+   The tab bar is the one thing that cannot simply be squeezed: nine sections,
+   several with sub-pages, will not fit a hand-held screen at any font size,
+   and a dropdown that opens on hover has nothing to hover. Below 900px the
+   bar is therefore replaced by a burger and a sheet that lists every section
+   with its sub-pages spelled out. Everything else is the same layout, given
+   room to wrap.
+   ============================================================ */
+.nav-burger {
+  display: none;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  place-items: center;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  cursor: pointer;
+}
+.nav-burger:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.nav-sheet-veil {
+  position: fixed;
+  inset: 64px 0 0;
+  background: rgba(8, 22, 36, 0.45);
+  z-index: 44;
+  animation: fade 0.14s ease;
+}
+.nav-sheet {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 45;
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px;
+  background: var(--nav-bg);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 16px 30px rgba(8, 22, 36, 0.35);
+  animation: sheet 0.16s ease;
+}
+@keyframes sheet {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+.ns-group + .ns-group {
+  margin-top: 2px;
+  padding-top: 2px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+.ns-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: #d7e3ee;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.ns-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+.ns-item.on {
+  background: rgba(255, 255, 255, 0.13);
+  color: #fff;
+}
+.ns-item.on > svg {
+  color: var(--amber);
+}
+.ns-sub {
+  padding-left: 30px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #9fb4c6;
+}
+
+@media (max-width: 900px) {
+  .nav-burger {
+    display: grid;
+  }
+  .nav {
+    display: none;
+  }
+  .topnav-inner {
+    gap: 10px;
+    justify-content: space-between;
+  }
+  .brand > div:last-child {
+    display: block; /* the burger freed the room the wordmark needed */
+  }
+  /* The subbar sticks under a header that is still 64px tall — unchanged. */
+  .subbar-inner {
+    height: auto;
+    min-height: 58px;
+    padding-top: 9px;
+    padding-bottom: 9px;
+    flex-wrap: wrap;
+  }
+  .searchbtn {
+    min-width: 0;
+    flex: 1 1 100%;
+    order: 3;
+  }
+  .searchbtn span:not(.kbd) {
+    display: inline;
+  }
+  .kbd {
+    display: none;
+  }
+  .card-head,
+  .card-foot {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 640px) {
+  .topnav-inner {
+    height: 56px;
+    gap: 8px;
+  }
+  .nav-sheet-veil {
+    inset: 56px 0 0;
+  }
+  .nav-sheet {
+    max-height: calc(100vh - 56px);
+  }
+  .subbar {
+    top: 56px;
+  }
+  .brand-name {
+    font-size: 14px;
+  }
+  .brand-sub {
+    display: none;
+  }
+  .uc-txt {
+    display: none; /* the initials still say who is signed in */
+  }
+  .user-chip {
+    padding: 3px;
+    gap: 4px;
+  }
+  .subbar h1 {
+    font-size: 16px;
+  }
+  .h1 {
+    font-size: 22px;
+  }
+  .sub {
+    font-size: 13.5px;
+  }
+  .page {
+    padding: 16px 12px 36px;
+  }
+  .subbar-inner,
+  .topnav-inner {
+    padding: 0 12px;
+  }
+  .stack {
+    gap: 14px;
+  }
+  .split,
+  .split-docs {
+    gap: 14px;
+  }
+  .card-pad,
+  .card-head,
+  .card-foot {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .footer {
+    padding: 14px;
+    font-size: 12px;
+  }
+  /* A row of actions is the usual thing to overflow a phone — let them wrap
+     instead of pushing the card sideways. */
+  .row {
+    flex-wrap: wrap;
+  }
+  .row.nowrap {
+    flex-wrap: nowrap;
+  }
+  .btn {
+    font-size: 13px;
+  }
+  .modal-head,
+  .modal-body,
+  .modal-foot {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .modal-foot {
+    justify-content: stretch;
+  }
+  .modal-foot > .row {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .backdrop,
+  .drawer-backdrop {
+    padding: 12px;
+  }
+  .rail-step {
+    flex: 1 1 100%;
+  }
+}
+
+/* Nothing may push the document sideways: a wide table scrolls inside its own
+   .tbl-wrap, and a long unbroken word breaks rather than stretching its card.
+   Deliberately NOT `overflow-x: hidden` on html/body — that turns the body
+   into the scroll container and the sticky header and subbar stop sticking. */
+.page,
+.card,
+.note {
+  min-width: 0;
+}
+@media (max-width: 640px) {
+  .note,
+  .sub,
+  .cb-foot,
+  .card-title {
+    overflow-wrap: anywhere;
   }
 }
 
@@ -2207,4 +2487,447 @@ textarea {
 .pw-eye:hover {
   background: var(--surface-2);
   color: var(--muted);
+}
+
+/* The password rule, ticking off as it is met. Two columns so six short rules
+   never push the button below the fold. */
+.pw-rules {
+  display: grid;
+  /* Two columns, never more: strung across a wide card in one line the rules
+     read as a toolbar rather than a checklist. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 14px;
+  margin: 7px 0 0;
+  padding: 0;
+  list-style: none;
+}
+@media (max-width: 560px) {
+  .pw-rules {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.pw-rules li {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--faint);
+  transition: color 0.15s ease;
+}
+.pw-rules li svg {
+  flex-shrink: 0;
+  opacity: 0.55;
+}
+.pw-rules li.ok {
+  color: var(--green, #16a34a);
+}
+.pw-rules li.ok svg {
+  opacity: 1;
+}
+
+/* ============================================================
+   Setup → Users: one account per row.
+
+   Two blocks that each keep their own shape — the identity grows and wraps,
+   the buttons never shrink — and drop under one another rather than colliding
+   once the card is too narrow to hold both. Addresses are the long part, so
+   they are the one thing allowed to break mid-word.
+   ============================================================ */
+.user-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 12px 16px;
+}
+/* The identity doubles as the way in to the account, so it is a button — but
+   it has to keep looking like the text it replaced. */
+.ur-main {
+  /* Small enough a basis that the identity and the buttons share one line in
+     the column, and the identity wraps inside itself instead. */
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 4px 6px;
+  margin: -4px -6px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ur-main:hover {
+  background: var(--surface-2);
+}
+.ur-main:hover .ur-name {
+  color: var(--teal-ink);
+}
+.ur-main:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
+}
+.ur-top,
+.ur-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.ur-sub {
+  margin-top: 4px;
+}
+.ur-name {
+  color: var(--ink);
+  font-weight: 650;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+.ur-sub .mono {
+  font-size: 11.5px;
+  color: var(--faint);
+  overflow-wrap: anywhere;
+}
+.ur-note {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.ur-acts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+/* Once the buttons have a line of their own they belong under the name they
+   act on, not floated away to the right of it. */
+@media (max-width: 640px) {
+  .user-row {
+    padding: 12px 14px;
+  }
+  .ur-acts {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* An account named inside a confirmation — initial, name, address. */
+.ident {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface-2);
+  min-width: 0;
+}
+.ident-ava {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--brand, #0b2c4d);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 750;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.ident-txt {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ident-txt b {
+  color: var(--ink);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.ident-txt .mono {
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* The "here is exactly what you are granting" panel. */
+.confirm-block {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.cb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--ink-2);
+}
+.cb-list {
+  margin: 0;
+  padding: 10px 14px;
+  list-style: none;
+  display: grid;
+  gap: 5px;
+}
+.cb-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.cb-list li svg {
+  color: var(--green);
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.cb-foot {
+  padding: 9px 14px;
+  border-top: 1px dashed var(--border);
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+/* The create/edit form's field grid. Its column count comes from the caller
+   as --rec-cols; a phone ignores that and stacks. */
+.rec-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--rec-cols, 3), minmax(0, 1fr));
+  gap: 12px;
+}
+@media (max-width: 760px) {
+  .rec-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rec-grid > .field {
+    grid-column: span 1 !important;
+  }
+}
+
+/* Shipment details, edited in place on the Pre-Shipment page. */
+.ship-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.ship-save {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+@media (max-width: 760px) {
+  .ship-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ship-save .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Save, within reach of the last field it saves. The modal footer keeps its
+   own Save for the desktop; on a phone the footer sits above the keyboard and
+   is easy to miss after scrolling a long form. */
+.wiz-save {
+  display: flex;
+  padding-top: 4px;
+}
+.wiz-save .btn {
+  width: 100%;
+  justify-content: center;
+}
+
+/* A scrolling strip of sub-tabs — the phone's answer to a column per supplier.
+   It scrolls sideways on purpose; the cards below never do. */
+.mob-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 12px 14px 0;
+}
+.mob-tabs::-webkit-scrollbar {
+  display: none;
+}
+.mob-tabs button {
+  flex: 0 0 auto;
+  padding: 7px 13px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.mob-tabs button.on {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+/* ============================================================
+   Tables as cards — phones only (DataTable renders this instead).
+
+   One card per row: the leading column becomes the heading, every other
+   column a label/value pair. Values sit on the right of their label so a
+   column of figures still reads as a column down the card.
+   ============================================================ */
+.dt-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+}
+.dt-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  overflow: hidden;
+}
+.dt-card.click {
+  cursor: pointer;
+}
+.dt-card.click:active {
+  border-color: var(--teal);
+  background: var(--surface-2);
+}
+.dt-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.dt-card-title {
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.dt-card-n {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+.dt-card-body {
+  margin: 0;
+  padding: 4px 12px 10px;
+}
+.dt-pair {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--border);
+  min-width: 0;
+}
+.dt-pair:last-child {
+  border-bottom: 0;
+}
+.dt-pair dt {
+  flex: 0 1 auto;
+  font-size: 11.5px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.dt-pair dd {
+  flex: 1 1 auto;
+  margin: 0;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--ink);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+/* A pair whose value needs the whole width — a progress bar, a long note. */
+.dt-pair-wide {
+  display: block;
+}
+.dt-pair-wide dt {
+  margin-bottom: 5px;
+}
+.dt-pair-wide dd {
+  text-align: left;
+}
+.dt-card-total {
+  border-color: var(--brand);
+}
+.dt-card-total .dt-card-head {
+  background: var(--brand);
+}
+.dt-card-total .dt-card-title {
+  color: #fff;
+}
+.dt-empty {
+  padding: 30px 12px;
+  text-align: center;
+  color: var(--faint);
+  font-size: 13px;
+}
+
+/* One account, read out field by field. */
+.ud-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 12px 14px;
+}
+.ud-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  min-width: 0;
+  padding: 4px 0;
+}
+.ud-k {
+  flex: 0 0 118px;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.ud-v {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.ud-pw {
+  font-family: var(--mono);
+  font-size: 14px;
+  letter-spacing: 1px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+@media (max-width: 640px) {
+  .ud-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ud-k {
+    flex-basis: 104px;
+  }
 }

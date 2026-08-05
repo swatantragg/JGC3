@@ -1,0 +1,80 @@
+"""Create (or reset) an admin account straight in the database.
+
+The intended way to seed a real owner: the sign-up form only ever makes
+pending users, and /api/auth/bootstrap refuses once anybody exists, so an admin
+for a live database is made here.
+
+    python scripts/create_admin.py "name@example.com" "TheirPassword@1" "Their Name"
+
+Re-running it against an address that already exists promotes that account to
+admin and resets its password rather than failing — which is also how a locked
+out owner gets back in. The password is bcrypt-hashed exactly as the API does
+it, and is checked against the same rule the API enforces.
+
+The account is left **unverified** on purpose: an admin proves their mailbox
+with an emailed passcode on the next sign-in, and again once every 24 hours.
+"""
+import sys
+from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.database import Base, SessionLocal, engine   # noqa: E402
+from app.migrate import run_migrations                # noqa: E402
+from app.passwords import password_problems           # noqa: E402
+from app.permissions import ALL_PERMS                 # noqa: E402
+from app.security import hash_password                # noqa: E402
+from app.vault import seal                            # noqa: E402
+from app import models                                # noqa: E402
+
+
+def main(email: str, password: str, name: str) -> int:
+    email = email.strip().lower()
+    problems = password_problems(password, name=name, email=email)
+    if problems:
+        print("Refused — the password must " + "; ".join(problems) + ".")
+        return 1
+
+    Base.metadata.create_all(bind=engine)
+    run_migrations()
+
+    db = SessionLocal()
+    try:
+        user = db.query(models.User).filter(models.User.email == email).first()
+        existed = user is not None
+        if not user:
+            user = models.User(email=email, created_at=datetime.utcnow())
+            db.add(user)
+
+        user.name = name.strip()
+        user.password_hash = hash_password(password)
+        user.password_enc = seal(password)
+        user.role = "admin"
+        user.status = "active"
+        user.access = list(ALL_PERMS)
+        # Unverified: the first sign-in mails a passcode, as it should for an
+        # admin, and any half-finished challenge on the old row is dropped.
+        user.email_verified = False
+        user.email_verified_at = None
+        user.otp_verified_at = None
+        user.otp_hash = None
+        user.otp_expires_at = None
+        user.otp_sent_at = None
+        user.otp_attempts = 0
+
+        db.commit()
+        db.refresh(user)
+        print(f"{'Updated' if existed else 'Created'} admin {user.email}  (id {user.id})")
+        print(f"  role={user.role}  status={user.status}  areas={len(user.access)}")
+        print("  email_verified=False — a passcode is emailed on the next sign-in")
+        return 0
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print(__doc__)
+        raise SystemExit(2)
+    raise SystemExit(main(sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "Administrator"))
