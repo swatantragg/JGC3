@@ -19,6 +19,10 @@
    ============================================================================ */
 
 import { downloadDocsExcel, downloadPDF } from "./download.js";
+import { primeLogo, logoImage, LOGO_SRC } from "./logo.js";
+
+// The supplier order prints on the letterhead, so the mark is fetched up front.
+primeLogo();
 
 /* ---- formatting (self-contained, matches App.jsx conventions) ---- */
 const inr = (n) => "₹" + Math.round(Number(n || 0)).toLocaleString("en-IN");
@@ -311,132 +315,1028 @@ B["2A"] = (ctx) => {
   return { name: "Master_2A", html };
 };
 
+/* ---------- The client's own workbooks, rebuilt cell for cell ---------------
+   Docs 2 and 3 are the sheets the client reads as files rather than as
+   reports — 2 goes to the label printer, 3 to the packer — so both are
+   reproduced against the workbooks in Docs/Jaikvin Process/Numbering:
+   2-Barcode.xlsx and 3-Packing.xlsx. Same columns, same two-line header, the
+   PO banner merged across the top, Arial 10 on a black hairline grid, codes in
+   their green, and the derived columns still worked out by formula. They write
+   the worksheet directly instead of going through htmlToSheet — the layout is
+   theirs, not the app's — and the preview and PDF use the same grid.
+
+   The description prints as they print it, with the size dropped to a second
+   line where the master already ends on it.                                */
+function bcDescription(it) {
+  const d = String(it.description || "").trim();
+  const size = String(it.size || "").trim();
+  const length = String(it.length || "").trim();
+  if (!size) return d;
+  /* Their second line is the size as the master spells it — "15MM" on a plain
+     item, "80 x 15MM" where there is a length — so the longest of those the
+     description actually ends on is where it breaks. */
+  const endings = [size, `${size}MM`, `${size} MM`];
+  if (length) endings.push(`${length} x ${size}MM`, `${length} x ${size} MM`);
+  const low = d.toLowerCase();
+  const at = endings
+    .map((e) => (low.endsWith(e.toLowerCase()) ? d.length - e.length : -1))
+    .reduce((best, i) => (i > 0 && (best < 0 || i < best) ? i : best), -1);
+  return at > 0 ? `${d.slice(0, at).trim()}\n${d.slice(at)}` : d;
+}
+
+/* Their packing sheet writes the HSN the customs way — 39174000 as 3917.4000
+   — so an 8-digit code is printed on that scale. Anything else stays as typed. */
+function hsnValue(it) {
+  const raw = String(it.hsn || "").trim();
+  return /^\d{8}$/.test(raw) ? Number(raw) / 10000 : null;
+}
+const hsnText = (it) => { const n = hsnValue(it); return n == null ? String(it.hsn || "") : n.toFixed(4); };
+
+/* Their purchase sheet writes money as "₹ 1,234.00" — the rupee sign, a space,
+   then the figure — and heads the price columns with the date the price list
+   was agreed on, in red. */
+const RUPEE = '"₹"\\ #,##0.00';
+const RS = '"Rs."\\ #,##0.00';
+const USD = '"$"#,##0.00';
+const ddmmyy = (s) => { if (!s) return ""; const d = new Date(s); return `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getFullYear()).slice(2)}`; };
+/* On screen a figure has to read exactly as the cell it copies: "0.000" carries
+   no separators at all, and their rupee format groups in thousands, not lakhs. */
+const wbFixed = (n, d) => Number(n || 0).toFixed(d);
+const wbRupee = (n) => `₹ ${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const WB = {
+  poL: { font: "refb", border: "ltb", valign: "center" },
+  poM: { font: "refb", border: "tb", valign: "center" },
+  poR: { font: "refb", border: "rtb", valign: "center" },
+  poB: { font: "refb", border: "b", valign: "center" },
+  poBox: { font: "refb", border: "box", valign: "center" },
+  head: { font: "refb", border: "box", align: "center", valign: "center" },
+  headRed: { font: "refr", border: "box", align: "center", valign: "center" },
+  money: { font: "ref", border: "box", valign: "center", fmt: RUPEE },
+  totMoney: { font: "refb", border: "box", valign: "center", fmt: RUPEE },
+  usd: { font: "ref", border: "box", valign: "center", fmt: USD },
+  totUsd: { font: "refb", border: "box", valign: "center", fmt: USD },
+  rs: { font: "ref", border: "box", valign: "center", fmt: RS },
+  totRs: { font: "refb", border: false, valign: "center", fmt: RS },
+  rate: { font: "refb", border: "box", valign: "center", fmt: RUPEE },
+  plain: { font: "ref", border: "box", valign: "center" },
+  headW: { font: "refb", border: "box", align: "center", valign: "center", wrap: true },
+  headL: { font: "refb", border: "ltb", align: "center", valign: "center" },
+  headR: { font: "refb", border: "rtb", align: "center", valign: "center" },
+  gd: { font: "refg", border: "box", align: "left", valign: "center" },
+  gdC: { font: "refg", border: "box", align: "center", valign: "center" },
+  desc: { font: "ref", border: "box", valign: "center", wrap: true },
+  code: { font: "refb", border: "box", align: "center", valign: "center", quote: true },
+  hsn: { font: "ref", border: "box", align: "center", valign: "center", fmt: "0.0000", quote: true },
+  textL: { font: "ref", border: "box", align: "left", valign: "center" },
+  barNum: { font: "ref", border: "box", align: "center", valign: "center", fmt: "0" },
+  numC: { font: "ref", border: "box", align: "center", valign: "center" },
+  num: { font: "ref", border: "box", valign: "center" },
+  num2: { font: "ref", border: "box", valign: "center", fmt: "0.00" },
+  num3: { font: "ref", border: "box", valign: "center", fmt: "0.000" },
+  endGd: { font: "refg", border: "tb", align: "left", valign: "center" },
+  endB: { font: "refb", border: "tb", align: "left", valign: "center" },
+  end: { font: "ref", border: "tb", align: "left", valign: "center" },
+  endDesc: { font: "ref", border: "tb", valign: "center", wrap: true },
+  tot: { font: "refb", border: "box", valign: "center" },
+  totC: { font: "refb", border: "box", align: "center", valign: "center" },
+  tot2: { font: "refb", border: "box", valign: "center", fmt: "0.00" },
+  tot3: { font: "refb", border: "box", valign: "center", fmt: "0.000" },
+};
+
+function barcodeSheet(ctx, rows) {
+  const out = [
+    [{ v: `PO NO : ${poHeaderList(ctx)}`, s: WB.poL }, { v: "", s: WB.poM }, { v: "", s: WB.poM },
+      { v: "", s: WB.poM }, { v: "", s: WB.poM }, { v: "", s: WB.poR }],
+    ["GD CODE ", "DESCRIPTION", "Bar Codes", "Lables", "TYPE", "SHEETS"].map((h) => ({ v: h, s: WB.head })),
+    ["", "", "", "", "UPS", "REQD"].map((h) => ({ v: h, s: WB.head })),
+  ];
+  const heights = [undefined, 19.5, 19.5];
+
+  const first = out.length + 1;
+  rows.forEach((r) => {
+    const line = out.length + 1;
+    out.push([
+      { v: r.it.gd || "", s: WB.gd },
+      { v: bcDescription(r.it), s: WB.desc },
+      { v: String(r.it.barcode || ""), t: "s", s: WB.code },
+      { v: r.stickers, t: "n", s: WB.numC },
+      { v: r.typeUp, t: "n", s: WB.numC },
+      { f: upDiv(`D${line}`, `E${line}`), s: WB.num },
+    ]);
+    heights.push(25.5);
+  });
+  const last = out.length;
+
+  /* The client totals the labels with SUBTOTAL so a filtered sheet re-totals
+     itself, and the sheets column with a plain SUM. Both kept as they are. */
+  out.push(rows.length ? [
+    { v: "", s: WB.endGd }, { v: "", s: WB.endDesc }, { v: "TOTAL", s: WB.tot },
+    { f: `SUBTOTAL(9,D${first}:D${last})`, s: WB.totC },
+    { v: "", s: WB.tot }, { f: `SUM(F${first}:F${last})`, s: WB.tot },
+  ] : []);
+
+  return {
+    name: "Barcode",
+    rows: out,
+    heights,
+    merges: ["A1:F1"],
+    widths: [11.28515625, 32.7109375, 14.140625, 7, 7, 8.28515625],
+    defaultColWidth: 9.140625,
+    defaultRowHeight: 12.75,
+    colStyle: { font: "ref", border: false, valign: "center" },
+    tabColor: "FF00B0F0",
+    page: {
+      paper: 9, orientation: "portrait", scale: 19, fit: true,
+      margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0, footer: 0 },
+    },
+  };
+}
+
+/* The same grid on screen and in the PDF: the banner row, the two-line header,
+   green GD codes on a black hairline grid — the client's sheet, not the app's
+   house style, which is why this one document builds its own table rather than
+   going through `tableOf`. The data annotations are still on the cells, so the
+   HTML converts to a worksheet correctly if it is ever asked to. */
 B["2"] = (ctx) => {
   const rows = orderAgg(ctx);
-  const cols = [
-    { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Description", f: (r) => esc(r.it.description) },
-    { h: "Bar Codes", f: (r) => esc(r.it.barcode) },
-    { h: "Box", r: 1, key: "box", t: "int", v: (r) => r.boxes, f: (r) => r.boxes },
-    { h: "Labels", r: 1, key: "stk", t: "int", fml: (r) => `ROUNDUP({box}*${r.stkPerBox},0)`, f: (r) => r.stickers.toLocaleString("en-IN") },
-    { h: "Type UPS", r: 1, key: "typeup", t: "int", v: (r) => r.typeUp, f: (r) => r.typeUp },
-    { h: "Sheets Reqd", r: 1, key: "sheets", t: "int", fml: () => upDiv("{stk}", "{typeup}"), f: (r) => r.sheets },
-  ];
-  const foot = [{ v: "TOTAL", span: 3 }, { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" },
-    { v: sum(rows, "stickers").toLocaleString("en-IN"), r: 1, sum: "stk", t: "int" }, { v: "" },
-    { v: sum(rows, "sheets"), r: 1, sum: "sheets", t: "int" }];
-  const html = `<div class="title">2 · BARCODE</div><div class="sub">PO NO : ${esc(poHeaderList(ctx))}</div>${tableOf(cols, rows, foot)}`;
-  return { name: "Barcode_2", html };
+  const sheetFml = attr(upDiv("{stk}", "{typeup}"));
+  const body = rows.map((r) => `<tr>
+      <td class="gd">${esc(r.it.gd)}</td>
+      <td class="desc">${esc(bcDescription(r.it)).replace(/\n/g, "<br>")}</td>
+      <td class="code">${esc(r.it.barcode)}</td>
+      <td class="c" data-t="int" data-v="${r.stickers}">${r.stickers}</td>
+      <td class="c" data-t="int" data-v="${r.typeUp}">${r.typeUp}</td>
+      <td class="r" data-t="int" data-f="${sheetFml}">${r.sheets}</td>
+    </tr>`).join("");
+
+  const html = `<div class="title">2 · BARCODE</div>
+    <table class="wb fit">
+      <colgroup><col style="width:14%"><col style="width:40.7%"><col style="width:17.6%">
+        <col style="width:8.7%"><col style="width:8.7%"><col style="width:10.3%"></colgroup>
+      <tr class="sec po"><td colspan="6">PO NO : ${esc(poHeaderList(ctx))}</td></tr>
+      <tr><th>GD CODE</th><th>DESCRIPTION</th><th>Bar Codes</th>
+        <th data-k="stk">Lables</th><th data-k="typeup">TYPE</th><th data-k="sheets">SHEETS</th></tr>
+      <tr class="hd2"><th></th><th></th><th></th><th></th><th>UPS</th><th>REQD</th></tr>
+      ${body}
+      <tr class="tot"><td class="o"></td><td class="o"></td><td>TOTAL</td>
+        <td class="c" data-t="int" data-sum="stk">${sum(rows, "stickers")}</td>
+        <td></td>
+        <td class="r" data-t="int" data-sum="sheets">${sum(rows, "sheets")}</td></tr>
+    </table>`;
+  return { name: "Barcode_2", html, sheet: barcodeSheet(ctx, rows), page: "portrait" };
 };
+
+/* Doc 3 · Packing — the same treatment against 3-Packing.xlsx: fifteen
+   columns under a two-line header with PACKING split into UNIT / BOX and
+   Quantity into Pcs / Box, the weights carried to three decimals, and the row
+   totals taken with SUBTOTAL so a filtered sheet re-totals itself.
+
+   Boxes are rounded up rather than divided straight, as their sheet does — a
+   part box is still a box — and the volume and weights follow the box count so
+   editing a quantity re-totals the sheet. */
+function packingSheet(ctx, rows) {
+  const banner = [{ v: `PO NO : ${poHeaderList(ctx)}`, s: WB.poL }];
+  for (let i = 1; i < 14; i++) banner.push({ v: "", s: WB.poM });
+  banner.push({ v: "", s: WB.poR });
+
+  const H = (v) => ({ v, s: WB.head });
+  const out = [
+    banner,
+    [H("CODE"), H("GD CODE "), H("GL CODE"), H("SIZE"), H("LENGTH"),
+      { v: "PACKING", s: WB.headL }, { v: "", s: WB.headR }, H("DESCRIPTION"), H("Bar Codes"), H("HSN CODES"),
+      { v: "Quantity", s: WB.headL }, { v: "", s: WB.headR }, H("Volumn"),
+      { v: "Total Nett\nKGS", s: WB.headW }, { v: "Total Gross\nKgs", s: WB.headW }],
+    [H(""), H(""), H(""), H("MM"), H("MM"), H("UNIT "), H("BOX"), H(""), H(""), H(""),
+      H("Pcs"), H("Box"), H(""), { v: "", s: WB.headW }, { v: "", s: WB.headW }],
+  ];
+  const heights = [undefined, 19.5, 19.5];
+
+  const first = out.length + 1;
+  rows.forEach((r) => {
+    const line = out.length + 1;
+    const it = r.it;
+    const hsn = hsnValue(it);
+    const box = `L${line}`;
+    out.push([
+      { v: it.code || "", s: WB.gd },
+      { v: it.gd || "", s: WB.gd },
+      { v: it.gl || "", s: WB.gdC },
+      { v: it.size || "", s: WB.head },
+      { v: it.length || "", s: WB.head },
+      { v: it.packUnit || "", s: WB.numC },
+      { v: r.packing, t: "n", s: WB.numC },
+      { v: bcDescription(it), s: WB.desc },
+      { v: String(it.barcode || ""), t: "s", s: WB.code },
+      hsn == null ? { v: String(it.hsn || ""), t: "s", s: WB.numC } : { v: hsn, t: "n", s: WB.hsn },
+      { v: r.qty, t: "n", s: WB.num },
+      { f: upDiv(`K${line}`, `G${line}`), s: WB.num },
+      { f: `${box}*${Number(it.volume) || 0}`, s: WB.num2 },
+      { f: `${box}*${Number(it.netPerBox) || 0}`, s: WB.num3 },
+      { f: `${box}*${Number(it.grossPerBox) || 0}`, s: WB.num3 },
+    ]);
+    heights.push(25.5);
+  });
+  const last = out.length;
+  const st = (col, style) => ({ f: `SUBTOTAL(9,${col}${first}:${col}${last})`, s: style });
+
+  out.push(rows.length ? [
+    { v: "", s: WB.endGd }, { v: "", s: WB.endGd }, { v: "", s: WB.endGd },
+    { v: "", s: WB.endB }, { v: "", s: WB.endB }, { v: "", s: WB.end }, { v: "", s: WB.end },
+    { v: "", s: WB.endDesc }, { v: "TOTAL", s: WB.tot }, { v: "", s: WB.tot },
+    st("K", WB.tot), st("L", WB.tot), st("M", WB.tot2), st("N", WB.tot3), st("O", WB.tot3),
+  ] : []);
+
+  return {
+    name: "Packing",
+    rows: out,
+    heights,
+    merges: ["A1:O1", "F2:G2", "K2:L2", "N2:N3", "O2:O3"],
+    widths: [13.42578125, 11.28515625, 13.42578125, 5.140625, 8.5703125, 6, 6.28515625,
+      32.7109375, 14.140625, 14.140625, 7, 7.28515625, 8, 9.140625, 9.140625],
+    defaultColWidth: 9.140625,
+    defaultRowHeight: 12.75,
+    colStyle: { font: "ref", border: false, valign: "center" },
+    tabColor: "FFC00000",
+    page: {
+      paper: 9, orientation: "landscape", scale: 84, fit: true,
+      margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0, footer: 0 },
+    },
+  };
+}
 
 B["3"] = (ctx) => {
   const rows = orderAgg(ctx);
-  const cols = [
-    { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "GL Code", f: (r) => esc(r.it.gl) },
-    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) },
-    { h: "Pack/Unit", c: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
-    { h: "Description", f: (r) => esc(r.it.description) },
-    { h: "Bar Codes", f: (r) => esc(r.it.barcode) }, { h: "HSN", f: (r) => esc(r.it.hsn) },
-    { h: "Qty Pcs", r: 1, key: "qty", t: "int", v: (r) => r.qty, f: (r) => r.qty.toLocaleString("en-IN") },
-    { h: "Box", r: 1, key: "box", t: "int", fml: () => upDiv("{qty}", "{pack}"), f: (r) => r.boxes },
-    { h: "Volumn", r: 1, key: "voltot", t: "num", fml: (r) => `{box}*${Number(r.it.volume) || 0}`, f: (r) => num(r.volTotal, 2) },
-    { h: "Total Net", r: 1, key: "nettot", t: "num", fml: (r) => `{box}*${Number(r.it.netPerBox) || 0}`, f: (r) => num(r.netTotal) },
-    { h: "Total Gross", r: 1, key: "grosstot", t: "num", fml: (r) => `{box}*${Number(r.it.grossPerBox) || 0}`, f: (r) => num(r.grossTotal) },
-  ];
-  const foot = [{ v: "TOTAL", span: 9 }, { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
-    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" },
-    { v: num(sum(rows, "volTotal"), 2), r: 1, sum: "voltot", t: "num" },
-    { v: num(sum(rows, "netTotal")), r: 1, sum: "nettot", t: "num" },
-    { v: num(sum(rows, "grossTotal")), r: 1, sum: "grosstot", t: "num" }];
-  const html = `<div class="title">3 · PACKING</div><div class="sub">PO NO : ${esc(poHeaderList(ctx))}</div>${tableOf(cols, rows, foot)}`;
-  return { name: "Packing_3", html };
+  const boxFml = attr(upDiv("{qty}", "{packbox}"));
+  const body = rows.map((r) => {
+    const it = r.it;
+    return `<tr>
+      <td class="gd">${esc(it.code)}</td>
+      <td class="gd">${esc(it.gd)}</td>
+      <td class="gdc">${esc(it.gl)}</td>
+      <td class="bh">${esc(it.size)}</td>
+      <td class="bh">${esc(it.length)}</td>
+      <td class="c">${esc(it.packUnit || "")}</td>
+      <td class="c" data-t="int" data-v="${r.packing}">${r.packing}</td>
+      <td class="desc">${esc(bcDescription(it)).replace(/\n/g, "<br>")}</td>
+      <td class="code">${esc(it.barcode)}</td>
+      <td class="c">${esc(hsnText(it))}</td>
+      <td class="r" data-t="int" data-v="${r.qty}">${r.qty}</td>
+      <td class="r" data-t="int" data-f="${boxFml}">${r.boxes}</td>
+      <td class="r" data-t="num" data-f="{box}*${Number(it.volume) || 0}">${wbFixed(r.volTotal, 2)}</td>
+      <td class="r" data-t="num3" data-f="{box}*${Number(it.netPerBox) || 0}">${wbFixed(r.netTotal, 3)}</td>
+      <td class="r" data-t="num3" data-f="{box}*${Number(it.grossPerBox) || 0}">${wbFixed(r.grossTotal, 3)}</td>
+    </tr>`;
+  }).join("");
+
+  const html = `<div class="title">3 · PACKING</div>
+    <table class="wb">
+      <tr class="sec po"><td colspan="15">PO NO : ${esc(poHeaderList(ctx))}</td></tr>
+      <tr><th>CODE</th><th>GD CODE</th><th>GL CODE</th><th>SIZE</th><th>LENGTH</th>
+        <th colspan="2">PACKING</th><th>DESCRIPTION</th><th>Bar Codes</th><th>HSN CODES</th>
+        <th colspan="2">Quantity</th><th data-k="voltot">Volumn</th>
+        <th rowspan="2" data-k="nettot">Total Nett<br>KGS</th><th rowspan="2" data-k="grosstot">Total Gross<br>Kgs</th></tr>
+      <tr class="hd2"><th></th><th></th><th></th><th>MM</th><th>MM</th><th>UNIT</th><th data-k="packbox">BOX</th>
+        <th></th><th></th><th></th><th data-k="qty">Pcs</th><th data-k="box">Box</th><th></th></tr>
+      ${body}
+      <tr class="tot"><td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td>
+        <td class="o"></td><td class="o"></td><td class="o"></td><td>TOTAL</td><td></td>
+        <td class="r" data-t="int" data-sum="qty">${sum(rows, "qty")}</td>
+        <td class="r" data-t="int" data-sum="box">${sum(rows, "boxes")}</td>
+        <td class="r" data-t="num" data-sum="voltot">${wbFixed(sum(rows, "volTotal"), 2)}</td>
+        <td class="r" data-t="num3" data-sum="nettot">${wbFixed(sum(rows, "netTotal"), 3)}</td>
+        <td class="r" data-t="num3" data-sum="grosstot">${wbFixed(sum(rows, "grossTotal"), 3)}</td></tr>
+    </table>`;
+  return { name: "Packing_3", html, sheet: packingSheet(ctx, rows) };
 };
+
+/* Doc 4 · Purchase — against 4-Purchase.xlsx. The packing sheet without its
+   GL code and volumes, and with what we pay the factory on the end: unit price
+   and line value in rupees, under a red heading carrying the date the price
+   list was agreed. The banner rules off rather than boxing in, as theirs does. */
+function purchaseSheet(ctx, rows) {
+  const banner = [{ v: `PO NO : ${poHeaderList(ctx)}`, s: WB.poB }];
+  for (let i = 1; i < 13; i++) banner.push({ v: "", s: WB.poB });
+
+  const H = (v) => ({ v, s: WB.head });
+  const out = [
+    banner,
+    [H("CODE"), H("GD CODE "), H("SIZE"), H("LENGTH"),
+      { v: "PACKING", s: WB.headL }, { v: "", s: WB.headR }, H("DESCRIPTION"), H("Bar Codes"), H("HSN CODES"),
+      { v: "Quantity", s: WB.headL }, { v: "", s: WB.headR },
+      { v: `VALUE - ${ddmmyy(ctx.inv.date)}`, s: WB.headRed }, { v: "", s: WB.headRed }],
+    [H(""), H(""), H("MM"), H("MM"), H("UNIT "), H("BOX"), H(""), H(""), H(""),
+      H("Pcs"), H("Box"), H("UNIT"), H("Total")],
+  ];
+  const heights = [undefined, 19.5, 19.5];
+
+  const first = out.length + 1;
+  rows.forEach((r) => {
+    const line = out.length + 1;
+    const it = r.it;
+    const hsn = hsnValue(it);
+    out.push([
+      { v: it.code || "", s: WB.gd },
+      { v: it.gd || "", s: WB.gd },
+      { v: it.size || "", s: WB.head },
+      { v: it.length || "", s: WB.head },
+      { v: it.packUnit || "", s: WB.numC },
+      { v: r.packing, t: "n", s: WB.numC },
+      { v: bcDescription(it), s: WB.desc },
+      { v: String(it.barcode || ""), t: "s", s: WB.code },
+      hsn == null ? { v: String(it.hsn || ""), t: "s", s: WB.numC } : { v: hsn, t: "n", s: WB.hsn },
+      { v: r.qty, t: "n", s: WB.num },
+      { f: upDiv(`J${line}`, `F${line}`), s: WB.num },
+      { v: r.valUnit, t: "n", s: WB.money },
+      { f: `J${line}*L${line}`, s: WB.money },
+    ]);
+    heights.push(25.5);
+  });
+  const last = out.length;
+  const st = (col, style) => ({ f: `SUBTOTAL(9,${col}${first}:${col}${last})`, s: style });
+
+  out.push(rows.length ? [
+    { v: "", s: WB.endGd }, { v: "", s: WB.endGd }, { v: "", s: WB.endB }, { v: "", s: WB.endB },
+    { v: "", s: WB.end }, { v: "", s: WB.end }, { v: "", s: WB.endDesc },
+    { v: "TOTAL", s: WB.tot }, { v: "", s: WB.tot },
+    st("J", WB.tot), st("K", WB.tot), { v: "", s: WB.totMoney }, st("M", WB.totMoney),
+  ] : []);
+
+  return {
+    name: "Purchase",
+    rows: out,
+    heights,
+    merges: ["A1:M1", "E2:F2", "J2:K2", "L2:M2"],
+    widths: [13.42578125, 11.28515625, 5.140625, 8.5703125, 6, 6.28515625, 32.7109375,
+      14.140625, 14.140625, 7, 7.28515625, 9.140625, 11.7109375],
+    defaultColWidth: 9.140625,
+    defaultRowHeight: 12.75,
+    colStyle: { font: "ref", border: false, valign: "center" },
+    tabColor: "FF00B050",
+    page: {
+      paper: 9, orientation: "portrait", scale: 19, fit: true,
+      margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0, footer: 0 },
+    },
+  };
+}
 
 B["4"] = (ctx) => {
   const rows = orderAgg(ctx);
-  const cols = [
-    { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Size", c: 1, f: (r) => esc(r.it.size) },
-    { h: "Length", c: 1, f: (r) => esc(r.it.length) },
-    { h: "Pack/Unit", c: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
-    { h: "Description", f: (r) => esc(r.it.description) }, { h: "Bar Codes", f: (r) => esc(r.it.barcode) }, { h: "HSN", f: (r) => esc(r.it.hsn) },
-    { h: "Qty Pcs", r: 1, key: "qty", t: "int", v: (r) => r.qty, f: (r) => r.qty.toLocaleString("en-IN") },
-    { h: "Box", r: 1, key: "box", t: "int", fml: () => upDiv("{qty}", "{pack}"), f: (r) => r.boxes },
-    { h: "Value Unit ₹", r: 1, key: "valunit", t: "inr", v: (r) => r.valUnit, f: (r) => num(r.valUnit) },
-    { h: "Value Total ₹", r: 1, key: "valtot", t: "inr", fml: "{qty}*{valunit}", f: (r) => num(r.valTotal) },
-  ];
-  const foot = [{ v: "TOTAL", span: 8 }, { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
-    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" }, { v: "" },
-    { v: num(sum(rows, "valTotal")), r: 1, sum: "valtot", t: "inr" }];
-  const html = `<div class="title">4 · PURCHASE</div><div class="sub">PO NO : ${esc(poHeaderList(ctx))}</div>${tableOf(cols, rows, foot)}`;
-  return { name: "Purchase_4", html };
+  const boxFml = attr(upDiv("{qty}", "{packbox}"));
+  const body = rows.map((r) => {
+    const it = r.it;
+    return `<tr>
+      <td class="gd">${esc(it.code)}</td>
+      <td class="gd">${esc(it.gd)}</td>
+      <td class="bh">${esc(it.size)}</td>
+      <td class="bh">${esc(it.length)}</td>
+      <td class="c">${esc(it.packUnit || "")}</td>
+      <td class="c" data-t="int" data-v="${r.packing}">${r.packing}</td>
+      <td class="desc">${esc(bcDescription(it)).replace(/\n/g, "<br>")}</td>
+      <td class="code">${esc(it.barcode)}</td>
+      <td class="c">${esc(hsnText(it))}</td>
+      <td class="r" data-t="int" data-v="${r.qty}">${r.qty}</td>
+      <td class="r" data-t="int" data-f="${boxFml}">${r.boxes}</td>
+      <td class="r" data-t="inr" data-v="${r.valUnit}">${wbRupee(r.valUnit)}</td>
+      <td class="r" data-t="inr" data-f="{qty}*{valunit}">${wbRupee(r.valTotal)}</td>
+    </tr>`;
+  }).join("");
+
+  const html = `<div class="title">4 · PURCHASE</div>
+    <table class="wb">
+      <tr class="sec po rule"><td colspan="13">PO NO : ${esc(poHeaderList(ctx))}</td></tr>
+      <tr><th>CODE</th><th>GD CODE</th><th>SIZE</th><th>LENGTH</th>
+        <th colspan="2">PACKING</th><th>DESCRIPTION</th><th>Bar Codes</th><th>HSN CODES</th>
+        <th colspan="2">Quantity</th><th class="red" colspan="2">VALUE - ${esc(ddmmyy(ctx.inv.date))}</th></tr>
+      <tr class="hd2"><th></th><th></th><th>MM</th><th>MM</th><th>UNIT</th><th data-k="packbox">BOX</th>
+        <th></th><th></th><th></th><th data-k="qty">Pcs</th><th data-k="box">Box</th>
+        <th data-k="valunit">UNIT</th><th data-k="valtot">Total</th></tr>
+      ${body}
+      <tr class="tot"><td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td>
+        <td class="o"></td><td class="o"></td><td class="o"></td><td>TOTAL</td><td></td>
+        <td class="r" data-t="int" data-sum="qty">${sum(rows, "qty")}</td>
+        <td class="r" data-t="int" data-sum="box">${sum(rows, "boxes")}</td>
+        <td></td>
+        <td class="r" data-t="inr" data-sum="valtot">${wbRupee(sum(rows, "valTotal"))}</td></tr>
+    </table>`;
+  return { name: "Purchase_4", html, sheet: purchaseSheet(ctx, rows), page: "portrait" };
 };
+
+/* Doc 5 · Sales — against 5-Sales.xlsx. The purchase sheet's twin, priced the
+   other way round: FOB per hundred pieces in dollars, then the RBI reference in
+   rupees at the day's rate. That rate lives in one cell (O3) exactly as it does
+   in their sheet, so changing it there re-values the whole column — which is
+   the point of the sheet. The price date sits beside the banner, in red. */
+function salesSheet(ctx, rows) {
+  const ex = exRate(ctx);
+  const banner = [{ v: `PO NO : ${poHeaderList(ctx)}`, s: WB.poBox }];
+  for (let i = 1; i < 11; i++) banner.push({ v: "", s: WB.poBox });
+  banner.push({ v: ddmm(ctx.inv.date), s: WB.headRed }, { v: "", s: WB.headRed },
+    { v: "", s: WB.plain }, { v: "", s: WB.plain });
+
+  const H = (v) => ({ v, s: WB.head });
+  const out = [
+    banner,
+    [H("CODE"), H("GD CODE "), H("GL CODE"), H("SIZE"), H("LENGTH"),
+      { v: "PACKING", s: WB.headL }, { v: "", s: WB.headR }, H("DESCRIPTION"), H("Bar Codes"),
+      { v: "Quantity", s: WB.headL }, { v: "", s: WB.headR },
+      H("FOB/100 PCS US$"), H(""), H("RBI REFERENCE"), H("")],
+    [H(""), H(""), H(""), H("MM"), H("MM"), H("UNIT "), H("BOX"), H(""), H(""),
+      H("Pcs"), H("Box"), H("Unit"), H("Total"), H("RATE @ Rs."), { v: ex, t: "n", s: WB.rate }],
+  ];
+  const heights = [undefined, 19.5, 19.5];
+
+  const first = out.length + 1;
+  rows.forEach((r) => {
+    const line = out.length + 1;
+    const it = r.it;
+    out.push([
+      { v: it.code || "", s: WB.gd },
+      { v: it.gd || "", s: WB.gd },
+      { v: it.gl || "", s: WB.gdC },
+      { v: it.size || "", s: WB.head },
+      { v: it.length || "", s: WB.head },
+      { v: it.packUnit || "", s: WB.numC },
+      { v: r.packing, t: "n", s: WB.numC },
+      { v: bcDescription(it), s: WB.desc },
+      { v: String(it.barcode || ""), t: "s", s: WB.code },
+      { v: r.qty, t: "n", s: WB.num },
+      { f: upDiv(`J${line}`, `G${line}`), s: WB.num },
+      { v: r.fobPc * 100, t: "n", s: WB.usd },
+      { f: `J${line}*L${line}/100`, s: WB.usd },
+      { f: `IF(J${line}=0,0,O${line}/J${line})`, s: WB.rs },
+      { f: `M${line}*$O$3`, s: WB.money },
+    ]);
+    heights.push(25.5);
+  });
+  const last = out.length;
+  const st = (col, style) => ({ f: `SUBTOTAL(9,${col}${first}:${col}${last})`, s: style });
+
+  out.push(rows.length ? [
+    { v: "", s: WB.endGd }, { v: "", s: WB.endGd }, { v: "", s: WB.endGd },
+    { v: "", s: WB.endB }, { v: "", s: WB.endB }, { v: "", s: WB.end }, { v: "", s: WB.end },
+    { v: "", s: WB.endDesc }, { v: "TOTAL", s: WB.tot },
+    st("J", WB.tot), st("K", WB.tot), { v: "", s: WB.usd },
+    st("M", WB.totUsd), { v: "", s: WB.totRs }, st("O", WB.totMoney),
+  ] : []);
+
+  return {
+    name: "Sales",
+    rows: out,
+    heights,
+    merges: ["A1:K1", "L1:M1", "N1:O1", "F2:G2", "J2:K2", "L2:M2", "N2:O2"],
+    /* Their money columns are the default 9.14 — wide enough only because the
+       rate cell in their copy is empty. Filled in, the rupee columns print
+       ###, so the three that carry a total are given room. */
+    widths: [13.42578125, 11.28515625, 13.42578125, 5.140625, 8.5703125, 6, 6.28515625,
+      32.7109375, 14.140625, 7, 7.28515625, 9.140625, 11.5, 12, 13.5],
+    defaultColWidth: 9.140625,
+    defaultRowHeight: 12.75,
+    colStyle: { font: "ref", border: false, valign: "center" },
+    tabColor: "FF903C3A",
+    page: {
+      paper: 9, orientation: "portrait", scale: 19, fit: true,
+      margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0, footer: 0 },
+    },
+  };
+}
 
 B["5"] = (ctx) => {
   const rows = orderAgg(ctx);
   const ex = exRate(ctx);
-  const cols = [
-    { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "GL Code", f: (r) => esc(r.it.gl) },
-    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) },
-    { h: "Pack/Unit", c: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
-    { h: "Description", f: (r) => esc(r.it.description) }, { h: "Bar Codes", f: (r) => esc(r.it.barcode) },
-    { h: "Qty Pcs", r: 1, key: "qty", t: "int", v: (r) => r.qty, f: (r) => r.qty.toLocaleString("en-IN") },
-    { h: "Box", r: 1, key: "box", t: "int", fml: () => upDiv("{qty}", "{pack}"), f: (r) => r.boxes },
-    { h: "FOB/100 Unit $", r: 1, key: "fob100", t: "usd", v: (r) => r.fobPc * 100, f: (r) => usd(r.fobPc * 100) },
-    { h: "FOB Total $", r: 1, key: "fobtot", t: "usd", fml: "{qty}*{fob100}/100", f: (r) => usd(r.fobTotal) },
-    { h: "RBI Ref ₹", r: 1, key: "rbi", t: "inr", fml: `{fobtot}*${ex}`, f: (r) => num(r.rbiTotal) },
-  ];
-  const foot = [{ v: `TOTAL · Rate @ Rs. ${ex}`, span: 8 }, { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
-    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" }, { v: "" },
-    { v: usd(sum(rows, "fobTotal")), r: 1, sum: "fobtot", t: "usd" },
-    { v: num(sum(rows, "rbiTotal")), r: 1, sum: "rbi", t: "inr" }];
-  const html = `<div class="title">5 · SALES</div><div class="sub">PO NO : ${esc(poHeaderList(ctx))}</div>${tableOf(cols, rows, foot)}`;
-  return { name: "Sales_5", html };
+  const boxFml = attr(upDiv("{qty}", "{packbox}"));
+  const usd2 = (n) => `$${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const rs2 = (n) => `Rs. ${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const body = rows.map((r) => {
+    const it = r.it;
+    return `<tr>
+      <td class="gd">${esc(it.code)}</td>
+      <td class="gd">${esc(it.gd)}</td>
+      <td class="gdc">${esc(it.gl)}</td>
+      <td class="bh">${esc(it.size)}</td>
+      <td class="bh">${esc(it.length)}</td>
+      <td class="c">${esc(it.packUnit || "")}</td>
+      <td class="c" data-t="int" data-v="${r.packing}">${r.packing}</td>
+      <td class="desc">${esc(bcDescription(it)).replace(/\n/g, "<br>")}</td>
+      <td class="code">${esc(it.barcode)}</td>
+      <td class="r" data-t="int" data-v="${r.qty}">${r.qty}</td>
+      <td class="r" data-t="int" data-f="${boxFml}">${r.boxes}</td>
+      <td class="r" data-t="usd" data-v="${r.fobPc * 100}">${usd2(r.fobPc * 100)}</td>
+      <td class="r" data-t="usd" data-f="{qty}*{fob100}/100">${usd2(r.fobTotal)}</td>
+      <td class="r" data-t="inr" data-v="${r.qty ? r.rbiTotal / r.qty : 0}">${rs2(r.qty ? r.rbiTotal / r.qty : 0)}</td>
+      <td class="r" data-t="inr" data-f="{fobtot}*${ex}">${wbRupee(r.rbiTotal)}</td>
+    </tr>`;
+  }).join("");
+
+  const html = `<div class="title">5 · SALES</div>
+    <table class="wb">
+      <tr class="sec po"><td colspan="11">PO NO : ${esc(poHeaderList(ctx))}</td>
+        <td class="red c" colspan="2">${esc(ddmm(ctx.inv.date))}</td><td colspan="2"></td></tr>
+      <tr><th>CODE</th><th>GD CODE</th><th>GL CODE</th><th>SIZE</th><th>LENGTH</th>
+        <th colspan="2">PACKING</th><th>DESCRIPTION</th><th>Bar Codes</th>
+        <th colspan="2">Quantity</th><th colspan="2">FOB/100 PCS US$</th><th colspan="2">RBI REFERENCE</th></tr>
+      <tr class="hd2"><th></th><th></th><th></th><th>MM</th><th>MM</th><th>UNIT</th><th data-k="packbox">BOX</th>
+        <th></th><th></th><th data-k="qty">Pcs</th><th data-k="box">Box</th>
+        <th data-k="fob100">Unit</th><th data-k="fobtot">Total</th>
+        <th>RATE @ Rs.</th><th class="r" data-k="rbi">${wbRupee(ex)}</th></tr>
+      ${body}
+      <tr class="tot"><td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td>
+        <td class="o"></td><td class="o"></td><td class="o"></td><td>TOTAL</td>
+        <td class="r" data-t="int" data-sum="qty">${sum(rows, "qty")}</td>
+        <td class="r" data-t="int" data-sum="box">${sum(rows, "boxes")}</td>
+        <td></td>
+        <td class="r" data-t="usd" data-sum="fobtot">${usd2(sum(rows, "fobTotal"))}</td>
+        <td class="nb"></td>
+        <td class="r" data-t="inr" data-sum="rbi">${wbRupee(sum(rows, "rbiTotal"))}</td></tr>
+    </table>`;
+  return { name: "Sales_5", html, sheet: salesSheet(ctx, rows), page: "portrait" };
 };
 
-/* Doc 6 — the supplier purchase order, one per supplier.
+/* ---------- Doc 6 · Suppliers' PO ------------------------------------------
+   Rebuilt against 6-Suppliers' PO.xlsx, which is not a report but a letter:
+   a printed order form on the exporter's letterhead, then an annexure sheet of
+   the items per range. Each factory still receives its own paper — that split
+   is what the whole document is for — so a supplier's workbook is the letter
+   followed by its annexures, and the downloads stay supplier by supplier.
 
-   Like the inward e-way bill, this is a paper each factory receives on its
-   own: the preview lists them all so the whole order can be read at a glance,
-   and the download is taken supplier by supplier. Shipping marks are left
-   deliberately blank — the buyer's marks are not the supplier's business —
-   and our reference and theirs print underneath it. */
-function supplierPoBlock(ctx, sid, arr) {
-  const s = supFor(ctx, sid);
-  const cols = [
-    { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Size", c: 1, f: (r) => esc(r.it.size) },
-    { h: "Description of Goods", f: (r) => esc(r.it.description) }, { h: "HSN", f: (r) => esc(r.it.hsn) },
-    { h: "Quantity (Pcs)", r: 1, key: "qty", t: "int", v: (r) => r.pieces, f: (r) => r.pieces.toLocaleString("en-IN") },
-    { h: "Unit Price ₹", r: 1, key: "unit", t: "inr", v: (r) => r.valUnit, f: (r) => num(r.valUnit) },
-    { h: "Total Value ₹", r: 1, key: "total", t: "inr", fml: "{qty}*{unit}", f: (r) => num(r.valTotal) },
-  ];
-  const foot = [{ v: "TOTAL", span: 5 }, { v: sum(arr, "pieces").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
-    { v: "" }, { v: num(sum(arr, "valTotal")), r: 1, sum: "total", t: "inr" }];
-  return `<div class="title">EXPORT PURCHASE ORDER — ${esc(s.code || s.name || "")}</div>
-    <table style="width:100%"><tr><td style="width:55%">${exporterBlock(ctx)}</td>
-    <td><table style="width:100%"><tr><td class="k">Purchase Order No.</td><td class="b">${esc(orderRefOf(ctx))}-${esc(s.code)} DT ${ddmm(ctx.inv.date)}</td></tr>
-    <tr><td class="k">Order of</td><td>PP &amp; NYLON MOULDED FITTINGS</td></tr>
-    <tr><td class="k">Shipping Marks</td><td></td></tr>
-    <tr><td class="k">Our Reference</td><td class="b">${esc(ctx.buyer.ourReference || "")}</td></tr>
-    <tr><td class="k">Your Reference</td><td class="b">${esc(s.yourReference || "")}</td></tr></table></td></tr>
-    <tr><td colspan="2" class="k">To: Messrs ${esc(s.name)}, ${esc(s.place)} &nbsp;— GSTIN ${esc(s.gstin)}</td></tr></table>
-    ${tableOf(cols, arr, foot)}`;
+   Their letter groups the goods the way their master does, PP mouldings first
+   and nylon (GRN) after, each under its own sub-heading, with one annexure
+   sheet per range. `stickerRule` on the item is what says which range it is.  */
+const RANGES = [
+  { key: "pp", head: "PP MOULDED FITTINGS", tab: "PP", tabColor: "FFC00000", scale: 78, is: (r) => (r.it.stickerRule || "pp") !== "grn" },
+  { key: "grn", head: "NYLON MOULDED FITTINGS", tab: "GRN", tabColor: "FFFFFF00", scale: 88, is: (r) => r.it.stickerRule === "grn" },
+];
+const rangesOf = (arr) => RANGES.map((g) => ({ ...g, rows: arr.filter(g.is) })).filter((g) => g.rows.length);
+
+const perUnitOf = (it) => (it.uom === "MTR" ? "Per Metre" : "Per Piece");
+const poRefOf = (ctx, s) => `${orderRefOf(ctx)}-${s.code || ""} DT ${ddmm(ctx.inv.date)}`;
+/* The exporter's own lines, as the letterhead prints them. */
+const addrLines = (E) => String(E.addr || "").split(",").reduce((out, part) => {
+  const line = out[out.length - 1];
+  if (line && (line + "," + part).length <= 52) out[out.length - 1] = `${line},${part}`;
+  else out.push(part.trim());
+  return out;
+}, []);
+
+/* --- the letter (their "Page1") --- */
+function supplierLetterSheet(ctx, s, arr) {
+  const E = ctx.EXPORTER;
+  const [addr1 = "", addr2 = ""] = addrLines(E);
+  const groups = rangesOf(arr);
+  const marks = ctx.inv.ship?.marks || "";
+
+  const L = {                                            // the form's own styles
+    title: { font: "refr", border: "ltb", align: "center" },
+    brand: { font: "brand", border: "lt", align: "right" },
+    sub: { font: "refmn", border: "l", align: "right" },
+    addr: { font: "refbl", border: "l", align: "right" },
+    addrEnd: { font: "refbl", border: "lb", align: "right" },
+    label: { font: "refbb", border: "lt" },
+    labelB: { font: "refbb", border: "lb" },
+    value: { font: "ref", border: "t" },
+    valueP: { font: "ref", border: false },
+    to: { font: "refbb", border: "lt" },
+    party: { font: "ref", border: "l", align: "left" },
+    partyEnd: { font: "ref", border: "lb", align: "left" },
+    gst: { font: "refbb", border: "lt", align: "center", valign: "center", wrap: true },
+    marksHd: { font: "refbb", border: "lt", align: "center" },
+    marks: { font: "refbb", border: "l", align: "center" },
+    goods: { font: "refbb", border: "ltb" },
+    colHd: { font: "refbb", border: "box", align: "center" },
+    band: { font: "refb", border: "ltb", valign: "center" },
+    bandC: { font: "refb", border: "lr", align: "center" },
+    exw: { font: "refbu", border: "lrt", align: "center" },
+    rs: { font: "refb", border: "lr", align: "center" },
+    hCode: { font: "refb", border: "ltb" },
+    hDesc: { font: "refb", border: "tb" },
+    hHsn: { font: "refb", border: "box" },
+    code: { font: "ref", border: "box", align: "left", valign: "center" },
+    desc: { font: "ref", border: "box", valign: "center", wrap: true },
+    hsn: { font: "ref", border: "box", align: "left", valign: "center", wrap: true, fmt: "0.0000" },
+    qty: { font: "ref", border: "box", align: "center", valign: "center", fmt: "0" },
+    price: { font: "ref", border: "box", align: "center", valign: "center", fmt: RUPEE },
+    per: { font: "ref", border: "box", align: "center", valign: "center" },
+    total: { font: "ref", border: "box", align: "right", valign: "center", fmt: RUPEE },
+    totLabel: { font: "ref", border: "l", align: "right", valign: "center" },
+    totLabelU: { font: "refun", border: "l", align: "left", valign: "center" },
+    totVal: { font: "ref", border: "lr", align: "right", valign: "center", fmt: RUPEE },
+    nettVal: { font: "ref", border: "box", align: "right", valign: "center", fmt: RUPEE },
+    term: { font: "refbb", border: "l" },
+    termT: { font: "refbb", border: "lt" },
+    termB: { font: "refbb", border: "lb" },
+    termVal: { font: "refbb", border: false },
+    termValT: { font: "refbb", border: "t" },
+    docLine: { font: "ref", border: false },
+    conf: { font: "refbb", border: "lt" },
+    confR: { font: "refbl", border: "lt", align: "right" },
+    blankL: { font: "ref", border: "l" },
+    blankR: { font: "ref", border: "r" },
+    note: { font: "refb", border: "lb" },
+    buyer: { font: "refur", border: "b", align: "right" },
+    juris: { font: "refb", border: "t" },
+  };
+  const out = [];
+  const merges = [];
+  const heights = [];
+  const CL = (n) => "ABCDEFG"[n - 1];
+  const row = (cells) => { out.push(cells); return out.length; };
+  /* A merged run is one cell on the page, so the cells it covers must not rule
+     their own left and right edges — Excel and the PDF printers both draw them
+     and the form ends up striped. Only the horizontal edges carry over. */
+  const spans = [];
+  const span = (from, to, r) => { merges.push(`${CL(from)}${r}:${CL(to)}${r}`); spans.push([r, from, to]); };
+  const midStyle = (s) => {
+    const b = s && s.border;
+    if (b === false || b == null) return s;
+    const kept = String(b === "box" ? "lrtb" : b).replace(/[lr]/g, "");
+    return { ...s, border: kept || false };
+  };
+  const closeSpans = () => spans.forEach(([r, from, to]) => {
+    for (let c = from + 1; c <= to; c++) {
+      const cell = out[r - 1][c - 1];
+      if (cell && cell.s) out[r - 1][c - 1] = { ...cell, s: midStyle(cell.s) };
+    }
+  });
+
+  // 1 · title + letterhead
+  let r = row([{ v: "EXPORT PURCHASE ORDER", s: L.title }, ...Array(6).fill({ v: "", s: L.title })]);
+  span(1, 7, r);
+  r = row([{ v: E.name, s: L.brand }, { v: "", s: L.brand }, { v: "", s: L.brand },
+    { v: "Purchase Order", s: L.label }, { v: poRefOf(ctx, s), s: L.value }, { v: "", s: L.value }, { v: "", s: L.value }]);
+  span(1, 3, r); span(5, 7, r);
+  // The name runs across two rows in their sheet, so no rule under it here.
+  r = row([{ v: "", s: L.party }, { v: "", s: L.party }, { v: "", s: L.party },
+    { v: "No and Date :", s: L.labelB }, { v: "", s: L.valueP }, { v: "", s: L.valueP }, { v: "", s: L.valueP }]);
+  span(1, 3, r); span(5, 7, r);
+  r = row([{ v: E.sub || "Merchant Exporters", s: L.sub }, { v: "", s: L.sub }, { v: "", s: L.sub },
+    { v: "Your Ref:", s: L.label }, { v: s.yourReference || "", s: L.value }, { v: "", s: L.value }, { v: "", s: L.value }]);
+  span(1, 3, r); span(5, 7, r);
+  r = row([{ v: addr1, s: L.addr }, { v: "", s: L.addr }, { v: "", s: L.addr },
+    { v: "", s: L.valueP }, { v: "", s: L.valueP }, { v: "", s: L.valueP }, { v: "", s: L.valueP }]);
+  span(1, 3, r); span(5, 7, r);
+  r = row([{ v: addr2, s: L.addr }, { v: "", s: L.addr }, { v: "", s: L.addr },
+    { v: "Order of:", s: L.label }, { v: "PP & NYLON MOULDED FITTINGS", s: L.value }, { v: "", s: L.value }, { v: "", s: L.value }]);
+  span(1, 3, r); span(5, 7, r);
+  r = row([{ v: `Tel: ${E.tel} E-Mail: ${E.email}`, s: L.addrEnd }, { v: "", s: L.addrEnd }, { v: "", s: L.addrEnd },
+    { v: "", s: L.valueP }, { v: "", s: L.valueP }, { v: "", s: L.valueP }, { v: "", s: L.valueP }]);
+  span(1, 3, r); span(5, 7, r);
+
+  /* 2 · addressee on the left, our own GSTIN and the buyer's marks on the
+     right. At order stage there are no marks yet — the field prints empty,
+     which is how the client's own copy leaves it until the buyer confirms. */
+  const party = [`Messrs. ${s.name || ""}`, s.addr || "", s.place || "",
+    s.gstin ? `GSTIN : ${s.gstin}` : ""].filter(Boolean);
+  const rightOf = (i) => (i === 1 ? { v: "Shipping Marks", s: L.marksHd }
+    : i === 2 ? { v: marks, s: L.marks } : { v: "", s: L.party });
+
+  r = row([{ v: "To,", s: L.to }, { v: "", s: L.to }, { v: "", s: L.to },
+    { v: `GSTIN : ${E.gstin}\nPAN No: ${E.pan}`, s: L.gst }, { v: "", s: L.gst }, { v: "", s: L.gst }, { v: "", s: L.gst }]);
+  span(1, 3, r); span(4, 7, r);
+  heights[r - 1] = 26;
+  party.forEach((line, i) => {
+    const last = i === party.length - 1;
+    const right = rightOf(i);
+    r = row([{ v: line, s: last ? L.partyEnd : L.party }, { v: "", s: last ? L.partyEnd : L.party },
+      { v: "", s: last ? L.partyEnd : L.party },
+      right, { v: "", s: right.s }, { v: "", s: right.s }, { v: "", s: right.s }]);
+    span(1, 3, r); span(4, 7, r);
+  });
+
+  // 3 · the goods table
+  r = row([{ v: "DESCRIPTION OF GOODS.", s: L.goods }, { v: "", s: L.goods }, { v: "", s: L.goods },
+    { v: "QUANTITY", s: L.colHd }, { v: "Unit Price.", s: L.colHd }, { v: "Per Unit", s: L.colHd }, { v: "Total Value.", s: L.colHd }]);
+  span(1, 3, r);
+  r = row([{ v: "PP & NYLON MOULDED FITTINGS", s: L.band }, { v: "", s: L.band }, { v: "", s: L.band },
+    { v: "PIECES", s: L.bandC }, { v: "Rs.", s: L.bandC }, { v: "", s: L.bandC }, { v: "Ex-Works.", s: L.exw }]);
+  span(1, 3, r);
+
+  let first = 0;
+  let last = 0;
+  groups.forEach((g, gi) => {
+    r = row([{ v: g.head, s: L.band }, { v: "", s: L.band }, { v: "", s: L.band },
+      { v: "", s: L.bandC }, { v: "", s: L.bandC }, { v: "", s: L.bandC },
+      gi === 0 ? { v: "Rs.", s: L.rs } : { v: "", s: L.rs }]);
+    span(1, 3, r);
+    if (gi === 0) {
+      row([{ v: "CODE ", s: L.hCode }, { v: "DESCRIPTION", s: L.hDesc }, { v: "HSN CODE", s: L.hHsn },
+        { v: "", s: L.bandC }, { v: "", s: L.bandC }, { v: "", s: L.bandC }, { v: "", s: L.rs }]);
+    }
+    g.rows.forEach((x) => {
+      const line = out.length + 1;
+      const hsn = hsnValue(x.it);
+      out.push([
+        { v: x.it.code || "", s: L.code },
+        { v: bcDescription(x.it), s: L.desc },
+        hsn == null ? { v: String(x.it.hsn || ""), t: "s", s: L.hsn } : { v: hsn, t: "n", s: L.hsn },
+        { v: x.pieces, t: "n", s: L.qty },
+        { v: x.valUnit, t: "n", s: L.price },
+        { v: perUnitOf(x.it), s: L.per },
+        { f: `E${line}*D${line}`, s: L.total },
+      ]);
+      if (!first) first = line;
+      last = line;
+      heights[line - 1] = 25.5;
+    });
+  });
+
+  // 4 · totals
+  const sumRange = first ? `SUM(G${first}:G${last})` : "0";
+  r = row(Array(7).fill(null).map((_, i) => ({ v: "", s: i === 0 ? L.totLabel : i === 6 ? L.totVal : L.valueP })));
+  r = row([{ v: "TOTAL VALUE….", s: L.totLabel }, { v: "", s: L.totLabel }, { v: "", s: L.totLabel },
+    { v: "", s: L.valueP }, { v: "", s: L.valueP }, { v: "", s: L.valueP }, { f: sumRange, s: L.totVal }]);
+  span(1, 3, r);
+  const valueRow = r;
+  r = row([{ v: "ADD : IGST @ 18%", s: L.totLabelU }, { v: "", s: L.totLabelU }, { v: "", s: L.totLabelU },
+    { v: "", s: L.valueP }, { v: "", s: L.valueP }, { v: "", s: L.valueP }, { f: `ROUND(G${valueRow}*18%,0)`, s: L.totVal }]);
+  span(1, 3, r);
+  const gstRowNo = r;
+  r = row([{ v: "TOTAL  NETT VALUE…………………", s: L.totLabel }, { v: "", s: L.totLabel }, { v: "", s: L.totLabel },
+    { v: "", s: L.valueP }, { v: "", s: L.valueP }, { v: "", s: L.valueP },
+    { f: `SUM(G${valueRow}:G${gstRowNo})`, s: L.nettVal }]);
+  span(1, 3, r);
+
+  // 5 · terms and signatures
+  const term = (label, value, right, style, vstyle) => {
+    const rr = row([{ v: label, s: style }, { v: value, s: vstyle }, { v: "", s: vstyle },
+      { v: right ? right[0] : "", s: right ? L.termValT : L.valueP },
+      { v: right ? right[1] : "", s: L.docLine }, { v: "", s: L.docLine }, { v: "", s: L.docLine }]);
+    span(2, 3, rr);
+    span(5, 7, rr);
+    return rr;
+  };
+  term("Delivery", "", ["Documents:", "1. Invoice"], L.termT, L.termValT);
+  term("Payment", "Against Delivery as usual", ["", "2. Packing cum weight List"], L.term, L.termVal);
+  term("Packing", "As per attached Sheet", null, L.term, L.termVal);
+  term("GST", "IGST @ 18% TO BE CHARGED", null, L.termB, L.termVal);
+  r = row([{ v: "SELLER'S CONFIRMATION", s: L.conf }, { v: "", s: L.conf }, { v: "", s: L.conf },
+    { v: `For ${E.name}`, s: L.confR }, { v: "", s: L.confR }, { v: "", s: L.confR }, { v: "", s: L.confR }]);
+  span(1, 3, r); span(4, 7, r);
+  const signFrom = out.length + 1;
+  for (let i = 0; i < 3; i++) {
+    r = row([{ v: "", s: L.blankL }, { v: "", s: L.valueP }, { v: "", s: L.valueP },
+      { v: "", s: L.valueP }, { v: "", s: L.valueP }, { v: "", s: L.valueP }, { v: "", s: L.blankR }]);
+    span(1, 3, r);
+  }
+  merges.push(`D${signFrom}:G${signFrom + 2}`);
+  r = row([{ v: "(Please send us one copy duly signed & stamped as confirmation)", s: L.note },
+    { v: "", s: L.note }, { v: "", s: L.note }, { v: "", s: L.note }, { v: "", s: L.note },
+    { v: "BUYER.", s: L.buyer }, { v: "", s: L.buyer }]);
+  span(1, 5, r); span(6, 7, r);
+  r = row([{ v: "Subject to Mumbai Jurisdiction", s: L.juris }, { v: "", s: L.juris }, { v: "", s: L.juris },
+    { v: "", s: L.valueP }, { v: "", s: L.valueP }, { v: "", s: L.valueP }, { v: "", s: L.valueP }]);
+  span(1, 3, r);
+  closeSpans();
+
+  return {
+    name: "Page1",
+    rows: out,
+    heights,
+    merges,
+    image: logoImage(),
+    widths: [11.6640625, 32.5, 22.5, 16.6640625, 16.6640625, 16.6640625, 16.6640625],
+    defaultRowHeight: 12.75,
+    colStyle: { font: "ref", border: false, valign: "center" },
+    page: {
+      paper: 9, orientation: "portrait", scale: 76, fit: true,
+      margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0, footer: 0 },
+    },
+  };
 }
 
-/* One supplier purchase order per supplier — for the split download. */
+/* --- the annexure (their "PP" / "GRN" tabs): the items, no prices ---------
+   The two tabs are not the same sheet. The PP range carries a works code and a
+   length; the nylon range has neither, and its descriptions run to one line, so
+   that tab is nine columns of shorter rows. Both are reproduced as they are. */
+const ANNEX = {
+  pp: {
+    widths: [15.6640625, 13.1640625, 6, 10, 7, 7.33203125, 38.1640625, 16.5, 16.5, 8.1640625, 8.5],
+    span: "K", packCol: "F", qtyCol: "J", totalAt: 8, headHt: 19.5, rowHt: 25.5,
+    merges: ["A1:K1", "E2:F2", "J2:K2"],
+    head: [
+      ["CODE", "GD CODE ", "SIZE", "LENGTH", ["PACKING"], "DESCRIPTION", "Bar Codes", "HSN CODES", ["Quantity"]],
+      ["", "", "MM", "MM", "UNIT ", "BOX", "", "", "", "Pcs", "Box"],
+    ],
+    cells: (x, hsn, line) => [
+      { v: x.it.code || "", s: WB.gd },
+      { v: x.it.gd || "", s: WB.gd },
+      { v: x.it.size || "", s: WB.head },
+      { v: x.it.length || "", s: WB.head },
+      { v: x.it.packUnit || "", s: WB.numC },
+      { v: x.packing, t: "n", s: WB.numC },
+      { v: bcDescription(x.it), s: WB.desc },
+      { v: String(x.it.barcode || ""), t: "s", s: WB.code },
+      hsn == null ? { v: String(x.it.hsn || ""), t: "s", s: WB.numC } : { v: hsn, t: "n", s: WB.hsn },
+      { v: x.pieces, t: "n", s: WB.num },
+      { f: upDiv(`J${line}`, `F${line}`), s: WB.num },
+    ],
+    tail: [WB.endGd, WB.endGd, WB.endB, WB.endB, WB.end, WB.end, WB.endDesc],
+    html: (x) => [["gd", esc(x.it.code)], ["gd", esc(x.it.gd)], ["bh", esc(x.it.size)], ["bh", esc(x.it.length)],
+      ["c", esc(x.it.packUnit || "")], ["c", x.packing, "int"], ["desc", esc(bcDescription(x.it)).replace(/\n/g, "<br>")],
+      ["code", esc(x.it.barcode)], ["c", esc(hsnText(x.it))], ["r", x.pieces, "int"], ["r", x.boxes, "fml"]],
+    htmlHead: [
+      ["CODE", 1], ["GD CODE", 1], ["SIZE", 1], ["LENGTH", 1], ["PACKING", 2],
+      ["DESCRIPTION", 1], ["Bar Codes", 1], ["HSN CODES", 1], ["Quantity", 2]],
+    htmlSub: ["", "", "MM", "MM", "UNIT", "BOX", "", "", "", "Pcs", "Box"],
+  },
+  /* The nylon tab is plainer than the PP one in their book: codes in black
+     rather than the green, sizes unbolded, and the bar code held as a number
+     rather than as text. Reproduced as it stands. */
+  grn: {
+    widths: [13.1640625, 6, 7, 7.33203125, 38.1640625, 16.5, 16.5, 10.6640625, 10.83203125],
+    span: "I", packCol: "D", qtyCol: "H", totalAt: 6, headHt: 20.25, rowHt: undefined,
+    merges: ["A1:I1", "C2:D2", "H2:I2"],
+    banner: "box", pairs: { Quantity: "box" },
+    margins: { left: 0.51181102362204722, right: 0.51181102362204722, top: 0.51181102362204722, bottom: 0.51181102362204722, header: 0, footer: 0 },
+    head: [
+      ["GD CODE ", "SIZE", ["PACKING"], "DESCRIPTION", "Bar Codes", "HSN CODES", ["Quantity"]],
+      ["", "MM", "UNIT ", "BOX", "", "", "", "Pcs", "Box"],
+    ],
+    cells: (x, hsn, line) => {
+      const bar = String(x.it.barcode || "");
+      return [
+        { v: x.it.gd || "", s: WB.textL },
+        { v: x.it.size || "", s: WB.numC },
+        { v: x.it.packUnit || "", s: WB.numC },
+        { v: x.packing, t: "n", s: WB.numC },
+        { v: bcDescription(x.it), s: WB.desc },
+        /^\d+$/.test(bar) ? { v: Number(bar), t: "n", s: WB.barNum } : { v: bar, t: "s", s: WB.numC },
+        hsn == null ? { v: String(x.it.hsn || ""), t: "s", s: WB.numC } : { v: hsn, t: "n", s: WB.hsn },
+        { v: x.pieces, t: "n", s: WB.num },
+        { f: upDiv(`H${line}`, `D${line}`), s: WB.num },
+      ];
+    },
+    tail: [WB.endGd, WB.endB, WB.end, WB.end, WB.endDesc],
+    html: (x) => [["", esc(x.it.gd)], ["c", esc(x.it.size)], ["c", esc(x.it.packUnit || "")],
+      ["c", x.packing, "int"], ["desc", esc(bcDescription(x.it)).replace(/\n/g, "<br>")],
+      ["c", esc(x.it.barcode)], ["c", esc(hsnText(x.it))], ["r", x.pieces, "int"], ["r", x.boxes, "fml"]],
+    htmlHead: [["GD CODE", 1], ["SIZE", 1], ["PACKING", 2], ["DESCRIPTION", 1], ["Bar Codes", 1], ["HSN CODES", 1], ["Quantity", 2]],
+    htmlSub: ["", "MM", "UNIT", "BOX", "", "", "", "Pcs", "Box"],
+  },
+};
+
+function supplierAnnexSheet(ctx, group) {
+  const A = ANNEX[group.key];
+  const n = A.widths.length;
+  const H = (v) => ({ v, s: WB.head });
+  /* A pair under one heading is normally open between its two cells; on the
+     nylon tab their book boxes both, and boxes the banner too. */
+  const headRow = A.head[0].flatMap((h) => (Array.isArray(h)
+    ? (A.pairs?.[h[0]] === "box" ? [H(h[0]), H("")] : [{ v: h[0], s: WB.headL }, { v: "", s: WB.headR }])
+    : [H(h)]));
+  const banner = A.banner === "box"
+    ? Array(n).fill(null).map(() => ({ v: "", s: WB.poBox }))
+    : [...Array(n - 1).fill({ v: "", s: WB.poM }), { v: "", s: WB.poM }];
+  banner[0] = { v: `PO NO : ${poHeaderList(ctx)}`, s: A.banner === "box" ? WB.poBox : WB.poL };
+  const out = [banner, headRow, A.head[1].map(H)];
+  const heights = [undefined, A.headHt, A.headHt];
+
+  const first = out.length + 1;
+  group.rows.forEach((x) => {
+    const line = out.length + 1;
+    out.push(A.cells(x, hsnValue(x.it), line));
+    heights.push(A.rowHt);
+  });
+  const last = out.length;
+  const st = (col) => ({ f: `SUBTOTAL(9,${col}${first}:${col}${last})`, s: WB.tot });
+  const boxCol = String.fromCharCode(A.qtyCol.charCodeAt(0) + 1);
+
+  out.push(group.rows.length ? [
+    ...A.tail.map((s) => ({ v: "", s })),
+    { v: "TOTAL", s: WB.tot }, { v: "", s: WB.tot }, st(A.qtyCol), st(boxCol),
+  ] : []);
+
+  return {
+    name: group.tab,
+    rows: out,
+    heights,
+    merges: A.merges,
+    widths: A.widths,
+    defaultColWidth: 10.6640625,
+    defaultRowHeight: 12.75,
+    colStyle: { font: "ref", border: false, valign: "center" },
+    tabColor: group.tabColor,
+    page: {
+      paper: 9, orientation: "landscape", scale: group.scale, fit: true,
+      margins: A.margins || { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0, footer: 0 },
+    },
+  };
+}
+
+/* The same letter on screen and on paper. */
+function supplierPoBlock(ctx, sid, arr) {
+  const s = supFor(ctx, sid);
+  const E = ctx.EXPORTER;
+  const [addr1 = "", addr2 = ""] = addrLines(E);
+  const groups = rangesOf(arr);
+  const marks = ctx.inv.ship?.marks || "";
+  const party = [`Messrs. ${s.name || ""}`, s.addr || "", s.place || "", s.gstin ? `GSTIN : ${s.gstin}` : ""].filter(Boolean);
+  const value = sum(arr, "valTotal");
+  const igst = Math.round(value * 0.18);
+
+  const items = groups.map((g, gi) => `
+      <tr class="band"><td class="l" colspan="3">${esc(g.head)}</td><td></td><td></td><td></td><td class="c b">${gi === 0 ? "Rs." : ""}</td></tr>
+      ${gi === 0 ? `<tr><th class="l">CODE</th><th class="l">DESCRIPTION</th><th class="l">HSN CODE</th><th></th><th></th><th></th><th></th></tr>` : ""}
+      ${g.rows.map((x) => `<tr>
+        <td>${esc(x.it.code)}</td>
+        <td class="desc">${esc(bcDescription(x.it)).replace(/\n/g, "<br>")}</td>
+        <td>${esc(hsnText(x.it))}</td>
+        <td class="c" data-t="int" data-v="${x.pieces}">${x.pieces}</td>
+        <td class="c" data-t="inr" data-v="${x.valUnit}">${wbRupee(x.valUnit)}</td>
+        <td class="c">${esc(perUnitOf(x.it))}</td>
+        <td class="r" data-t="inr" data-v="${x.valTotal}">${wbRupee(x.valTotal)}</td>
+      </tr>`).join("")}`).join("");
+
+  return `<table class="wb letter">
+      <colgroup><col style="width:11%"><col style="width:26%"><col style="width:18%">
+        <col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:12%"></colgroup>
+      <tr><td class="ttl" colspan="7">EXPORT PURCHASE ORDER</td></tr>
+      <tr><td class="brand" colspan="3" rowspan="2"><img class="logo" src="${LOGO_SRC}" alt="">${esc(E.name)}</td>
+        <td class="lbl">Purchase Order</td><td class="val" colspan="3">${esc(poRefOf(ctx, s))}</td></tr>
+      <tr><td class="lbl">No and Date :</td><td colspan="3"></td></tr>
+      <tr><td class="sub" colspan="3">${esc(E.sub || "Merchant Exporters")}</td>
+        <td class="lbl">Your Ref:</td><td class="val" colspan="3">${esc(s.yourReference || "")}</td></tr>
+      <tr><td class="addr" colspan="3">${esc(addr1)}</td><td></td><td colspan="3"></td></tr>
+      <tr><td class="addr" colspan="3">${esc(addr2)}</td>
+        <td class="lbl">Order of:</td><td class="val" colspan="3">PP &amp; NYLON MOULDED FITTINGS</td></tr>
+      <tr><td class="addr" colspan="3">Tel: ${esc(E.tel)} E-Mail: ${esc(E.email)}</td><td></td><td colspan="3"></td></tr>
+      <tr><td class="lbl" colspan="3">To,</td>
+        <td class="gst c" colspan="4">GSTIN : ${esc(E.gstin)}<br>PAN No: ${esc(E.pan)}</td></tr>
+      ${party.map((line, i) => `<tr><td class="party" colspan="3">${esc(line)}</td>
+        <td class="lbl c" colspan="4">${i === 1 ? "Shipping Marks" : i === 2 ? esc(marks) : ""}</td></tr>`).join("")}
+      <tr><td class="lbl l" colspan="3">DESCRIPTION OF GOODS.</td>
+        <th>QUANTITY</th><th>Unit Price.</th><th>Per Unit</th><th>Total Value.</th></tr>
+      <tr class="band"><td class="l" colspan="3">PP &amp; NYLON MOULDED FITTINGS</td>
+        <td class="c b">PIECES</td><td class="c b">Rs.</td><td></td><td class="c b u">Ex-Works.</td></tr>
+      ${items}
+      <tr><td colspan="6"></td><td></td></tr>
+      <tr><td class="r" colspan="3">TOTAL VALUE….</td><td colspan="3"></td>
+        <td class="r" data-t="inr" data-v="${value}">${wbRupee(value)}</td></tr>
+      <tr><td class="u" colspan="3">ADD : IGST @ 18%</td><td colspan="3"></td>
+        <td class="r" data-t="inr" data-v="${igst}">${wbRupee(igst)}</td></tr>
+      <tr><td class="r" colspan="3">TOTAL  NETT VALUE…………………</td><td colspan="3"></td>
+        <td class="r bx" data-t="inr" data-v="${value + igst}">${wbRupee(value + igst)}</td></tr>
+      <tr><td class="lbl">Delivery</td><td class="lbl" colspan="2"></td>
+        <td class="lbl">Documents:</td><td colspan="3">1. Invoice</td></tr>
+      <tr><td class="lbl">Payment</td><td class="lbl" colspan="2">Against Delivery as usual</td>
+        <td></td><td colspan="3">2. Packing cum weight List</td></tr>
+      <tr><td class="lbl">Packing</td><td class="lbl" colspan="2">As per attached Sheet</td><td></td><td colspan="3"></td></tr>
+      <tr><td class="lbl">GST</td><td class="lbl" colspan="2">IGST @ 18% TO BE CHARGED</td><td></td><td colspan="3"></td></tr>
+      <tr><td class="lbl" colspan="3">SELLER'S CONFIRMATION</td>
+        <td class="sgn r" colspan="4">For ${esc(E.name)}</td></tr>
+      <tr class="sign"><td colspan="3"></td><td colspan="4"></td></tr>
+      <tr><td class="b" colspan="5">(Please send us one copy duly signed &amp; stamped as confirmation)</td>
+        <td class="buyer r" colspan="2">BUYER.</td></tr>
+      <tr><td class="b" colspan="3">Subject to Mumbai Jurisdiction</td><td colspan="4"></td></tr>
+    </table>`;
+}
+
+/* The annexure as it reads on screen — the same columns as its tab. */
+function supplierAnnexBlock(ctx, group) {
+  const A = ANNEX[group.key];
+  const boxFml = attr(upDiv("{qty}", "{packbox}"));
+  const cell = ([cls, v, kind]) => {
+    if (kind === "int") return `<td class="${cls}" data-t="int" data-v="${v}">${v}</td>`;
+    if (kind === "fml") return `<td class="${cls}" data-t="int" data-f="${boxFml}">${v}</td>`;
+    return `<td class="${cls}">${v}</td>`;
+  };
+  return `<div class="sub">ANNEXURE · ${esc(group.tab)} — PO NO : ${esc(poHeaderList(ctx))}</div>
+    <table class="wb">
+      <tr>${A.htmlHead.map(([h, span]) => `<th${span > 1 ? ` colspan="${span}"` : ""}>${h}</th>`).join("")}</tr>
+      <tr class="hd2">${A.htmlSub.map((h, i) => {
+    const key = h === "BOX" ? " data-k=\"packbox\"" : h === "Pcs" ? " data-k=\"qty\"" : h === "Box" ? " data-k=\"box\"" : "";
+    return `<th${key}>${h}</th>`;
+  }).join("")}</tr>
+      ${group.rows.map((x) => `<tr>${A.html(x).map(cell).join("")}</tr>`).join("")}
+      <tr class="tot">${A.tail.map(() => '<td class="o"></td>').join("")}<td>TOTAL</td><td></td>
+        <td class="r" data-t="int" data-sum="qty">${sum(group.rows, "pieces")}</td>
+        <td class="r" data-t="int" data-sum="box">${sum(group.rows, "boxes")}</td></tr>
+    </table>`;
+}
+
+/* One supplier purchase order per supplier — for the split download. Each
+   carries its own workbook: the letter, then an annexure per range. */
 export function supplierPoDocs(ctx) {
   const rows = orderRows(ctx);
   const bySup = {};
   rows.forEach((x) => { (bySup[x.supId] = bySup[x.supId] || []).push(x); });
   return Object.entries(bySup).map(([sid, arr]) => {
     const sp = supFor(ctx, sid);
+    const groups = rangesOf(arr);
     return {
       supplierId: sid, code: sp.code || sid, name: sp.name || sid,
       docName: `Suppliers_PO_6_${(sp.code || sid).replace(/[^A-Za-z0-9]+/g, "_")}`,
-      html: supplierPoBlock(ctx, sid, arr),
+      html: supplierPoBlock(ctx, sid, arr)
+        + groups.map((g) => `<div class="pgbrk">${supplierAnnexBlock(ctx, g)}</div>`).join(""),
+      sheets: [supplierLetterSheet(ctx, sp, arr), ...groups.map((g) => supplierAnnexSheet(ctx, g))],
     };
   });
 }
 
-B["6"] = (ctx) => ({ name: "Suppliers_PO_6", html: supplierPoDocs(ctx).map((d) => d.html).join("<br>") });
+B["6"] = (ctx) => ({
+  name: "Suppliers_PO_6",
+  html: supplierPoDocs(ctx).map((d) => d.html).join('<div class="pgbrk"></div>'),
+  page: "portrait",
+});
 
 /* ---------- Stage B · Supplier packing (7A–11) ---------- */
 function supplierTable(ctx, cols, footBuilder, title, sub) {
@@ -1145,13 +2045,17 @@ function buildOne(no, ctx, report) {
   return B[no] ? B[no](ctx) : null;
 }
 
-/** One document as [{ name, html }] — several entries when it splits per
- *  supplier, so Excel gets a sheet each and the PDF a page each. */
+/** One document as [{ name, html, sheet? }] — several entries when it splits
+ *  per supplier, so Excel gets a sheet each and the PDF a page each.
+ *
+ *  A builder that copies one of the client's own workbooks hands back a `sheet`
+ *  as well: the Excel download uses it verbatim instead of converting the HTML,
+ *  which is how doc 2 comes out looking like 2-Barcode.xlsx. */
 export function documentParts(no, ctx, report) {
   const split = supplierSplitDocs(no, ctx);
-  if (split.length > 1) return split.map((d) => ({ name: `${d.code}`, html: d.html, docName: d.docName }));
+  if (split.length > 1) return split.map((d) => ({ name: `${d.code}`, html: d.html, sheets: d.sheets, docName: d.docName }));
   const out = buildOne(no, ctx, report);
-  return out ? [{ name: DOC_META[no] || out.name, html: out.html, docName: out.name }] : [];
+  return out ? [{ name: DOC_META[no] || out.name, html: out.html, sheet: out.sheet, page: out.page, docName: out.name }] : [];
 }
 
 export function documentFilename(no, ctx, report) {
@@ -1174,7 +2078,9 @@ export function downloadDocumentExcel(no, ctx, report) {
 export function downloadDocumentPDF(no, ctx, report) {
   const parts = documentParts(no, ctx, report);
   if (!parts.length) { alert(`Document ${no} generator not available.`); return false; }
-  downloadPDF(`${no} · ${DOC_META[no] || ""}`, parts);
+  // A document that copies a client workbook prints on that workbook's paper.
+  const orientation = parts.every((p) => p.page === "portrait") ? "portrait" : undefined;
+  downloadPDF(`${no} · ${DOC_META[no] || ""}`, parts, { orientation });
   return true;
 }
 
@@ -1221,8 +2127,8 @@ export function downloadSupplierDoc(no, ctx, supplierId, format = "excel") {
   const d = supplierSplitDocs(no, ctx).find((x) => x.supplierId === supplierId);
   if (!d) return false;
   const filename = `${d.docName}_${String(ctx.po || ctx.inv.invoiceNo || "").replace(/[^A-Za-z0-9]+/g, "-")}`;
-  if (format === "pdf") downloadPDF(`${no} · ${DOC_META[no] || ""} · ${d.code}`, [{ html: d.html }]);
-  else downloadDocsExcel(filename, [{ name: d.code, html: d.html }]);
+  if (format === "pdf") downloadPDF(`${no} · ${DOC_META[no] || ""} · ${d.code}`, [{ html: d.html }], { orientation: "portrait" });
+  else downloadDocsExcel(filename, [{ name: d.code, html: d.html, sheets: d.sheets }]);
   return true;
 }
 
@@ -1252,4 +2158,50 @@ export const PREVIEW_CSS = `
   .docprev .amber{color:#B7791F;font-weight:700;}
   .docprev .plain td{border:none;padding:1px 8px;}
   .docprev p{font-size:12px;line-height:1.5;margin:6px 0;}
+
+  /* 2 · Barcode and 3 · Packing are copies of the client's own workbooks, so on
+     screen they keep those workbooks' look rather than the app's: Arial on a
+     black hairline grid, codes in their green, barcodes and totals bold, the PO
+     banner across the top and the header split over two lines — what the
+     download opens as, cell for cell. */
+  .docprev table.wb{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#000;}
+  .docprev table.wb.fit{table-layout:fixed;width:100%;max-width:720px;}
+  .docprev table.wb td,.docprev table.wb th{border:1px solid #000;padding:4px 6px;height:26px;vertical-align:middle;white-space:nowrap;}
+  .docprev table.wb th{background:#fff;color:#000;font-weight:700;text-align:center;}
+  .docprev table.wb tr.po td{background:#fff;color:#000;font-weight:700;text-align:left;}
+  .docprev table.wb tr.po.rule td{border-left:none;border-right:none;border-top:none;}
+  .docprev table.wb tr.po td.red,.docprev table.wb th.red{color:#ff0000;}
+  .docprev table.wb th.r{text-align:right;}
+  .docprev table.wb .nb{border:none;}
+  .docprev table.wb tr.hd2 th{height:20px;}
+  .docprev table.wb tr.tot td{background:#fff;color:#000;font-weight:700;}
+  .docprev table.wb tr.tot td.o{border-left:none;border-right:none;}
+  .docprev table.wb .gd{color:#339966;font-weight:700;}
+  .docprev table.wb .gdc{color:#339966;font-weight:700;text-align:center;}
+  .docprev table.wb .bh{font-weight:700;text-align:center;}
+  .docprev table.wb .code{font-weight:700;text-align:center;}
+  .docprev table.wb .desc{white-space:normal;}
+
+  /* 6 · Suppliers' PO is a letter, not a table: the exporter's name in Centaur
+     maroon, the form's labels in blue, the title in red, and the whole page
+     inside one frame — as the workbook's Page1 prints it. */
+  .docprev table.wb.letter{width:100%;max-width:960px;table-layout:fixed;border:1px solid #000;}
+  .docprev table.wb.letter td,.docprev table.wb.letter th{border:none;height:auto;padding:2px 6px;white-space:normal;}
+  .docprev table.wb.letter th{border:1px solid #000;background:#fff;color:#000;}
+  .docprev table.wb.letter .ttl{color:#f00;font-weight:700;text-align:center;border-bottom:1px solid #000;}
+  .docprev table.wb.letter .brand{font-family:Centaur,Georgia,serif;font-size:22px;font-weight:700;color:#800000;text-align:right;vertical-align:top;}
+  .docprev table.wb.letter .logo{float:left;width:62px;height:auto;margin:2px 0 0 2px;}
+  .docprev table.wb.letter td.sub{display:table-cell;color:#800000;text-align:right;font-size:12px;margin:0;}
+  .docprev table.wb.letter .addr{color:#3366ff;text-align:right;}
+  .docprev table.wb.letter .lbl{color:#00f;font-weight:700;}
+  .docprev table.wb.letter .gst{color:#00f;font-weight:700;text-align:center;vertical-align:top;}
+  .docprev table.wb.letter .val,.docprev table.wb.letter .party{color:#000;}
+  .docprev table.wb.letter tr.band td{font-weight:700;}
+  .docprev table.wb.letter .u{text-decoration:underline;}
+  .docprev table.wb.letter .bx{border:1px solid #000;}
+  .docprev table.wb.letter .sgn{color:#3366ff;}
+  .docprev table.wb.letter tr.sign td{height:52px;}
+  .docprev table.wb.letter .buyer{color:#f00;text-decoration:underline;}
+  .docprev table.wb.letter tr td.l,.docprev table.wb.letter tr.band td{border-top:1px solid #000;border-bottom:1px solid #000;}
+  .docprev .pgbrk{margin-top:18px;}
 `;
