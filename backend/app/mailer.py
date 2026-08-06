@@ -49,7 +49,7 @@ def _body(name: str, code: str, minutes: int, reason: str) -> tuple[str, str]:
     who = (name or "there").split(" ")[0]
     line = {
         "user_first_login": "Confirm this is you to finish signing in.",
-        "admin_session_renewal": "Your session has expired — confirm this is you to start a new one.",
+        "admin_session_renewal": "Admins confirm their address once a day — confirm this is you to sign in.",
         "admin_step_up": "Confirm this is you before viewing or changing an account password.",
     }.get(reason, "Confirm this is you to continue.")
     text = (
@@ -80,7 +80,7 @@ def _body(name: str, code: str, minutes: int, reason: str) -> tuple[str, str]:
       </p>
     </div>
     <div style="padding:14px 26px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:11px">
-      Maintained and developed by Avita Technologies · V-5.5
+      Maintained and developed by Avita Technologies · V-5.6
     </div>
   </div>
 </div>"""

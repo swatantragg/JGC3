@@ -247,7 +247,7 @@ export default function AppShell() {
 
         <footer className="footer">
           <span>Maintained and Developed By <b style={{ color: "var(--ink)" }}>Avita Technologies</b></span>
-          <span className="mono">V-5.5</span>
+          <span className="mono">V-5.6</span>
         </footer>
       </div>
 
