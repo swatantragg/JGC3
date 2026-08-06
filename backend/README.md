@@ -53,7 +53,6 @@ loads from any working directory):
 | `OTP_ADMIN_REVERIFY_MODE` | `midnight` (end of the local day) or `hours` | `midnight` |
 | `OTP_ADMIN_REVERIFY_HOURS` | The rolling window, used only in `hours` mode | `24` |
 | `APP_TIMEZONE` | Where the day boundary falls (IANA name) | `Asia/Kolkata` |
-| `OTP_DEV_ECHO` | Return the code in the API response (**dev only**) | `false` |
 | `MAIL_PROVIDER` | `smtp`, `brevo` or `resend` — how the code is sent | `smtp` |
 | `MAIL_API_KEY` | The email API key, for `brevo` / `resend` | empty |
 | `SMTP_HOST` / `SMTP_PORT` | Mail server — Gmail: `smtp.gmail.com` / `587` | empty / `587` |

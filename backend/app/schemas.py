@@ -48,8 +48,7 @@ class OtpChallenge(BaseModel):
     reason: str               # user_first_login | admin_session_renewal
     expires_in: int           # seconds the code stays valid
     resend_in: int            # seconds before "send it again" is allowed
-    delivered: bool = True    # False when SMTP is unset (code is in the log)
-    dev_code: Optional[str] = None  # only when OTP_DEV_ECHO=true
+    delivered: bool = True    # False when no mail transport is set up
 
 
 class OtpVerifyRequest(BaseModel):
