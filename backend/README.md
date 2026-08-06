@@ -42,6 +42,8 @@ loads from any working directory):
 | `OTP_MAX_ATTEMPTS` / `OTP_RESEND_SECONDS` | Wrong tries allowed / resend cooldown | `5` / `30` |
 | `OTP_ADMIN_REVERIFY_HOURS` | How often an admin re-verifies | `24` |
 | `OTP_DEV_ECHO` | Return the code in the API response (**dev only**) | `false` |
+| `MAIL_PROVIDER` | `smtp`, `brevo` or `resend` — how the code is sent | `smtp` |
+| `MAIL_API_KEY` | The email API key, for `brevo` / `resend` | empty |
 | `SMTP_HOST` / `SMTP_PORT` | Mail server — Gmail: `smtp.gmail.com` / `587` | empty / `587` |
 | `SMTP_USER` / `SMTP_PASSWORD` | Mailbox and a Google **App Password** | empty |
 | `SMTP_STARTTLS` / `SMTP_SSL` | `true`/`false` for port 587; swap for 465 | `true` / `false` |
@@ -49,8 +51,22 @@ loads from any working directory):
 | `PASSWORD_VAULT_KEY` | Encrypts the readable-back copy of each password | derived from `JWT_SECRET` |
 | `STEPUP_TTL_MINUTES` | How long one emailed confirmation covers password work | `10` |
 
-With `SMTP_HOST` (or the sender) left blank nothing is mailed — the passcode is
-written to the server log instead, which keeps a fresh clone usable offline.
+With nothing configured, no mail is sent — the passcode is written to the
+server log instead, which keeps a fresh clone usable offline.
+
+**Hosts that block SMTP.** Render, Vercel and most managed platforms silently
+drop outbound packets on ports 25 / 465 / 587 to stop spam abuse. `smtplib`
+then hangs until `SMTP_TIMEOUT` and the send fails with credentials that are
+perfectly good — the tell is the timing, since a wrong password is refused in
+under a second while a blocked port takes the full timeout. Port 443 is never
+blocked, so set `MAIL_PROVIDER=brevo` (or `resend`) with a `MAIL_API_KEY`;
+`SMTP_FROM` becomes the sender address, which the provider must have verified.
+
+**If nobody can sign in.** An admin re-proves their mailbox every 24 hours, so
+a mail outage eventually locks every admin out — including out of the setting
+that would turn verification off. `python scripts/unlock_admin.py` lists who is
+affected and grants a fresh window; `OTP_ENABLED=false` disables the codes
+entirely while the outage lasts.
 
 `docker-compose.yml` mounts this same `.env` into the container at `/app/.env`,
 so Docker and a local `python run.py` never drift onto different databases.
