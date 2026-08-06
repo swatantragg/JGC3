@@ -10,9 +10,12 @@ Email verification sits between the password and the session token:
   * a **user** proves their address once. Their first sign-in mails a passcode;
     from then on `email_verified` is true and every later sign-in is just
     email + password.
-  * an **admin** proves it once per session lifetime. `otp_verified_at` records
-    the last passcode they passed, and a sign-in more than
-    OTP_ADMIN_REVERIFY_HOURS (24) later asks for a fresh one.
+  * an **admin** proves it once a day. `otp_verified_at` records the last
+    passcode they passed, and the first sign-in of a new calendar day — read in
+    APP_TIMEZONE, so midnight means the office's midnight — asks for a fresh
+    one. Set OTP_ADMIN_REVERIFY_MODE=hours for the older rolling window.
+    A session already open is not cut short by midnight; the *next sign-in* is
+    what asks.
 
 POST /login therefore answers with one of two shapes — a TokenResponse, or an
 OtpChallenge holding a short-lived ticket the caller returns to /verify-otp.
@@ -33,6 +36,7 @@ from ..security import (
     create_challenge_token, create_stepup_token, create_token, decode_challenge_token,
     generate_otp, hash_otp, hash_password, verify_otp, verify_password,
 )
+from ..timeutil import next_local_midnight, same_local_day
 from ..vault import seal
 from .. import models, schemas
 
@@ -59,15 +63,29 @@ def _mask(email: str) -> str:
     return f"{name[:2]}•••{name[-1]}@{domain}"
 
 
+def _admin_code_still_good(last: datetime | None) -> bool:
+    """Is an admin's last passcode still standing?
+
+    In "midnight" mode it stands until the end of the calendar day it was given
+    on, read in the office's timezone — so the first sign-in of a new day asks
+    for a fresh one, whatever the hour. In "hours" mode it is the older rolling
+    window instead. Note this is consulted at *sign-in* only: an admin already
+    working when midnight passes is not thrown out, their session runs its own
+    course.
+    """
+    if not last:
+        return False
+    if settings.otp_admin_reverify_mode == "hours":
+        return datetime.utcnow() - last < timedelta(hours=settings.otp_admin_reverify_hours)
+    return same_local_day(last, datetime.utcnow())
+
+
 def _otp_reason(user: models.User) -> str | None:
     """Why this sign-in needs a passcode — None when it does not."""
     if not settings.otp_enabled:
         return None
     if user.role == "admin":
-        last = user.otp_verified_at
-        if last and datetime.utcnow() - last < timedelta(hours=settings.otp_admin_reverify_hours):
-            return None
-        return "admin_session_renewal"
+        return None if _admin_code_still_good(user.otp_verified_at) else "admin_session_renewal"
     return None if user.email_verified else "user_first_login"
 
 
@@ -136,6 +154,8 @@ def auth_status(db: Session = Depends(get_db)):
         "needs_bootstrap": db.query(models.User).count() == 0,
         "otp_enabled": settings.otp_enabled,
         "session_hours": round(settings.jwt_expire_minutes / 60, 2),
+        "admin_reverify": settings.otp_admin_reverify_mode,
+        "timezone": settings.app_timezone,
         # So the form can list the same rules the API enforces.
         "password_rules": RULES,
         "password_min_length": MIN_LENGTH,

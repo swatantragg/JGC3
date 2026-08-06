@@ -9,6 +9,16 @@ order detail, balance register).
 The database starts **empty** — every record, including the first admin, is
 created through the API. No seed / dummy data.
 
+## Python version
+
+Pinned to **3.12** by `backend/.python-version`. This is not cosmetic: the
+pinned dependencies (`pydantic-core`, `psycopg2-binary`) publish wheels only up
+to 3.13, so on a newer interpreter pip falls back to building them from source
+and needs a Rust toolchain — which fails on hosts with a read-only cargo cache,
+Render among them. If a deploy dies in `Preparing metadata (pyproject.toml)`
+with `maturin failed`, the build picked a Python the wheels do not cover: pin
+it here, or set `PYTHON_VERSION` in the host's environment.
+
 ## Run locally
 
 ```bash
@@ -40,7 +50,9 @@ loads from any working directory):
 | `OTP_ENABLED` | Ask for a mailed passcode at sign-in | `true` |
 | `OTP_LENGTH` / `OTP_TTL_MINUTES` | Digits in the code / how long it lives | `6` / `10` |
 | `OTP_MAX_ATTEMPTS` / `OTP_RESEND_SECONDS` | Wrong tries allowed / resend cooldown | `5` / `30` |
-| `OTP_ADMIN_REVERIFY_HOURS` | How often an admin re-verifies | `24` |
+| `OTP_ADMIN_REVERIFY_MODE` | `midnight` (end of the local day) or `hours` | `midnight` |
+| `OTP_ADMIN_REVERIFY_HOURS` | The rolling window, used only in `hours` mode | `24` |
+| `APP_TIMEZONE` | Where the day boundary falls (IANA name) | `Asia/Kolkata` |
 | `OTP_DEV_ECHO` | Return the code in the API response (**dev only**) | `false` |
 | `MAIL_PROVIDER` | `smtp`, `brevo` or `resend` — how the code is sent | `smtp` |
 | `MAIL_API_KEY` | The email API key, for `brevo` / `resend` | empty |
@@ -90,8 +102,20 @@ one of two shapes:
 
 A **user** is challenged on their first sign-in only: passing it sets
 `email_verified`, and every later sign-in is email + password alone. An
-**admin** is challenged whenever `otp_verified_at` is older than
-`OTP_ADMIN_REVERIFY_HOURS` — once per 24-hour session. The challenge ticket is
+**admin** is challenged once a day: a passcode lasts until the end of the
+calendar day it was given on, so the first sign-in after midnight asks for a
+fresh one.
+
+Midnight means the office's midnight. Timestamps are stored naive UTC, but the
+day boundary is read in `APP_TIMEZONE` (`Asia/Kolkata`) — comparing UTC dates
+would let an admin in until 05:30 IST on a day they had not verified. See
+`app/timeutil.py`; it falls back to UTC with a logged warning rather than
+raising if the zone cannot be loaded, because a wrong hour beats a lockout.
+`OTP_ADMIN_REVERIFY_MODE=hours` restores the older rolling window.
+
+This is separate from the session. `JWT_EXPIRE_MINUTES` still runs 24 hours
+from sign-in, and midnight does not cut an open session short — the rule is
+consulted at sign-in only. The challenge ticket is
 a JWT carrying `purpose: "otp"`, so it can never be presented as a session
 token; the code itself is stored as an HMAC, expires, is single-use and is
 burned after `OTP_MAX_ATTEMPTS` wrong tries. Changing an account's email under

@@ -25,7 +25,7 @@ const POINTS = [
 
 const OTP_BLURB = {
   user_first_login: "This is your first sign-in, so we are checking the address is yours. It is asked once — after this, your email and password are all you need.",
-  admin_session_renewal: "Admin sessions last 24 hours. Yours has run out, so confirm the code we just emailed you to start a new one.",
+  admin_session_renewal: "Admins confirm their address once each day. It is a new day, so confirm the code we just emailed you.",
 };
 
 export default function LoginPage() {
@@ -262,7 +262,7 @@ export default function LoginPage() {
             </button>
           )}
         </div>
-        <div className="login-foot">Maintained and developed by <b>Avita Technologies</b> · V-5.5</div>
+        <div className="login-foot">Maintained and developed by <b>Avita Technologies</b> · V-5.6</div>
       </div>
     </div>
   );

@@ -48,7 +48,18 @@ class Settings(BaseSettings):
     otp_ttl_minutes: int = 10          # how long a mailed code stays valid
     otp_max_attempts: int = 5          # wrong tries before the code is burned
     otp_resend_seconds: int = 30       # cooldown between "send it again"
+    # When an admin's verification lapses.
+    #   "midnight" — at the end of the calendar day it was given on, in
+    #                APP_TIMEZONE. A code confirmed at 23:50 is good for ten
+    #                minutes; one confirmed at 09:00 lasts the working day.
+    #   "hours"    — the older rolling window of `otp_admin_reverify_hours`.
+    # This is separate from JWT_EXPIRE_MINUTES: a session already open is not
+    # cut short by midnight, the *next sign-in* is what asks for a code.
+    otp_admin_reverify_mode: str = "midnight"
     otp_admin_reverify_hours: int = 24
+    # The office's day. Timestamps stay UTC in the database; this only decides
+    # where the day boundary falls. Needs the `tzdata` package on slim images.
+    app_timezone: str = "Asia/Kolkata"
     # Development escape hatch: return the code in the API response when no
     # mailbox is reachable. NEVER enable in production.
     otp_dev_echo: bool = False
@@ -94,6 +105,12 @@ class Settings(BaseSettings):
     def _known_provider(cls, v):
         p = str(v or "smtp").strip().lower()
         return p if p in ("smtp", "brevo", "resend") else "smtp"
+
+    @field_validator("otp_admin_reverify_mode", mode="before")
+    @classmethod
+    def _known_reverify_mode(cls, v):
+        m = str(v or "midnight").strip().lower()
+        return m if m in ("midnight", "hours") else "midnight"
 
     @property
     def mail_configured(self) -> bool:
