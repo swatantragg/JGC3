@@ -99,7 +99,10 @@ def _start_challenge(db: Session, user: models.User, reason: str) -> dict:
         raise HTTPException(
             502,
             "Could not send the verification email. Check the mail settings on the "
-            "server (SMTP_HOST / SMTP_USER / SMTP_PASSWORD) and try again.",
+            + ("server (MAIL_API_KEY / SMTP_FROM) and try again."
+               if settings.mail_provider in ("brevo", "resend")
+               else "server (SMTP_HOST / SMTP_USER / SMTP_PASSWORD) and try again. "
+                    "If the host blocks outbound SMTP, set MAIL_PROVIDER to an email API."),
         )
 
     return {

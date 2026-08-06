@@ -53,6 +53,19 @@ class Settings(BaseSettings):
     # mailbox is reachable. NEVER enable in production.
     otp_dev_echo: bool = False
 
+    # ---------- How the passcode leaves the building ----------
+    # "smtp"   — smtplib, the obvious choice, and the right one locally.
+    # "brevo"  — HTTPS POST to api.brevo.com
+    # "resend" — HTTPS POST to api.resend.com
+    #
+    # The HTTP providers exist because most managed hosts (Render, Vercel and
+    # others) silently drop outbound connections on the SMTP ports to stop spam
+    # abuse: the socket simply hangs until it times out. Nothing is wrong with
+    # the credentials in that case — the packets never leave. Port 443 is never
+    # blocked, so an email API works everywhere SMTP does not.
+    mail_provider: str = "smtp"
+    mail_api_key: str = ""
+
     # ---------- SMTP (Gmail: smtp.gmail.com:587 with an App Password) ----------
     smtp_host: str = ""
     smtp_port: int = 587
@@ -76,12 +89,24 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
+    @field_validator("mail_provider", mode="before")
+    @classmethod
+    def _known_provider(cls, v):
+        p = str(v or "smtp").strip().lower()
+        return p if p in ("smtp", "brevo", "resend") else "smtp"
+
     @property
     def mail_configured(self) -> bool:
-        return bool(self.smtp_host and (self.smtp_from or self.smtp_user))
+        """Can a passcode actually be sent? False means the code goes to the
+        log instead — which keeps a fresh clone and an offline laptop usable."""
+        if self.mail_provider in ("brevo", "resend"):
+            return bool(self.mail_api_key and self.mail_sender)
+        return bool(self.smtp_host and self.mail_sender)
 
     @property
     def mail_sender(self) -> str:
+        """The From address. SMTP_FROM names it; SMTP_USER stands in for the
+        SMTP case, where the mailbox and the sender are the same thing."""
         return self.smtp_from or self.smtp_user
 
 
