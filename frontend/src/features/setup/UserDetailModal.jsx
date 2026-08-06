@@ -197,7 +197,6 @@ export default function UserDetailModal({ user, permTree, presets, allPerms, onC
                 <Note tone="teal" icon={Mail}>
                   Code sent to <b>{step.challenge.email}</b>.
                   {step.challenge.delivered === false && " Email is not set up on this server — it is in the server log."}
-                  {step.challenge.dev_code && <> Development mode: <b>{step.challenge.dev_code}</b>.</>}
                 </Note>
                 <Field label="Enter the code">
                   <Input ref={codeRef} value={code} inputMode="numeric" autoComplete="one-time-code"

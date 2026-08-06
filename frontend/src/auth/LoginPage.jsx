@@ -175,7 +175,6 @@ export default function LoginPage() {
                 Code sent to <b>{otp.email}</b> — it is valid for {Math.round((otp.expires_in || 600) / 60)} minutes.
               </Note>
               {notice && <Note tone="amber">{notice}</Note>}
-              {otp.dev_code && <Note tone="amber">Development mode — the code is <b>{otp.dev_code}</b>.</Note>}
               <Field label="Verification code">
                 <span className="login-in">
                   <KeyRound size={15} />

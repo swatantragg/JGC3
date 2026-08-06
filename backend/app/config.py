@@ -41,8 +41,13 @@ class Settings(BaseSettings):
 
     # ---------- Email one-time passcodes ----------
     # A user verifies their address once, on first sign-in. An admin re-verifies
-    # whenever their last verification is older than `otp_admin_reverify_hours`,
-    # i.e. once per session lifetime.
+    # once a day — see `otp_admin_reverify_mode` below.
+    #
+    # The code is never returned to the caller. There used to be a dev-echo flag
+    # for that; it reached production and printed a live passcode on the sign-in
+    # screen, which hands the account to anyone who knows the email address.
+    # Locally, leave the mail transport unconfigured and the code goes to the
+    # server log instead — same convenience, no path to a browser.
     otp_enabled: bool = True
     otp_length: int = 6
     otp_ttl_minutes: int = 10          # how long a mailed code stays valid
@@ -60,9 +65,6 @@ class Settings(BaseSettings):
     # The office's day. Timestamps stay UTC in the database; this only decides
     # where the day boundary falls. Needs the `tzdata` package on slim images.
     app_timezone: str = "Asia/Kolkata"
-    # Development escape hatch: return the code in the API response when no
-    # mailbox is reachable. NEVER enable in production.
-    otp_dev_echo: bool = False
 
     # ---------- How the passcode leaves the building ----------
     # "smtp"   — smtplib, the obvious choice, and the right one locally.

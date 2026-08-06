@@ -131,7 +131,6 @@ def _start_challenge(db: Session, user: models.User, reason: str) -> dict:
         "expires_in": settings.otp_ttl_minutes * 60,
         "resend_in": settings.otp_resend_seconds,
         "delivered": delivered,
-        "dev_code": code if settings.otp_dev_echo else None,
     }
 
 
