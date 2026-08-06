@@ -1484,6 +1484,11 @@ textarea {
   border-radius: var(--r-sm);
   border: 1px solid #d9e1ea;
   box-shadow: 0 2px 10px rgba(11, 44, 77, 0.1);
+  /* A wide sheet — the supplier packing list runs to eighteen columns — makes
+     the paper as wide as it needs to be and the shell scrolls to it, rather
+     than the last columns falling off the edge. */
+  width: max-content;
+  min-width: 100%;
 }
 
 /* Draggable column rows */

@@ -364,6 +364,82 @@ const ddmmyy = (s) => { if (!s) return ""; const d = new Date(s); return `${Stri
 const wbFixed = (n, d) => Number(n || 0).toFixed(d);
 const wbRupee = (n) => `₹ ${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+/* Their column widths and row heights are the design, and they fit their own
+   data — a five-digit order number, a two-line description. Ours is not always
+   that short: a line can carry half a dozen purchase orders, and a description
+   can run past the column. So the sheet is measured after it is built. A column
+   may widen to what is actually in it (never past a point where the layout
+   stops looking like theirs), and a row grows to as many lines as its wrapped
+   cells need. Nothing is ever cut off, and a sheet whose data is as short as
+   theirs comes out at exactly their sizes. */
+const LINE_PT = 12.75;
+function fitSheet(sheet, opts = {}) {
+  const { widen = true, maxGrow = 2, maxWidth = 46 } = opts;
+  const widths = (sheet.widths || []).slice();
+  const heights = (sheet.heights || []).slice();
+  const rows = sheet.rows || [];
+
+  /* A run of merged cells is one cell on the page: its text says nothing about
+     how wide any single column should be, and it has all of their widths to
+     wrap into. */
+  const covered = new Set();
+  const spanOf = new Map();
+  (sheet.merges || []).forEach((ref) => {
+    const m = /^([A-Z]+)(\d+):([A-Z]+)(\d+)$/.exec(String(ref));
+    if (!m) return;
+    const col = (s) => [...s].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
+    const [c1, r1, c2, r2] = [col(m[1]), +m[2], col(m[3]), +m[4]];
+    spanOf.set(`${r1}:${c1}`, [c1, c2]);
+    for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) covered.add(`${r}:${c}`);
+  });
+  const roomAt = (r, i) => {
+    const span = spanOf.get(`${r}:${i + 1}`);
+    if (!span) return widths[i] ?? 9.14;
+    let w = 0;
+    for (let c = span[0]; c <= span[1]; c++) w += widths[c - 1] ?? 9.14;
+    return w;
+  };
+
+  if (widen) {
+    rows.forEach((row, ri) => (row || []).forEach((cell, i) => {
+      if (!cell || cell.f || widths[i] == null || covered.has(`${ri + 1}:${i + 1}`)) return;
+      const text = String(cell.v ?? "");
+      if (!text) return;
+      /* Text left in a cell whose neighbour is empty simply runs on across it —
+         that is how a section label sits over the columns beside it, and it
+         needs no more room. A figure has nowhere to run to, so it always does. */
+      const s = cell.s || {};
+      const flows = !s.align || s.align === "left";
+      const next = (row || [])[i + 1];
+      const nextHasText = next && String(next.v ?? "") !== "";
+      if (cell.t !== "n" && !s.fmt && flows && !nextHasText) return;
+      const wrap = !!s.wrap;
+      const longest = text.split("\n").reduce((m, s2) => Math.max(m, s2.length), 0);
+      // A column's width is in characters, plus what Excel keeps for padding.
+      const want = longest + 0.7;
+      // A wrapped column grows only so far; past that the row takes the lines.
+      const grown = Math.min(want, wrap ? 24 : maxWidth, widths[i] * maxGrow);
+      if (grown > widths[i] + 0.1) widths[i] = grown;
+    }));
+  }
+
+  rows.forEach((row, ri) => {
+    let lines = 1;
+    (row || []).forEach((cell, i) => {
+      if (!cell || !cell.s || !cell.s.wrap) return;
+      const text = String(cell.v ?? "");
+      if (!text || (covered.has(`${ri + 1}:${i + 1}`) && !spanOf.has(`${ri + 1}:${i + 1}`))) return;
+      const per = Math.max(4, Math.floor(roomAt(ri + 1, i) - 1));
+      lines = Math.max(lines, text.split("\n")
+        .reduce((n, seg) => n + Math.max(1, Math.ceil(seg.length / per)), 0));
+    });
+    const need = lines * LINE_PT;
+    if (lines > 1 && need > (heights[ri] || 0)) heights[ri] = need;
+  });
+
+  return { ...sheet, widths, heights };
+}
+
 const WB = {
   poL: { font: "refb", border: "ltb", valign: "center" },
   poM: { font: "refb", border: "tb", valign: "center" },
@@ -436,7 +512,7 @@ function barcodeSheet(ctx, rows) {
     { v: "", s: WB.tot }, { f: `SUM(F${first}:F${last})`, s: WB.tot },
   ] : []);
 
-  return {
+  return fitSheet({
     name: "Barcode",
     rows: out,
     heights,
@@ -450,7 +526,7 @@ function barcodeSheet(ctx, rows) {
       paper: 9, orientation: "portrait", scale: 19, fit: true,
       margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0, footer: 0 },
     },
-  };
+  });
 }
 
 /* The same grid on screen and in the PDF: the banner row, the two-line header,
@@ -547,7 +623,7 @@ function packingSheet(ctx, rows) {
     st("K", WB.tot), st("L", WB.tot), st("M", WB.tot2), st("N", WB.tot3), st("O", WB.tot3),
   ] : []);
 
-  return {
+  return fitSheet({
     name: "Packing",
     rows: out,
     heights,
@@ -562,7 +638,7 @@ function packingSheet(ctx, rows) {
       paper: 9, orientation: "landscape", scale: 84, fit: true,
       margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0, footer: 0 },
     },
-  };
+  });
 }
 
 B["3"] = (ctx) => {
@@ -662,7 +738,7 @@ function purchaseSheet(ctx, rows) {
     st("J", WB.tot), st("K", WB.tot), { v: "", s: WB.totMoney }, st("M", WB.totMoney),
   ] : []);
 
-  return {
+  return fitSheet({
     name: "Purchase",
     rows: out,
     heights,
@@ -677,7 +753,7 @@ function purchaseSheet(ctx, rows) {
       paper: 9, orientation: "portrait", scale: 19, fit: true,
       margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0, footer: 0 },
     },
-  };
+  });
 }
 
 B["4"] = (ctx) => {
@@ -780,7 +856,7 @@ function salesSheet(ctx, rows) {
     st("M", WB.totUsd), { v: "", s: WB.totRs }, st("O", WB.totMoney),
   ] : []);
 
-  return {
+  return fitSheet({
     name: "Sales",
     rows: out,
     heights,
@@ -798,7 +874,7 @@ function salesSheet(ctx, rows) {
       paper: 9, orientation: "portrait", scale: 19, fit: true,
       margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0, footer: 0 },
     },
-  };
+  });
 }
 
 B["5"] = (ctx) => {
@@ -1087,7 +1163,7 @@ function supplierLetterSheet(ctx, s, arr) {
   span(1, 3, r);
   closeSpans();
 
-  return {
+  return fitSheet({
     name: "Page1",
     rows: out,
     heights,
@@ -1100,7 +1176,7 @@ function supplierLetterSheet(ctx, s, arr) {
       paper: 9, orientation: "portrait", scale: 76, fit: true,
       margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0, footer: 0 },
     },
-  };
+  }, { widen: false });
 }
 
 /* --- the annexure (their "PP" / "GRN" tabs): the items, no prices ---------
@@ -1205,7 +1281,7 @@ function supplierAnnexSheet(ctx, group) {
     { v: "TOTAL", s: WB.tot }, { v: "", s: WB.tot }, st(A.qtyCol), st(boxCol),
   ] : []);
 
-  return {
+  return fitSheet({
     name: group.tab,
     rows: out,
     heights,
@@ -1219,7 +1295,7 @@ function supplierAnnexSheet(ctx, group) {
       paper: 9, orientation: "landscape", scale: group.scale, fit: true,
       margins: A.margins || { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0, footer: 0 },
     },
-  };
+  });
 }
 
 /* The same letter on screen and on paper. */
@@ -1381,90 +1457,669 @@ B["7A"] = (ctx) => {
     { v: num(sum(rows, "rbiTotal")), r: 1, sum: "rbi", t: "inr" }];
   return { name: "Supplier_Master_7A", html: supplierTable(ctx, cols, foot, "7A · MOULDED ORDER MASTER (Supplier)", `PO NO : ${poHeaderList(ctx)} · Rate @ Rs. ${ex}`) };
 };
+/* Doc 7 · Packing (Supplier) — against 7-Packing.xlsx.
+
+   The packer's own sheet: eighteen columns under a two-line header, the goods
+   broken into the size bands their master keeps them in ("15 MM (1/2\")",
+   "25mm(1\")", "PP PIPES M/F THREADED" …), which is the item's Group. A band is
+   ruled in wherever the group changes — the rows are left in the order they
+   were packed, never re-sorted, because the serial numbers run down the sheet.
+
+   Its arithmetic, kept as theirs: Box = Pcs ÷ pack, Volume = Box × per-box, and
+   the weights follow the box count too. Pieces, quantities and volumes total
+   with SUBTOTAL so a filtered sheet re-totals itself; the weights with SUM. */
+const P7 = {
+  banner: { font: "refb", border: "b", valign: "center" },
+  head: { font: "refb", border: "box", align: "center", valign: "center" },
+  headW: { font: "refb", border: "box", align: "center", valign: "center", wrap: true },
+  headV: { font: "refb", border: "box", valign: "center" },
+  headL: { font: "refb", border: "ltb", align: "center", valign: "center" },
+  headR: { font: "refb", border: "rtb", align: "center", valign: "center" },
+  headT: { font: "refb", border: "lrt", align: "center", valign: "center" },
+  headTL: { font: "refb", border: "lrt", valign: "center" },
+  headB: { font: "refb", border: "lrb", align: "center", valign: "center" },
+  headRT: { font: "refb", border: "rt", valign: "center" },
+  bandC: { font: "refb", border: "tb", align: "left", valign: "center" },
+  bandD: { font: "refb", border: "ltb", align: "left", valign: "center" },
+  bandFill: { font: "ref", border: "box", valign: "center" },
+  sr: { font: "ref", border: "box", valign: "center" },
+  po: { font: "ref", border: "box", align: "center", valign: "center", wrap: true, quote: true },
+  codeC: { font: "refgd", border: "rtb", align: "left", valign: "center" },
+  code: { font: "refgd", border: "box", align: "left", valign: "center" },
+  mid: { font: "ref", border: "box", align: "center", valign: "center" },
+  desc: { font: "refb", border: "box", align: "left", valign: "center", wrap: true },
+  bar: { font: "refb", border: "box", align: "center", valign: "center", quote: true },
+  hsn: { font: "refb", border: "box", align: "center", valign: "center", fmt: "0.0000" },
+  num: { font: "ref", border: "box", valign: "center" },
+  num2: { font: "ref", border: "box", valign: "center", fmt: "0.00" },
+  num3: { font: "ref", border: "box", valign: "center", fmt: "0.000" },
+  endGd: { font: "refgd", border: "t", valign: "center" },
+  end: { font: "ref", border: "t", valign: "center" },
+  endL: { font: "ref", border: "t", align: "left", valign: "center" },
+  endR: { font: "ref", border: "rt", valign: "center" },
+  tot: { font: "refb", border: "box", align: "center", valign: "center" },
+  totV: { font: "refb", border: "box", valign: "center" },
+  tot2: { font: "refb", border: "box", valign: "center", fmt: "0.00" },
+  tot3: { font: "refb", border: "box", valign: "center", fmt: "0.000" },
+};
+/* Their PO column stacks the orders a line each, rather than running them
+   together and letting the column decide where to break. */
+const poStack = (pos) => (pos || []).join(",\n");
+/* Their banner writes the order list with a stop after DT. */
+const poBannerList = (ctx) => {
+  const seen = {};
+  ctx.buyerMaster.forEach((r) => { if (!seen[r.po]) seen[r.po] = r.date; });
+  return Object.entries(seen).sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([po, d]) => `${po} DT.${ddmm(d)}`).join(", ");
+};
+
+function supplierPackingSheet(ctx, rows) {
+  const H = (v) => ({ v, s: P7.head });
+  const groups = [...new Set(rows.map((r) => String(r.it.group || "").trim()).filter(Boolean))];
+  const firstBand = groups.length ? groups[0] : "";
+
+  const out = [
+    [{ v: `PO NO. ${poBannerList(ctx)}`, s: P7.banner }, ...Array(17).fill({ v: "", s: P7.banner })],
+    [{ v: "SR. NO.", s: P7.headW }, { v: "PO NO.", s: P7.headW },
+      { v: "CODE ", s: P7.headRT }, { v: "GD CODE", s: P7.headV }, { v: "OSWIN CODE", s: P7.headTL },
+      H("SIZE "), H("LENGTH"), { v: "PACKING ", s: P7.headL }, { v: "", s: P7.headR },
+      { v: "DESCRIPTION", s: P7.headT }, { v: "BAR CODES", s: P7.headT }, { v: "HSN CODE", s: P7.headT },
+      { v: "QUANTITY", s: P7.headL }, { v: "", s: P7.headR },
+      H("VOLUMN"), H(""), H("TOTAL"), H("")],
+    [{ v: "", s: P7.headW }, { v: "", s: P7.headW },
+      { v: firstBand, s: P7.bandC }, { v: "", s: P7.bandD }, { v: "", s: P7.bandD },
+      H("MM / IN"), H("MM"), H("UNIT"), H("BOX"),
+      { v: "", s: P7.headB }, { v: "", s: P7.headB }, { v: "", s: P7.headB },
+      H("PCS"), H("BOX"), H("PER BOX"), H("TOTAL"),
+      { v: "NET WT", s: P7.headV }, { v: "GROSS WT", s: P7.headV }],
+  ];
+  const heights = [undefined, 12.75, undefined];
+
+  let band = firstBand;
+  let first = 0;
+  let last = 0;
+  rows.forEach((r) => {
+    const g = String(r.it.group || "").trim();
+    if (g && g !== band) {                       // a new size band opens
+      band = g;
+      /* The cells either side of the label keep their column's own formatting,
+         as theirs do — the band is a break in the list, not a different table. */
+      out.push([{ v: "", s: P7.sr }, { v: "", s: P7.po },
+        { v: g, s: P7.bandC }, { v: "", s: P7.bandD }, { v: "", s: P7.bandD },
+        ...[P7.mid, P7.mid, P7.mid, P7.mid, P7.desc, P7.bar, P7.hsn,
+          P7.num, P7.num, P7.num2, P7.num2, P7.num3, P7.num3].map((s) => ({ v: "", s }))]);
+      heights.push(15);
+    }
+    const line = out.length + 1;
+    const it = r.it;
+    const hsn = hsnValue(it);
+    out.push([
+      { v: r.range || "", s: P7.sr },
+      { v: poStack(r.pos), s: P7.po },
+      { v: it.code || "", s: P7.codeC },
+      { v: it.gd || "", s: P7.code },
+      { v: it.oswin || "", s: P7.code },
+      { v: it.size || "", s: P7.mid },
+      { v: it.length || "", s: P7.mid },
+      { v: it.packUnit || "", s: P7.mid },
+      { v: r.packing, t: "n", s: P7.mid },
+      { v: bcDescription(it), s: P7.desc },
+      { v: String(it.barcode || ""), t: "s", s: P7.bar },
+      hsn == null ? { v: String(it.hsn || ""), t: "s", s: P7.mid } : { v: hsn, t: "n", s: P7.hsn },
+      { v: r.pieces, t: "n", s: P7.num },
+      { f: `$M${line}/$I${line}`, s: P7.num },
+      { v: Number(it.volume) || 0, t: "n", s: P7.num2 },
+      { f: `$N${line}*$O${line}`, s: P7.num2 },
+      { f: `$N${line}*${Number(it.netPerBox) || 0}`, s: P7.num3 },
+      { f: `$N${line}*${Number(it.grossPerBox) || 0}`, s: P7.num3 },
+    ]);
+    if (!first) first = line;
+    last = line;
+    heights.push(25.5);
+  });
+
+  const st = (col, style) => ({ f: first ? `SUBTOTAL(9,${col}${first}:${col}${last})` : "0", s: style });
+  const sm = (col, style) => ({ f: first ? `SUM(${col}${first}:${col}${last})` : "0", s: style });
+  // Their totals row starts at the code column; A and B are left untouched.
+  out.push(rows.length ? [
+    null, null, { v: "", s: P7.endGd }, { v: "", s: P7.end }, { v: "", s: P7.end },
+    { v: "", s: P7.endL }, { v: "", s: P7.endL }, { v: "", s: P7.endL }, { v: "", s: P7.endL },
+    { v: "", s: P7.endR }, { v: "TOTAL", s: P7.tot }, { v: "", s: P7.tot },
+    st("M", P7.totV), st("N", P7.totV), { v: "", s: P7.num },
+    st("P", P7.tot2), sm("Q", P7.tot3), sm("R", P7.tot3),
+  ] : []);
+
+  return fitSheet({
+    name: "Packing",
+    rows: out,
+    heights,
+    merges: ["A1:R1", "A2:A3", "B2:B3", "H2:I2", "J2:J3", "K2:K3", "L2:L3", "M2:N2", "O2:P2", "Q2:R2"],
+    widths: [9.140625, 9.140625, 13.42578125, 12.5703125, 14.5703125, 7.7109375, 8.5703125, 6, 6.140625,
+      25.140625, 14.28515625, 14.28515625, 9.140625, 9.140625, 9.140625, 9.140625, 9.140625, 11],
+    defaultColWidth: 9.140625,
+    defaultRowHeight: 12.75,
+    colStyle: { font: "ref", border: false, valign: "center" },
+    page: {
+      paper: 9, orientation: "landscape", scale: 74, fit: true, fitH: 0,
+      margins: { left: 0.39370078740157499, right: 0.39370078740157499, top: 0.39370078740157499, bottom: 0.39370078740157499, header: 0, footer: 0 },
+    },
+  });
+}
+
 B["7"] = (ctx) => {
-  const cols = [
-    { h: "Sr No", c: 1, f: (r) => r.range }, { h: "PO No", f: (r) => r.pos.join(", ") },
-    { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "OSWIN Code", f: (r) => esc(r.it.oswin) },
-    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) },
-    { h: "Packing", c: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
-    { h: "Description", f: (r) => esc(r.it.description) }, { h: "Bar Codes", f: (r) => esc(r.it.barcode) }, { h: "HSN", f: (r) => esc(r.it.hsn) },
-    { h: "Qty Pcs", r: 1, key: "qty", t: "int", fml: QTY_FROM_BOX, f: (r) => r.pieces.toLocaleString("en-IN") },
-    { h: "Box", r: 1, key: "box", t: "int", v: (r) => r.boxes, f: (r) => r.boxes },
-    { h: "Vol/Box", r: 1, key: "volbox", t: "num3", v: (r) => r.it.volume, f: (r) => num(r.it.volume, 3) },
-    { h: "Total Vol", r: 1, key: "voltot", t: "num", fml: "{box}*{volbox}", f: (r) => num(r.volTotal, 2) },
-    { h: "Total Net Wt", r: 1, key: "nettot", t: "num", fml: (r) => `{box}*${Number(r.it.netPerBox) || 0}`, f: (r) => num(r.netTotal) },
-    { h: "Gross Wt", r: 1, key: "grosstot", t: "num", fml: (r) => `{box}*${Number(r.it.grossPerBox) || 0}`, f: (r) => num(r.grossTotal) },
-  ];
-  const foot = (rows) => [{ v: "TOTAL", span: 11 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
-    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" }, { v: "" },
-    { v: num(sum(rows, "volTotal"), 2), r: 1, sum: "voltot", t: "num" },
-    { v: num(sum(rows, "netTotal")), r: 1, sum: "nettot", t: "num" },
-    { v: num(sum(rows, "grossTotal")), r: 1, sum: "grosstot", t: "num" }];
-  return { name: "Packing_7", html: supplierTable(ctx, cols, foot, "7 · PACKING (Supplier)", `PO NO : ${poHeaderList(ctx)}`) };
+  const rows = L(ctx);
+  const groups = [...new Set(rows.map((r) => String(r.it.group || "").trim()).filter(Boolean))];
+  let band = groups.length ? groups[0] : "";
+  const body = rows.map((r) => {
+    const it = r.it;
+    const g = String(it.group || "").trim();
+    const open = g && g !== band ? (band = g, `<tr class="band"><td></td><td></td>`
+      + `<td class="gd" colspan="3">${esc(g)}</td>${"<td></td>".repeat(13)}</tr>`) : "";
+    return `${open}<tr>
+      <td class="c">${esc(r.range)}</td>
+      <td class="po">${esc(poStack(r.pos)).replace(/\n/g, "<br>")}</td>
+      <td class="gd">${esc(it.code)}</td>
+      <td class="gd">${esc(it.gd)}</td>
+      <td class="gd">${esc(it.oswin)}</td>
+      <td class="c">${esc(it.size)}</td>
+      <td class="c">${esc(it.length)}</td>
+      <td class="c">${esc(it.packUnit || "")}</td>
+      <td class="c" data-t="int" data-v="${r.packing}">${r.packing}</td>
+      <td class="desc b">${esc(bcDescription(it)).replace(/\n/g, "<br>")}</td>
+      <td class="code">${esc(it.barcode)}</td>
+      <td class="code">${esc(hsnText(it))}</td>
+      <td class="r" data-t="int" data-v="${r.pieces}">${r.pieces}</td>
+      <td class="r" data-t="int" data-f="{qty}/{packbox}">${r.boxes}</td>
+      <td class="r" data-t="num" data-v="${Number(it.volume) || 0}">${wbFixed(it.volume, 2)}</td>
+      <td class="r" data-t="num" data-f="{box}*{volbox}">${wbFixed(r.volTotal, 2)}</td>
+      <td class="r" data-t="num3" data-f="{box}*${Number(it.netPerBox) || 0}">${wbFixed(r.netTotal, 3)}</td>
+      <td class="r" data-t="num3" data-f="{box}*${Number(it.grossPerBox) || 0}">${wbFixed(r.grossTotal, 3)}</td>
+    </tr>`;
+  }).join("");
+
+  const html = `<div class="title">7 · PACKING (Supplier)</div>
+    <table class="wb">
+      <tr class="sec po rule"><td colspan="18">PO NO. ${esc(poBannerList(ctx))}</td></tr>
+      <tr><th rowspan="2">SR. NO.</th><th rowspan="2">PO NO.</th><th>CODE</th><th>GD CODE</th><th>OSWIN CODE</th>
+        <th>SIZE</th><th>LENGTH</th><th colspan="2">PACKING</th>
+        <th rowspan="2">DESCRIPTION</th><th rowspan="2">BAR CODES</th><th rowspan="2">HSN CODE</th>
+        <th colspan="2">QUANTITY</th><th colspan="2">VOLUMN</th><th colspan="2">TOTAL</th></tr>
+      <tr class="hd2"><th class="gd" colspan="3">${esc(groups[0] || "")}</th>
+        <th>MM / IN</th><th>MM</th><th>UNIT</th><th data-k="packbox">BOX</th>
+        <th data-k="qty">PCS</th><th data-k="box">BOX</th><th data-k="volbox">PER BOX</th><th data-k="voltot">TOTAL</th>
+        <th data-k="nettot">NET WT</th><th data-k="grosstot">GROSS WT</th></tr>
+      ${body}
+      <tr class="tot"><td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td>
+        <td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td>
+        <td>TOTAL</td><td></td>
+        <td class="r" data-t="int" data-sum="qty">${sum(rows, "pieces")}</td>
+        <td class="r" data-t="int" data-sum="box">${sum(rows, "boxes")}</td>
+        <td></td>
+        <td class="r" data-t="num" data-sum="voltot">${wbFixed(sum(rows, "volTotal"), 2)}</td>
+        <td class="r" data-t="num3" data-sum="nettot">${wbFixed(sum(rows, "netTotal"), 3)}</td>
+        <td class="r" data-t="num3" data-sum="grosstot">${wbFixed(sum(rows, "grossTotal"), 3)}</td></tr>
+    </table>`;
+  return { name: "Packing_7", html, sheet: supplierPackingSheet(ctx, rows) };
 };
+/* Doc 8 · Purchase (Supplier) — against 8-Purchase.xlsx. The packing sheet
+   without the volumes and weights, and with what we pay the factory on the end:
+   the price columns are headed with the date the rate was agreed, and the sheet
+   closes on TOTAL → IGST @ 18% → INV VALUE, all three by formula. */
+function supplierPurchaseSheet(ctx, rows) {
+  const S = {
+    ...P7,
+    money: { font: "ref", border: "box", valign: "center", fmt: RUPEE },
+    totMoney: { font: "refb", border: "box", valign: "center", fmt: RUPEE },
+    // Their two closing lines are set a point larger than the sheet.
+    tailLabel: { font: "refb11", border: "box", valign: "center", fmt: RUPEE },
+    tailBlank: { font: "ref", border: false, valign: "center" },
+  };
+  const H = (v) => ({ v, s: S.head });
+  const groups = [...new Set(rows.map((r) => String(r.it.group || "").trim()).filter(Boolean))];
+  const firstBand = groups.length ? groups[0] : "";
+
+  const out = [
+    [{ v: `PO NO. ${poBannerList(ctx)}`, s: S.banner }, ...Array(15).fill({ v: "", s: S.banner })],
+    [{ v: "SR. NO.", s: S.headW }, { v: "PO NO.", s: S.headW },
+      { v: "CODE ", s: S.headRT }, { v: "GD CODE", s: S.headV }, { v: "OSWIN CODE", s: S.headTL },
+      H("SIZE "), H("LENGTH"), { v: "PACKING ", s: S.headL }, { v: "", s: S.headR },
+      { v: "DESCRIPTION", s: S.headT }, { v: "BAR CODES", s: S.headT }, { v: "HSN CODE", s: S.headT },
+      { v: "QUANTITY", s: S.headL }, { v: "", s: S.headR },
+      { v: ddmm(ctx.inv.date), s: S.head }, { v: "", s: S.head }],
+    [{ v: "", s: S.headW }, { v: "", s: S.headW },
+      { v: firstBand, s: S.bandC }, { v: "", s: S.bandD }, { v: "", s: S.bandD },
+      H("MM / IN"), H("MM"), H("UNIT"), H("BOX"),
+      { v: "", s: S.headB }, { v: "", s: S.headB }, { v: "", s: S.headB },
+      H("PCS"), H("BOX"), H("UNIT"), H("TOTAL")],
+  ];
+  const heights = [undefined, 12.75, undefined];
+
+  let band = firstBand;
+  let first = 0;
+  let last = 0;
+  rows.forEach((r) => {
+    const g = String(r.it.group || "").trim();
+    if (g && g !== band) {
+      band = g;
+      out.push([{ v: "", s: S.sr }, { v: "", s: S.po },
+        { v: g, s: S.bandC }, { v: "", s: S.bandD }, { v: "", s: S.bandD },
+        ...[S.mid, S.mid, S.mid, S.mid, S.desc, S.bar, S.hsn, S.num, S.num, S.money, S.money]
+          .map((s) => ({ v: "", s }))]);
+      heights.push(15);
+    }
+    const line = out.length + 1;
+    const it = r.it;
+    const hsn = hsnValue(it);
+    out.push([
+      { v: r.range || "", s: S.sr },
+      { v: poStack(r.pos), s: S.po },
+      { v: it.code || "", s: S.codeC },
+      { v: it.gd || "", s: S.code },
+      { v: it.oswin || "", s: S.code },
+      { v: it.size || "", s: S.mid },
+      { v: it.length || "", s: S.mid },
+      { v: it.packUnit || "", s: S.mid },
+      { v: r.packing, t: "n", s: S.mid },
+      { v: bcDescription(it), s: S.desc },
+      { v: String(it.barcode || ""), t: "s", s: S.bar },
+      hsn == null ? { v: String(it.hsn || ""), t: "s", s: S.mid } : { v: hsn, t: "n", s: S.hsn },
+      { v: r.pieces, t: "n", s: S.num },
+      { f: `$M${line}/$I${line}`, s: S.num },
+      { v: r.valUnit, t: "n", s: S.money },
+      { f: `O${line}*$M${line}`, s: S.money },
+    ]);
+    if (!first) first = line;
+    last = line;
+    heights.push(25.5);
+  });
+
+  const st = (col, style) => ({ f: first ? `SUBTOTAL(9,${col}${first}:${col}${last})` : "0", s: style });
+  if (rows.length) {
+    out.push([
+      null, null, { v: "", s: S.endGd }, { v: "", s: S.end }, { v: "", s: S.end },
+      { v: "", s: S.endL }, { v: "", s: S.endL }, { v: "", s: S.endL }, { v: "", s: S.endL },
+      { v: "", s: S.endR }, { v: "TOTAL", s: S.tot }, { v: "", s: S.tot },
+      st("M", S.totV), st("N", S.totV), { v: "", s: S.money }, st("P", S.totMoney),
+    ]);
+    const valueRow = out.length;
+    const blanks = Array(14).fill(null).map(() => ({ v: "", s: S.tailBlank }));
+    out.push([...blanks, { v: "IGST @ 18%", s: S.tailLabel },
+      { f: `ROUND(P${valueRow}*18%,0)`, s: S.totMoney }]);
+    heights[out.length - 1] = 15;
+    out.push([...blanks, { v: "INV VALUE", s: S.tailLabel },
+      { f: `SUM(P${valueRow}:P${valueRow + 1})`, s: S.totMoney }]);
+    heights[out.length - 1] = 15;
+  }
+
+  return fitSheet({
+    name: "Purchase",
+    rows: out,
+    heights,
+    merges: ["A1:P1", "A2:A3", "B2:B3", "H2:I2", "J2:J3", "K2:K3", "L2:L3", "M2:N2", "O2:P2"],
+    widths: [9.140625, 9.140625, 13.42578125, 12.5703125, 14.5703125, 7.7109375, 8.5703125, 6, 6.140625,
+      25.140625, 14.28515625, 14.28515625, 9.140625, 9.140625, 11.140625, 13.42578125],
+    defaultColWidth: 9.140625,
+    defaultRowHeight: 12.75,
+    colStyle: { font: "ref", border: false, valign: "center" },
+    page: {
+      paper: 9, orientation: "landscape", scale: 40, fit: true, fitH: 0,
+      margins: { left: 0.39370078740157499, right: 0.39370078740157499, top: 0.39370078740157499, bottom: 0.39370078740157499, header: 0, footer: 0 },
+    },
+  });
+}
+
 B["8"] = (ctx) => {
-  const cols = [
-    { h: "Sr No", c: 1, f: (r) => r.range }, { h: "PO No", f: (r) => r.pos.join(", ") },
-    { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "OSWIN Code", f: (r) => esc(r.it.oswin) },
-    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) },
-    { h: "Packing", c: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
-    { h: "Description", f: (r) => esc(r.it.description) }, { h: "Bar Codes", f: (r) => esc(r.it.barcode) }, { h: "HSN", f: (r) => esc(r.it.hsn) },
-    { h: "Qty Pcs", r: 1, key: "qty", t: "int", fml: QTY_FROM_BOX, f: (r) => r.pieces.toLocaleString("en-IN") },
-    { h: "Box", r: 1, key: "box", t: "int", v: (r) => r.boxes, f: (r) => r.boxes },
-    { h: "Value Unit ₹", r: 1, key: "valunit", t: "inr", v: (r) => r.valUnit, f: (r) => num(r.valUnit) },
-    { h: "Value Total ₹", r: 1, key: "valtot", t: "inr", fml: "{qty}*{valunit}", f: (r) => num(r.valTotal) },
-  ];
-  const foot = (rows) => [{ v: "TOTAL", span: 11 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
-    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" }, { v: "" },
-    { v: num(sum(rows, "valTotal")), r: 1, sum: "valtot", t: "inr" }];
-  return { name: "Purchase_8", html: supplierTable(ctx, cols, foot, "8 · PURCHASE (Supplier)", `PO NO : ${poHeaderList(ctx)}`) };
+  const rows = L(ctx);
+  const groups = [...new Set(rows.map((r) => String(r.it.group || "").trim()).filter(Boolean))];
+  let band = groups.length ? groups[0] : "";
+  const value = sum(rows, "valTotal");
+  const igst = Math.round(value * 0.18);
+  const body = rows.map((r) => {
+    const it = r.it;
+    const g = String(it.group || "").trim();
+    const open = g && g !== band ? (band = g, `<tr class="band"><td></td><td></td>`
+      + `<td class="gd" colspan="3">${esc(g)}</td>${"<td></td>".repeat(11)}</tr>`) : "";
+    return `${open}<tr>
+      <td class="c">${esc(r.range)}</td>
+      <td class="po">${esc(poStack(r.pos)).replace(/\n/g, "<br>")}</td>
+      <td class="gd">${esc(it.code)}</td>
+      <td class="gd">${esc(it.gd)}</td>
+      <td class="gd">${esc(it.oswin)}</td>
+      <td class="c">${esc(it.size)}</td>
+      <td class="c">${esc(it.length)}</td>
+      <td class="c">${esc(it.packUnit || "")}</td>
+      <td class="c" data-t="int" data-v="${r.packing}">${r.packing}</td>
+      <td class="desc b">${esc(bcDescription(it)).replace(/\n/g, "<br>")}</td>
+      <td class="code">${esc(it.barcode)}</td>
+      <td class="code">${esc(hsnText(it))}</td>
+      <td class="r" data-t="int" data-v="${r.pieces}">${r.pieces}</td>
+      <td class="r" data-t="int" data-f="{qty}/{packbox}">${r.boxes}</td>
+      <td class="r" data-t="inr" data-v="${r.valUnit}">${wbRupee(r.valUnit)}</td>
+      <td class="r" data-t="inr" data-f="{qty}*{valunit}">${wbRupee(r.valTotal)}</td>
+    </tr>`;
+  }).join("");
+
+  const html = `<div class="title">8 · PURCHASE (Supplier)</div>
+    <table class="wb">
+      <tr class="sec po rule"><td colspan="16">PO NO. ${esc(poBannerList(ctx))}</td></tr>
+      <tr><th rowspan="2">SR. NO.</th><th rowspan="2">PO NO.</th><th>CODE</th><th>GD CODE</th><th>OSWIN CODE</th>
+        <th>SIZE</th><th>LENGTH</th><th colspan="2">PACKING</th>
+        <th rowspan="2">DESCRIPTION</th><th rowspan="2">BAR CODES</th><th rowspan="2">HSN CODE</th>
+        <th colspan="2">QUANTITY</th><th colspan="2">${esc(ddmm(ctx.inv.date))}</th></tr>
+      <tr class="hd2"><th class="gd" colspan="3">${esc(groups[0] || "")}</th>
+        <th>MM / IN</th><th>MM</th><th>UNIT</th><th data-k="packbox">BOX</th>
+        <th data-k="qty">PCS</th><th data-k="box">BOX</th>
+        <th data-k="valunit">UNIT</th><th data-k="valtot">TOTAL</th></tr>
+      ${body}
+      <tr class="tot"><td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td>
+        <td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td>
+        <td>TOTAL</td><td></td>
+        <td class="r" data-t="int" data-sum="qty">${sum(rows, "pieces")}</td>
+        <td class="r" data-t="int" data-sum="box">${sum(rows, "boxes")}</td>
+        <td></td>
+        <td class="r" data-t="inr" data-sum="valtot">${wbRupee(value)}</td></tr>
+      <tr class="tot"><td class="nb" colspan="14"></td><td>IGST @ 18%</td>
+        <td class="r" data-t="inr" data-v="${igst}">${wbRupee(igst)}</td></tr>
+      <tr class="tot"><td class="nb" colspan="14"></td><td>INV VALUE</td>
+        <td class="r" data-t="inr" data-v="${value + igst}">${wbRupee(value + igst)}</td></tr>
+    </table>`;
+  return { name: "Purchase_8", html, sheet: supplierPurchaseSheet(ctx, rows) };
 };
-B["9"] = (ctx) => {
+/* Doc 9 · Sales (Supplier) — against 9-Sales.xlsx. The purchase sheet priced
+   the other way round: FOB per piece in dollars, then the RBI reference in
+   rupees at the day's rate, which lives in one cell (Q3) exactly as it does in
+   their sheet — change it there and the whole column re-values. The price date
+   sits beside the banner in red, and there is no HSN column on this one. */
+function supplierSalesSheet(ctx, rows) {
   const ex = exRate(ctx);
-  const cols = [
-    { h: "Sr No", c: 1, f: (r) => r.range }, { h: "PO No", f: (r) => r.pos.join(", ") },
-    { h: "Code", f: (r) => esc(r.it.code) }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "GL Code", f: (r) => esc(r.it.gl) },
-    { h: "Size", c: 1, f: (r) => esc(r.it.size) }, { h: "Length", c: 1, f: (r) => esc(r.it.length) },
-    { h: "Packing", c: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
-    { h: "Description", f: (r) => esc(r.it.description) }, { h: "Bar Codes", f: (r) => esc(r.it.barcode) },
-    { h: "Qty Pcs", r: 1, key: "qty", t: "int", fml: QTY_FROM_BOX, f: (r) => r.pieces.toLocaleString("en-IN") },
-    { h: "Box", r: 1, key: "box", t: "int", v: (r) => r.boxes, f: (r) => r.boxes },
-    { h: "FOB/pc $", r: 1, key: "fobpc", t: "usd4", v: (r) => r.fobPc, f: (r) => usdp(r.fobPc) },
-    { h: "Total FOB $", r: 1, key: "fobtot", t: "usd", fml: "{qty}*{fobpc}", f: (r) => usd(r.fobTotal) },
-    { h: "RBI Ref ₹", r: 1, key: "rbi", t: "inr", fml: `{fobtot}*${ex}`, f: (r) => num(r.rbiTotal) },
+  const S = {
+    ...P7,
+    dateRed: { font: "refr", border: "b", align: "center", valign: "center" },
+    gdC: { font: "refgd", border: "box", align: "center", valign: "center" },
+    usd: { font: "ref", border: "box", valign: "center", fmt: USD },
+    rs: { font: "ref", border: "box", valign: "center", fmt: RS },
+    inr: { font: "ref", border: "box", valign: "center", fmt: RUPEE },
+    rateHd: { font: "refb", border: "box", align: "center", valign: "center", fmt: RS },
+    rate: { font: "refb", border: "box", valign: "center", fmt: RUPEE },
+    totUsd: { font: "refb", border: "box", valign: "center", fmt: USD },
+    totRs: { font: "refb", border: "box", valign: "center", fmt: RS },
+    totInr: { font: "refb", border: "box", valign: "center", fmt: RUPEE },
+  };
+  const H = (v) => ({ v, s: S.head });
+  const groups = [...new Set(rows.map((r) => String(r.it.group || "").trim()).filter(Boolean))];
+  const firstBand = groups.length ? groups[0] : "";
+
+  const out = [
+    [{ v: `PO NO. ${poBannerList(ctx)}`, s: S.banner }, ...Array(12).fill({ v: "", s: S.banner }),
+      { v: ddmm(ctx.inv.date), s: S.dateRed }, { v: "", s: S.dateRed },
+      { v: "", s: S.banner }, { v: "", s: S.banner }],
+    [{ v: "SR. NO.", s: S.headW }, { v: "PO NO.", s: S.headW },
+      { v: "CODE ", s: S.headRT }, { v: "GD CODE", s: S.headV }, { v: "GL CODE", s: S.head },
+      H("SIZE "), H("LENGTH"), { v: "PACKING ", s: S.headL }, { v: "", s: S.headR },
+      { v: "DESCRIPTION", s: S.headT }, { v: "BAR CODES", s: S.headT },
+      { v: "QUANTITY", s: S.headL }, { v: "", s: S.headR },
+      H("FOB/PC US$"), H(""), H("RBI REFERENCE"), H("")],
+    [{ v: "", s: S.headW }, { v: "", s: S.headW },
+      { v: firstBand, s: S.bandC }, { v: "", s: S.bandD }, { v: "", s: S.head },
+      H("MM / IN"), H("MM"), H("UNIT"), H("BOX"),
+      { v: "", s: S.headB }, { v: "", s: S.headB },
+      H("PCS"), H("BOX"), H("Unit"), H("Total"),
+      { v: "RATE @ Rs.", s: S.rateHd }, { v: ex, t: "n", s: S.rate }],
   ];
-  const foot = (rows) => [{ v: `TOTAL · Rate @ Rs. ${ex}`, span: 10 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
-    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" }, { v: "" },
-    { v: usd(sum(rows, "fobTotal")), r: 1, sum: "fobtot", t: "usd" },
-    { v: num(sum(rows, "rbiTotal")), r: 1, sum: "rbi", t: "inr" }];
-  return { name: "Sales_9", html: supplierTable(ctx, cols, foot, "9 · SALES (Supplier)", `PO NO : ${poHeaderList(ctx)} · Rate @ Rs. ${ex}`) };
+  const heights = [undefined, 12.75, undefined];
+
+  let band = firstBand;
+  let first = 0;
+  let last = 0;
+  rows.forEach((r) => {
+    const g = String(r.it.group || "").trim();
+    if (g && g !== band) {
+      band = g;
+      out.push([{ v: "", s: S.sr }, { v: "", s: S.po },
+        { v: g, s: S.bandC }, { v: "", s: S.bandD }, { v: "", s: S.gdC },
+        ...[S.mid, S.mid, S.mid, S.mid, S.desc, S.bar, S.num, S.num, S.usd, S.usd, S.rs, S.inr]
+          .map((s) => ({ v: "", s }))]);
+      heights.push(15);
+    }
+    const line = out.length + 1;
+    const it = r.it;
+    out.push([
+      { v: r.range || "", s: S.sr },
+      { v: poStack(r.pos), s: S.po },
+      { v: it.code || "", s: S.codeC },
+      { v: it.gd || "", s: S.code },
+      { v: it.gl || "", s: S.gdC },
+      { v: it.size || "", s: S.mid },
+      { v: it.length || "", s: S.mid },
+      { v: it.packUnit || "", s: S.mid },
+      { v: r.packing, t: "n", s: S.mid },
+      { v: bcDescription(it), s: S.desc },
+      { v: String(it.barcode || ""), t: "s", s: S.bar },
+      { v: r.pieces, t: "n", s: S.num },
+      { f: `$L${line}/$I${line}`, s: S.num },
+      { v: r.fobPc, t: "n", s: S.usd },
+      { f: `$L${line}*N${line}`, s: S.usd },
+      { f: `IF(L${line}=0,0,Q${line}/L${line})`, s: S.rs },
+      { f: `O${line}*$Q$3`, s: S.inr },
+    ]);
+    if (!first) first = line;
+    last = line;
+    heights.push(25.5);
+  });
+
+  const st = (col, style) => ({ f: first ? `SUBTOTAL(9,${col}${first}:${col}${last})` : "0", s: style });
+  out.push(rows.length ? [
+    null, null, { v: "", s: S.endGd }, { v: "", s: S.end }, { v: "", s: S.endGd },
+    { v: "", s: S.endL }, { v: "", s: S.endL }, { v: "", s: S.endL }, { v: "", s: S.endL },
+    { v: "", s: S.endR }, { v: "TOTAL", s: S.tot },
+    st("L", S.totV), st("M", S.totV), { v: "", s: S.num },
+    st("O", S.totUsd), { v: "", s: S.totRs }, st("Q", S.totInr),
+  ] : []);
+
+  return fitSheet({
+    name: "Sales",
+    rows: out,
+    heights,
+    merges: ["A1:M1", "N1:O1", "A2:A3", "B2:B3", "E2:E3", "H2:I2", "J2:J3", "K2:K3", "L2:M2", "N2:O2", "P2:Q2"],
+    widths: [9.140625, 9.140625, 13.42578125, 12.5703125, 13.42578125, 7.7109375, 8.5703125, 6, 6.140625,
+      25.140625, 14.28515625, 9.140625, 9.140625, 9.140625, 10.140625, 11.5703125, 13.42578125],
+    defaultColWidth: 9.140625,
+    defaultRowHeight: 12.75,
+    colStyle: { font: "ref", border: false, valign: "center" },
+    page: {
+      paper: 9, orientation: "landscape", scale: 40, fit: true, fitH: 0,
+      margins: { left: 0.39370078740157499, right: 0.39370078740157499, top: 0.39370078740157499, bottom: 0.39370078740157499, header: 0, footer: 0 },
+    },
+  });
+}
+
+B["9"] = (ctx) => {
+  const rows = L(ctx);
+  const ex = exRate(ctx);
+  const groups = [...new Set(rows.map((r) => String(r.it.group || "").trim()).filter(Boolean))];
+  let band = groups.length ? groups[0] : "";
+  const usd2 = (n) => `$${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const rs2 = (n) => `Rs. ${Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const body = rows.map((r) => {
+    const it = r.it;
+    const g = String(it.group || "").trim();
+    const open = g && g !== band ? (band = g, `<tr class="band"><td></td><td></td>`
+      + `<td class="gd" colspan="2">${esc(g)}</td>${"<td></td>".repeat(13)}</tr>`) : "";
+    const perPc = r.pieces ? r.rbiTotal / r.pieces : 0;
+    return `${open}<tr>
+      <td class="c">${esc(r.range)}</td>
+      <td class="po">${esc(poStack(r.pos)).replace(/\n/g, "<br>")}</td>
+      <td class="gd">${esc(it.code)}</td>
+      <td class="gd">${esc(it.gd)}</td>
+      <td class="gdc">${esc(it.gl)}</td>
+      <td class="c">${esc(it.size)}</td>
+      <td class="c">${esc(it.length)}</td>
+      <td class="c">${esc(it.packUnit || "")}</td>
+      <td class="c" data-t="int" data-v="${r.packing}">${r.packing}</td>
+      <td class="desc b">${esc(bcDescription(it)).replace(/\n/g, "<br>")}</td>
+      <td class="code">${esc(it.barcode)}</td>
+      <td class="r" data-t="int" data-v="${r.pieces}">${r.pieces}</td>
+      <td class="r" data-t="int" data-f="{qty}/{packbox}">${r.boxes}</td>
+      <td class="r" data-t="usd" data-v="${r.fobPc}">${usd2(r.fobPc)}</td>
+      <td class="r" data-t="usd" data-f="{qty}*{fobpc}">${usd2(r.fobTotal)}</td>
+      <td class="r" data-t="inr" data-v="${perPc}">${rs2(perPc)}</td>
+      <td class="r" data-t="inr" data-f="{fobtot}*${ex}">${wbRupee(r.rbiTotal)}</td>
+    </tr>`;
+  }).join("");
+
+  const html = `<div class="title">9 · SALES (Supplier)</div>
+    <table class="wb">
+      <tr class="sec po rule"><td colspan="13">PO NO. ${esc(poBannerList(ctx))}</td>
+        <td class="red c" colspan="2">${esc(ddmm(ctx.inv.date))}</td><td colspan="2"></td></tr>
+      <tr><th rowspan="2">SR. NO.</th><th rowspan="2">PO NO.</th><th>CODE</th><th>GD CODE</th><th rowspan="2">GL CODE</th>
+        <th>SIZE</th><th>LENGTH</th><th colspan="2">PACKING</th>
+        <th rowspan="2">DESCRIPTION</th><th rowspan="2">BAR CODES</th>
+        <th colspan="2">QUANTITY</th><th colspan="2">FOB/PC US$</th><th colspan="2">RBI REFERENCE</th></tr>
+      <tr class="hd2"><th class="gd" colspan="2">${esc(groups[0] || "")}</th>
+        <th>MM / IN</th><th>MM</th><th>UNIT</th><th data-k="packbox">BOX</th>
+        <th data-k="qty">PCS</th><th data-k="box">BOX</th>
+        <th data-k="fobpc">Unit</th><th data-k="fobtot">Total</th>
+        <th>RATE @ Rs.</th><th class="r" data-k="rbi">${wbRupee(ex)}</th></tr>
+      ${body}
+      <tr class="tot"><td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td>
+        <td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td><td class="o"></td>
+        <td>TOTAL</td>
+        <td class="r" data-t="int" data-sum="qty">${sum(rows, "pieces")}</td>
+        <td class="r" data-t="int" data-sum="box">${sum(rows, "boxes")}</td>
+        <td></td>
+        <td class="r" data-t="usd" data-sum="fobtot">${usd2(sum(rows, "fobTotal"))}</td>
+        <td class="nb"></td>
+        <td class="r" data-t="inr" data-sum="rbi">${wbRupee(sum(rows, "rbiTotal"))}</td></tr>
+    </table>`;
+  return { name: "Sales_9", html, sheet: supplierSalesSheet(ctx, rows) };
 };
 // Resolve the transport (transporter name + vehicle no) for a supplier on this
 // invoice — from the shipment vehicle details, falling back to the packing pick.
 function transportInfo(ctx, sid) {
   const v = (ctx.inv.vehicles || {})[sid] || {};
   let name = v.transportName || "", veh = v.vehicleNo || "";
+  const tid = v.transportId || (ctx.inv.packingTransports || {})[sid];
+  const t = (ctx.transports || []).find((x) => x.id === tid);
   if (!name) {
-    const tid = v.transportId || (ctx.inv.packingTransports || {})[sid];
-    const t = (ctx.transports || []).find((x) => x.id === tid);
     name = t?.name || ""; if (!v.vehicleNo && t) veh = veh || "";
   }
-  return { name: name || "—", veh: veh || "—" };
+  // The transporter's own GST/enrolment id — the e-way form asks for it.
+  return { name: name || "—", veh: veh || "—", transportId: t?.transportId || "" };
 }
-// One supplier's inward e-way block, with the transport detail beneath it.
+/* Doc 10 · E-way bill (inward) — laid out as the portal's own entry form
+   (Docs/Jaikvin Process/Numbering/10-E Way Bill - Format.pdf), so whoever keys
+   it in reads the boxes in the order the site asks for them. What the form
+   leaves for the operator to type — the supplier's own tax invoice number and
+   date, the distance, the truck number, the LR — prints as grey prompts, the
+   way their format sheet does.
+
+   The consignment is one line, as the portal takes it: the range's name, the
+   four-digit HSN chapter heading, total pieces, and the taxable value. Coming
+   from Daman to Maharashtra it is interstate, so the tax is all IGST.       */
+const EW_SHIP_TO = {
+  name: "ALL CARGO TERMINALS LTD", addr: "NEXT TO AMEYA CFS, JNPT AREA",
+  place: "Village Khopta", pin: "410206", state: "MAHARASHTRA",
+};
+const ewCommon = (arr, pick) => {
+  const seen = {};
+  arr.forEach((x) => { const k = String(pick(x) || "").trim(); if (k) seen[k] = (seen[k] || 0) + 1; });
+  return Object.entries(seen).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+};
+/* The form gives the street two lines and the town its own field, so an
+   address held as one string is broken at a comma near the middle. */
+const ewAddr = (addr) => {
+  const parts = String(addr || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length < 2) return [parts[0] || "", ""];
+  let n = 1;                                   // the first part always starts line one
+  let len = parts[0].length;
+  while (n < parts.length - 1 && len + parts[n].length <= 24) { len += parts[n].length + 2; n += 1; }
+  return [`${parts.slice(0, n).join(", ")},`, parts.slice(n).join(", ")];
+};
+/* What the consignment is called on the bill — the factory's range, not the
+   size band a particular line happens to sit in. */
+const ewGoods = (arr) => {
+  const rule = ewCommon(arr, (x) => x.it.stickerRule || "pp");
+  if (rule === "grn") return "NYLON MOULDED FITTINGS";
+  if (rule === "oswin") return "PP EXTRUDED PIPES";
+  return "PP MOULDED FITTINGS";
+};
+
 function eway10Block(ctx, sid, arr) {
-  const sp = supFor(ctx, sid), tr = transportInfo(ctx, sid);
-  const qty = sum(arr, "pieces"), taxable = sum(arr, "valTotal"), igst = taxable * 0.18;
-  return `<div class="title">E-WAY BILL (Inward / Purchase) — ${esc(sp.code || sp.name)}</div>
-    <table style="width:100%"><tr><td class="k">Transaction Type</td><td>Inward — Supply</td><td class="k">Document</td><td>Tax Invoice</td><td class="k">Date</td><td>${ddmm(ctx.inv.date)}</td></tr></table>
-    <table style="width:100%"><tr><td class="sec" colspan="2">Bill From / Despatch From</td><td class="sec" colspan="2">Bill To / Ship To</td></tr>
-      <tr><td class="k">Name</td><td>${esc(sp.name)}</td><td class="k">Name</td><td>${esc(ctx.EXPORTER.name)}</td></tr>
-      <tr><td class="k">GSTIN</td><td>${esc(sp.gstin)}</td><td class="k">GSTIN</td><td>${esc(ctx.EXPORTER.gstin)}</td></tr>
-      <tr><td class="k">Place</td><td>${esc(sp.place)}</td><td class="k">Place</td><td>Village Khopta, JNPT, Raigad 410206</td></tr></table>
-    <table><tr><th>Product</th><th>HSN</th><th>Qty</th><th>Unit</th><th>Taxable Value ₹</th><th>IGST %</th><th>IGST ₹</th><th>Total ₹</th></tr>
-      <tr><td>${esc(sp.name)} goods</td><td>${esc(arr[0].it.hsn)}</td><td class="r">${qty.toLocaleString("en-IN")}</td><td class="c">PCS</td><td class="r">${num(taxable)}</td><td class="c">18%</td><td class="r">${num(igst)}</td><td class="r">${num(taxable + igst)}</td></tr></table>
-    <table style="width:100%"><tr><td class="sec" colspan="4">Transport Detail — ${esc(sp.code || sp.name)}</td></tr>
-      <tr><td class="k">Transporter</td><td class="b">${esc(tr.name)}</td><td class="k">Vehicle No.</td><td class="b">${esc(tr.veh)}</td></tr></table>`;
+  const sp = supFor(ctx, sid);
+  const tr = transportInfo(ctx, sid);
+  const qty = sum(arr, "pieces");
+  const taxable = sum(arr, "valTotal");
+  const igst = Math.round(taxable * 0.18 * 100) / 100;
+  const goods = ewGoods(arr);
+  const hsn = (ewCommon(arr, (x) => x.it.hsn) || "").slice(0, 4);
+  const [sAddr1, sAddr2] = ewAddr(sp.addr);
+  const money = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const box = (v, cls = "") => `<td class="fld ${cls}">${v === "" ? "&nbsp;" : v}</td>`;
+  const ph = (v) => `<td class="fld ph">${esc(v)}</td>`;
+
+  const party = (title, right, name, gstin, state, addr1, addr2, place, pin, pinState) => `
+      <tr><td class="hd" colspan="2">${title}</td><td class="hd" colspan="3">${right}</td></tr>
+      <tr><td class="lbl">Name</td>${box(esc(name))}<td class="lbl">Address</td>${box(esc(addr1), "wide")}<td></td></tr>
+      <tr><td class="lbl">GSTIN</td>${box(esc(gstin))}<td class="lbl"></td>${box(esc(addr2), "wide")}<td></td></tr>
+      <tr><td class="lbl">State</td>${box(esc(state))}<td class="lbl">Place</td>${box(esc(place), "wide")}<td></td></tr>
+      <tr><td></td><td></td><td class="lbl">Pincode</td>${box(esc(pin))}${box(esc(pinState), "c")}</tr>`;
+
+  return `<div class="ew">
+    <table class="ewtop"><tr><td class="b">EWAY BILL FORMAT</td>
+      <td class="c">E - WAY BILL SYSTEM<br>e - WayBill Entry Form</td></tr></table>
+
+    <div class="lbl">Transaction details</div>
+    <table class="ewband"><tr>
+      <td class="b">Transaction&nbsp; Type</td><td class="i">Outward</td><td class="i on">Inward</td>
+      <td class="b">Sub Type</td><td class="i on">Supply</td><td class="i">Export</td><td class="i">Job Work</td>
+      <td class="i">SKD / CKD</td><td class="i">Recipient Not Known</td><td class="i">For Own Use</td>
+      <td class="i">Exhibition Or Fairs</td><td class="i">Line Sales</td><td class="i">Others</td></tr></table>
+
+    <table class="ewline"><tr>
+      <td class="lbl">Document Type</td>${ph("Tax Invoice")}
+      <td class="lbl">Document No</td>${ph("Your Tax Invoice No")}
+      <td class="lbl">Document Date</td>${ph("Your Tax Invoice Date")}</tr></table>
+
+    <table class="ewgrid">
+      ${party("Bill From", "Despatch From", sp.name, sp.gstin, sp.state || "DAMAN AND DIU",
+    sAddr1, sAddr2, sp.place, sp.pin, sp.state || "DAMAN AND DIU")}
+      <tr class="gap"><td colspan="5"></td></tr>
+      ${party("Bill To", "Ship To", ctx.EXPORTER.name, ctx.EXPORTER.gstin, "MAHARASHTRA",
+    EW_SHIP_TO.name, EW_SHIP_TO.addr, EW_SHIP_TO.place, EW_SHIP_TO.pin, EW_SHIP_TO.state)}
+    </table>
+
+    <div class="lbl">Item Details</div>
+    <table class="ewitems">
+      <tr class="hd"><td>Product Name</td><td>Descripton</td><td>HSN</td><td>Quantity</td><td>Unit</td>
+        <td>Value/Taxable<br>Value(RS)</td><td colspan="4">Tax Rate (C+S+I+C)</td></tr>
+      <tr>${box(esc(goods))}${box(esc(goods))}${box(esc(hsn), "c")}${box(qty, "c")}${box("PCS", "c")}
+        ${box(money(taxable), "c")}${box("0.00", "c")}${box("0.00", "c")}${box("18.00", "c")}${box("0.00", "c")}</tr>
+    </table>
+
+    <table class="ewtot">
+      <tr class="hd"><td>Total Amt / Taxable Amt</td><td>CGST Amount</td><td>SGST Amount</td>
+        <td>IGST Amount</td><td>CESS Amount</td><td>Total Inv . Value</td></tr>
+      <tr>${box(money(taxable), "c")}${box("0.00", "c")}${box("0.00", "c")}
+        ${box(money(igst), "c")}${box("0.00", "c")}${box(money(taxable + igst), "c")}</tr>
+    </table>
+
+    <div class="lbl">Transportation Details</div>
+    <table class="ewline"><tr>
+      <td class="lbl">Transpoter Name</td>${box(esc(tr.name === "—" ? "" : tr.name), "c")}
+      <td class="lbl">Transpoter ID</td>${box(esc(tr.transportId || ""), "c")}
+      <td class="lbl">Approximate Distance (inKM)</td>${box("", "c")}</tr></table>
+
+    <div class="lbl">PART - B</div>
+    <table class="ewpart">
+      <tr><td class="lbl">Mode</td><td class="fld c on">Road</td><td class="fld c">Rail</td><td class="fld c">Air</td><td class="fld c">Ship</td></tr>
+      <tr><td class="lbl">Vehicle Type</td><td class="fld c on">Regular</td><td class="fld c" colspan="3">Over Dimensional Cargo</td></tr>
+      <tr><td class="lbl">Vehicle No</td>${tr.veh && tr.veh !== "—"
+    ? `<td class="fld c" colspan="4">${esc(tr.veh)}</td>`
+    : `<td class="fld c ph" colspan="4">Please give the Truck Number Here</td>`}</tr>
+      <tr><td class="lbl">Transpoter Doc. No &amp; Date</td><td class="fld c ph" colspan="2">LR Number</td>
+        <td class="fld c ph" colspan="2">LR Date</td></tr>
+    </table>
+  </div>`;
 }
 // Supplier-wise e-way documents (one per supplier) — for the split download.
 export function ewaySupplierDocs(ctx) {
@@ -1490,23 +2145,111 @@ B["11A"] = (ctx) => {
     <tr class="tot"><td colspan="2">TOTAL</td><td class="r">${sum(L(ctx), "boxes")}</td><td class="r">${num(sum(L(ctx), "netTotal"))}</td><td class="r">${num(sum(L(ctx), "grossTotal"))}</td></tr></table>`;
   return { name: "Delivery_Order_11A", html };
 };
-B["11"] = (ctx) => {
-  const s = ctx.inv.ship || {};
-  const sup = supFor(ctx, L(ctx)[0]?.supId);
-  const html = `<div class="title">DESPATCH INSTRUCTIONS</div>${exporterBlock(ctx)}<br>
-    <table style="width:100%">
-      <tr><td class="k">Ref No.</td><td>JG/${new Date(ctx.inv.date).getFullYear()}/DI</td><td class="k">Date</td><td>${ddmm(ctx.inv.date)}</td></tr>
-      <tr><td class="k">To (Supplier)</td><td>${esc(sup.name || "—")}, ${esc(sup.place || "")}</td><td class="k">Despatch Date</td><td>${ddmm(ctx.inv.date)}</td></tr>
-      <tr><td class="k">Ref Export Order</td><td colspan="3">${esc(poHeaderList(ctx))}</td></tr>
-    </table>
-    <p><b>1)</b> All packages to be marked as ${esc(s.marks || "GDW")} / ${esc(s.pkgs || "")}.<br>
-    <b>2)</b> Book the consignment for delivery at JNPT / Dronagiri (Door Delivery).<br>
-    <b>3)</b> Lorry receipt in our name a/c M/s Velji Dosabhai &amp; Sons Pvt Ltd, Mumbai, freight to pay.<br>
-    <b>4)</b> L/R to show goods for export.<br>
-    <b>5)</b> Container No. ${esc(s.container || "—")} · Vessel ${esc(s.vessel || "—")}.</p>
-    <p>Upon despatch send us your invoice. For ${esc(ctx.EXPORTER.name)} — Proprietor.</p>`;
-  return { name: "Despatch_Instructions_11", html };
+/* Doc 11 · Despatch Instructions — the letter each factory receives telling it
+   how to send the goods (Docs/Jaikvin Process/Numbering/11-Despatch
+   Instructions.pdf). On the letterhead, and addressed to one supplier, so it is
+   raised supplier by supplier like the supplier order and the e-way bill.
+
+   Everything the client highlights on their copy is what changes per despatch —
+   the reference and date, the export orders, the despatch day, and the marks
+   and package count — and every one of those is filled from the invoice here.
+   The five instructions themselves are their standing terms, printed as they
+   stand.                                                                    */
+const CFS = {
+  agent: "Velji Dosabhai & Sons Pvt. Ltd.",
+  lines: ["All Cargo Terminals Ltd (Transindia Logistics Pvt Ltd),",
+    "Next To Ameya CFS, Village Khopta, JNPT Area, Raigad-410 206."],
+  contacts: "Mr Ganpat Shinde Mobile: 9867873029 / Mr Gorakh Mobile: 9321349118 / Mr. Khandu Mobile : 7498802940",
 };
+const LETTER_DAY = (s) => {
+  if (!s) return "";
+  const d = new Date(s);
+  return `${d.toLocaleDateString("en-GB", { weekday: "long" }).toUpperCase()}, ${ddmm(s)}`;
+};
+const LETTER_DATE = (s) => (s ? new Date(s).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : "");
+const letterRef = (ctx) => {
+  const yr = new Date(ctx.inv.date).getFullYear();
+  const n = String(ctx.inv.invoiceNo || "").match(/\d+/);
+  return `JG/${yr}/${n ? n[0].slice(-4) : "DI"}`;
+};
+
+/* The marking line: the buyer's mark, the serial run this supplier's boxes
+   carry, and how many packages that comes to. */
+function despatchMarks(ctx, arr) {
+  const s = ctx.inv.ship || {};
+  const mark = (s.marks || "G.D.W").replace(/[\d\s.–-]+$/, "").trim() || "G.D.W";
+  const from = String(arr[0]?.range || "").split("-")[0] || "";
+  const to = String(arr[arr.length - 1]?.range || "").split("-").pop() || "";
+  const pkgs = sum(arr, "boxes");
+  const kinds = s.pkgs ? ` (${s.pkgs})` : "";
+  return `All Packages to be marked as ${mark}${from ? ` ${from} – ${to}` : ""} / ${pkgs} Packages${kinds}`;
+}
+
+function despatch11Block(ctx, sid, arr) {
+  const sp = supFor(ctx, sid);
+  const E = ctx.EXPORTER;
+  const [addr1, addr2] = ewAddr(sp.addr);
+  // The town is only added if the street lines have not already named it.
+  const place = String(sp.place || "");
+  const named = place && addr2.toLowerCase().includes(place.toLowerCase());
+  const to = [`Messrs. ${sp.name || ""},`, addr1, [addr2, named ? "" : place, sp.pin].filter(Boolean).join(" ").replace(/\s+/g, " ")]
+    .filter(Boolean).map(esc).join("<br>");
+
+  const step = (n, body) => `<tr><td class="n">${n})</td><td>${body}</td></tr>`;
+  return `<div class="dl">
+    <table class="dlhead"><tr>
+      <td><div class="brand">${esc(E.name)}</div><div class="sub">${esc(E.sub || "Merchant Exporters")}</div></td>
+      <td class="lg"><img src="${LOGO_SRC}" alt=""></td></tr></table>
+    <div class="rule"></div>
+
+    <div class="ref">${esc(letterRef(ctx))}<br>${esc(LETTER_DATE(ctx.inv.date))}</div>
+    <p class="to">${to}</p>
+    <p class="refline"><span class="k">Ref</span>&nbsp;&nbsp;&nbsp;Our Export Order ${esc(poBannerList(ctx))}</p>
+    <p class="b">DESPATCH DATE: ${esc(LETTER_DAY(ctx.inv.date))}</p>
+    <p>With reference to the above, we give hereunder the dispatch instructions:</p>
+
+    <table class="ins">
+      ${step(1, esc(despatchMarks(ctx, arr)))}
+      ${step(2, "Book the consignment for delivery at JNPT/Dhronagiri (Door Delivery)")}
+      ${step(3, `Lorry receipt to be made in our name a/c. M/s. ${esc(CFS.agent)} Mumbai, on freight to pay.`)}
+      ${step(4, "L/R to show goods for export")}
+      ${step(5, `Goods to be delivered at:<br>Messrs ${esc(CFS.agent)},<br>${CFS.lines.map(esc).join("<br>")}`
+    + `<br>Person to contact: ${esc(CFS.contacts)}`
+    + `<br>They will assist them to off-load the cargo. All the contacts are of the representative of M/s. ${esc(CFS.agent)}`)}
+    </table>
+
+    <p>We hope the matter is clear and awaiting your early response.&nbsp; Upon dispatch of the goods send us your Invoice.</p>
+    <p>Thanking you,</p>
+    <p>Yours faithfully,<br>For ${esc(E.name)},</p>
+    <p class="sign">Proprietor</p>
+
+    <div class="rule"></div>
+    <table class="dlfoot"><tr>
+      <td><div>${esc(E.iec)}</div><div class="b">${esc(E.gstin)}</div></td>
+      <td class="r"><div>+91-${esc(E.tel)}</div><div class="b">${esc(E.email)}</div><div>${esc(E.addr)}</div></td>
+    </tr></table>
+  </div>`;
+}
+
+/* One despatch instruction per supplier — for the split download. */
+export function despatchSupplierDocs(ctx) {
+  const lines = L(ctx), bySup = {};
+  lines.forEach((x) => { (bySup[x.supId] = bySup[x.supId] || []).push(x); });
+  return Object.entries(bySup).map(([sid, arr]) => {
+    const sp = supFor(ctx, sid);
+    return {
+      supplierId: sid, code: sp.code || sid, name: sp.name || sid,
+      docName: `Despatch_Instructions_11_${(sp.code || sid).replace(/[^A-Za-z0-9]+/g, "_")}`,
+      html: despatch11Block(ctx, sid, arr),
+    };
+  });
+}
+
+B["11"] = (ctx) => ({
+  name: "Despatch_Instructions_11",
+  html: despatchSupplierDocs(ctx).map((d) => d.html).join('<div class="pgbrk"></div>'),
+  page: "portrait",
+});
 
 /* ---------- Stage C · Pre-shipment (12–29) ---------- */
 B["12"] = (ctx) => {
@@ -2032,9 +2775,16 @@ export const DOC_META = {
 export const PO_DOCS = DOC_GROUPS.find((g) => g.k === "PO").docs.slice();
 export const isPoDoc = (no) => PO_DOCS.includes(String(no));
 
+/* Papers with nothing to put in a spreadsheet. The e-way bill is a form to be
+   keyed into the portal and the despatch instruction is a letter — both are
+   read on paper, and a sheet of their text would only be in the way. They
+   download as PDF alone. */
+export const PDF_ONLY_DOCS = ["10", "11"];
+export const isPdfOnly = (no) => PDF_ONLY_DOCS.includes(String(no));
+
 /* The two papers each supplier receives on their own, rather than as one
    combined sheet: the supplier purchase order and the inward e-way bill. */
-export const SUPPLIER_SPLIT_DOCS = { 6: supplierPoDocs, 10: ewaySupplierDocs };
+export const SUPPLIER_SPLIT_DOCS = { 6: supplierPoDocs, 10: ewaySupplierDocs, 11: despatchSupplierDocs };
 export function supplierSplitDocs(no, ctx) {
   const fn = SUPPLIER_SPLIT_DOCS[String(no)];
   try { return fn ? fn(ctx) : []; } catch (e) { return []; }
@@ -2069,6 +2819,7 @@ export function hasBuilder(no) { return !!B[no] || ["36", "37", "38", "39"].incl
    Both formats come off the same parts, so an Excel and a PDF of the same
    document can never show different figures. */
 export function downloadDocumentExcel(no, ctx, report) {
+  if (isPdfOnly(no)) return false;              // a form and a letter — PDF only
   const parts = documentParts(no, ctx, report);
   if (!parts.length) { alert(`Document ${no} generator not available.`); return false; }
   downloadDocsExcel(documentFilename(no, ctx, report), parts);
@@ -2102,7 +2853,7 @@ function stageParts(numbers, ctxFor, report) {
 export function downloadStageExcel(filename, numbers, ctxFor, report) {
   const parts = numbers.flatMap((no) => {
     const ctx = resolveCtx(ctxFor, no);
-    if (!ctx) return [];
+    if (!ctx || isPdfOnly(no)) return [];       // the PDF-only papers sit this one out
     let p = [];
     try { p = documentParts(no, ctx, report); } catch (e) { return []; }
     return p.map((x, i) => ({ ...x, name: `${no}${i || p.length > 1 ? ` ${x.name}` : ""}` }));
@@ -2124,6 +2875,7 @@ export const buildDocument = (no, ctx, report) => downloadDocumentExcel(no, ctx,
 
 /** One supplier's copy of a split document (6 · supplier PO, 10 · e-way). */
 export function downloadSupplierDoc(no, ctx, supplierId, format = "excel") {
+  if (isPdfOnly(no) && format !== "pdf") return false;
   const d = supplierSplitDocs(no, ctx).find((x) => x.supplierId === supplierId);
   if (!d) return false;
   const filename = `${d.docName}_${String(ctx.po || ctx.inv.invoiceNo || "").replace(/[^A-Za-z0-9]+/g, "-")}`;
@@ -2165,8 +2917,15 @@ export const PREVIEW_CSS = `
      banner across the top and the header split over two lines — what the
      download opens as, cell for cell. */
   .docprev table.wb{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#000;}
-  .docprev table.wb.fit{table-layout:fixed;width:100%;max-width:720px;}
-  .docprev table.wb td,.docprev table.wb th{border:1px solid #000;padding:4px 6px;height:26px;vertical-align:middle;white-space:nowrap;}
+  .docprev table.wb.fit{width:100%;max-width:760px;}
+  /* Codes and figures are single tokens and never break; headings and
+     descriptions wrap, so a long one grows its row rather than being cut. */
+  .docprev table.wb td,.docprev table.wb th{border:1px solid #000;padding:4px 6px;height:26px;vertical-align:middle;white-space:normal;word-break:normal;}
+  .docprev table.wb .gd,.docprev table.wb .gdc,.docprev table.wb .bh,
+  .docprev table.wb .code,.docprev table.wb td.c,.docprev table.wb td.r{white-space:nowrap;}
+  /* A line can carry half a dozen order numbers — they wrap rather than
+     stretching the column, as they do in the sheet. */
+  .docprev table.wb td.po{white-space:normal;text-align:center;max-width:190px;}
   .docprev table.wb th{background:#fff;color:#000;font-weight:700;text-align:center;}
   .docprev table.wb tr.po td{background:#fff;color:#000;font-weight:700;text-align:left;}
   .docprev table.wb tr.po.rule td{border-left:none;border-right:none;border-top:none;}
@@ -2204,4 +2963,49 @@ export const PREVIEW_CSS = `
   .docprev table.wb.letter .buyer{color:#f00;text-decoration:underline;}
   .docprev table.wb.letter tr td.l,.docprev table.wb.letter tr.band td{border-top:1px solid #000;border-bottom:1px solid #000;}
   .docprev .pgbrk{margin-top:18px;}
+
+  /* 10 · E-way bill — the portal's own entry form, boxes and all, so it can be
+     keyed in field by field. Grey text is what the operator still has to fill. */
+  .docprev .ew{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#000;max-width:1000px;}
+  .docprev .ew table{border-collapse:collapse;width:100%;margin:0 0 4px;}
+  .docprev .ew td{border:none;padding:2px 5px;vertical-align:middle;}
+  .docprev .ew .lbl{color:#000;font-weight:400;white-space:nowrap;background:none;}
+  .docprev .ew .hd{font-weight:400;padding-top:8px;}
+  .docprev .ew .fld{border:1px solid #000;}
+  .docprev .ew .ph{color:#9aa3ad;}
+  .docprev .ew .b{font-weight:700;}
+  .docprev .ew .c{text-align:center;}
+  .docprev .ew .i{font-style:italic;text-align:center;}
+  .docprev .ew .on{font-weight:700;font-style:normal;}
+  .docprev .ew .ewtop td{padding-bottom:10px;}
+  .docprev .ew .ewband td{border:1px solid #000;border-left:none;border-right:none;padding:6px 5px;}
+  .docprev .ew .ewband td:first-child{border-left:1px solid #000;}
+  .docprev .ew .ewband td:last-child{border-right:1px solid #000;}
+  .docprev .ew .ewitems .hd td,.docprev .ew .ewtot .hd td{text-align:center;border:none;}
+  .docprev .ew .ewgrid .gap td{height:14px;}
+  .docprev .ew .ewpart{width:auto;margin-left:120px;}
+  .docprev .ew .ewpart .lbl{padding-right:12px;}
+  .docprev .ew .ewline .fld{min-width:120px;}
+
+  /* 11 · Despatch instructions — the letter, on the letterhead. */
+  .docprev .dl{font-family:Calibri,Arial,sans-serif;font-size:13px;color:#000;max-width:820px;line-height:1.45;}
+  .docprev .dl table{border-collapse:collapse;width:100%;margin:0;}
+  .docprev .dl td{border:none;padding:0;vertical-align:top;}
+  .docprev .dl .brand{font-family:Centaur,Georgia,serif;font-size:44px;font-weight:700;color:#8b0000;letter-spacing:1px;line-height:1;}
+  .docprev .dl .sub{font-family:Centaur,Georgia,serif;font-size:17px;color:#8b0000;letter-spacing:2px;padding-left:60px;}
+  .docprev .dl .lg{width:120px;text-align:right;}
+  .docprev .dl .lg img{width:104px;height:auto;}
+  .docprev .dl .rule{border-top:1px solid #c00;margin:8px 0 14px;}
+  .docprev .dl .ref{margin-bottom:16px;}
+  .docprev .dl p{margin:0 0 12px;font-size:13px;}
+  .docprev .dl .to{margin-bottom:16px;}
+  .docprev .dl .refline .k{display:inline-block;min-width:34px;}
+  .docprev .dl .k{background:none;color:#000;font-weight:400;white-space:normal;}
+  .docprev .dl .b{font-weight:700;}
+  .docprev .dl .sign{margin-top:42px;}
+  .docprev .dl .ins{margin:0 0 12px;width:auto;}
+  .docprev .dl .ins td{padding:0 0 4px;}
+  .docprev .dl .ins .n{width:56px;padding-left:26px;}
+  .docprev .dl .dlfoot{margin-top:2px;font-size:12px;color:#8b0000;}
+  .docprev .dl .dlfoot .r{text-align:right;}
 `;
