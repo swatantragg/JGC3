@@ -24,7 +24,7 @@ import { useUsers, useUserMutations } from "../../api/hooks.js";
    an account is a way into the company's order book, and removing one cannot
    be undone. */
 
-const BLANK = { name: "", email: "", password: "", preset: "operations" };
+const BLANK = { name: "", email: "", password: "", confirm: "", preset: "operations" };
 
 /* Has this person proved their address yet? They do it once, with a code
    mailed on their first sign-in — until then the tick is missing, which is
@@ -99,6 +99,12 @@ export default function UsersPanel() {
       setErr("The password does not meet every rule listed under the box yet.");
       return;
     }
+    // A typo here would hand somebody a password nobody knows — and since a
+    // password can no longer be read back, that means an immediate reset.
+    if (draft.password !== draft.confirm) {
+      setErr("The two passwords do not match — retype them and try again.");
+      return;
+    }
     setErr("");
     // The confirmation replaces the add dialog rather than stacking on it.
     setAdding(false);
@@ -110,8 +116,13 @@ export default function UsersPanel() {
       name: confirmAdd.name,
       email: confirmAdd.email,
       password: confirmAdd.password,
+      confirm_password: confirmAdd.confirm,
       status: "active",
       access: [...(presets[confirmAdd.preset]?.perms || [])],
+      // This password gets read out over a phone or typed into a chat window,
+      // so it is a delivery mechanism rather than a secret. The holder
+      // replaces it at first sign-in and only they know the live one.
+      must_change_password: true,
     };
     setConfirmAdd(null);
     run(create.mutateAsync(body).then(() => setDraft(BLANK)));
@@ -135,11 +146,22 @@ export default function UsersPanel() {
                 <PasswordInput value={draft.password} onChange={(e) => setDraft({ ...draft, password: e.target.value })} autoComplete="new-password" />
                 <PasswordRules value={draft.password} identity={{ name: draft.name, email: draft.email }} />
               </Field>
+              <Field label="Confirm password">
+                <PasswordInput value={draft.confirm} onChange={(e) => setDraft({ ...draft, confirm: e.target.value })}
+                  placeholder="Type it again" autoComplete="new-password" />
+              </Field>
+              {draft.confirm && draft.password !== draft.confirm && (
+                <Note tone="amber">The two passwords do not match yet.</Note>
+              )}
               <Field label="What can they see?">
                 <Select value={draft.preset} onChange={(e) => setDraft({ ...draft, preset: e.target.value })}>
                   {Object.entries(presets).map(([k, p]) => <option key={k} value={k}>{p.label}</option>)}
                 </Select>
               </Field>
+              <Note>
+                Tell them this password once. They must choose their own the first time
+                they sign in — after that nobody, admin included, can read it back.
+              </Note>
               <div>
                 <Btn icon={UserPlus} disabled={create.isPending || !draft.name || !draft.email} onClick={review}>
                   {create.isPending ? "Adding…" : "Add user"}

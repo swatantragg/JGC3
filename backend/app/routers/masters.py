@@ -13,13 +13,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import current_user, require_admin
+from ..deps import active_user, require_admin
 from .. import models, schemas, calc, masters_import
 
 router = APIRouter(prefix="/api/masters", tags=["masters"])
 
 
-@router.get("/seed", dependencies=[Depends(current_user)])
+@router.get("/seed", dependencies=[Depends(active_user)])
 def seed_info():
     """What the bundled workbook extract contains, without importing it."""
     seed = masters_import.load_seed()
@@ -44,7 +44,7 @@ def import_masters(overwrite: bool = False, db: Session = Depends(get_db)):
     return masters_import.import_masters(db, overwrite_existing=overwrite)
 
 
-@router.post("/derive", dependencies=[Depends(current_user)])
+@router.post("/derive", dependencies=[Depends(active_user)])
 def derive(rows: list[schemas.ItemDeriveIn], db: Session = Depends(get_db)):
     """Master figures for each (item, quantity), plus the column totals."""
     if not rows:
@@ -66,7 +66,7 @@ def derive(rows: list[schemas.ItemDeriveIn], db: Session = Depends(get_db)):
     return {"rows": out, "totals": {k: sum(x[k] for x in out) for k in sums}}
 
 
-@router.get("/order/{po}", dependencies=[Depends(current_user)])
+@router.get("/order/{po}", dependencies=[Depends(active_user)])
 def order_master(po: str, db: Session = Depends(get_db)):
     """Master 2A — one buyer purchase order worked out item by item."""
     items = {i.id: i for i in db.query(models.Item).all()}
@@ -76,7 +76,7 @@ def order_master(po: str, db: Session = Depends(get_db)):
     return calc.build_order_master(po, lines, items)
 
 
-@router.get("/supplier/{supplier_id}", dependencies=[Depends(current_user)])
+@router.get("/supplier/{supplier_id}", dependencies=[Depends(active_user)])
 def supplier_master(supplier_id: str, date_from: str | None = None,
                     date_to: str | None = None, db: Session = Depends(get_db)):
     """Master 7A — one supplier's order, every open PO rolled together."""
@@ -85,7 +85,7 @@ def supplier_master(supplier_id: str, date_from: str | None = None,
     return calc.build_supplier_master(supplier_id, lines, items, date_from, date_to)
 
 
-@router.get("/order-lines", dependencies=[Depends(current_user)])
+@router.get("/order-lines", dependencies=[Depends(active_user)])
 def order_lines(date_from: str | None = None, date_to: str | None = None,
                 db: Session = Depends(get_db)):
     """Every buyer order line in a date range, with its 2A figures — the
@@ -114,6 +114,6 @@ def order_lines(date_from: str | None = None, date_to: str | None = None,
     return {"rows": out, "totals": calc._totals(out)}
 
 
-@router.get("/formulas", dependencies=[Depends(current_user)])
+@router.get("/formulas", dependencies=[Depends(active_user)])
 def formulas():
     return calc.MASTER_FORMULAS

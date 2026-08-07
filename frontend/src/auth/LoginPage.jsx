@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Anchor, LogIn, UserPlus, Clock, ShieldCheck, KeyRound, Mail, User as UserIcon, Rocket,
-  MailCheck, ArrowLeft, RotateCw, Timer,
+  Anchor, LogIn, ShieldCheck, KeyRound, Mail, User as UserIcon, Rocket,
+  MailCheck, ArrowLeft, RotateCw, Timer, Unlock, LockKeyhole,
 } from "lucide-react";
 import { Btn, Field, Input, Note, PasswordInput, PasswordRules } from "../components/ui/index.jsx";
 import { passwordOk } from "../lib/password.js";
@@ -10,37 +10,49 @@ import { useAuth } from "./AuthProvider.jsx";
 /* Sign-in screen. It wears four faces depending on the system's state:
    - a brand-new database has no owner, so the form creates the first admin;
    - existing users sign in;
-   - anyone else requests access and waits for an admin to approve them;
-   - and when a sign-in still owes an email verification, the password step
-     hands over to a passcode step — a code mailed to the address on file.
+   - when a sign-in still owes an email verification, the password step hands
+     over to a passcode step — a code mailed to the address on file;
+   - and an account locked by too many wrong passwords can prove its own
+     mailbox and get back in, without waiting and without an admin.
 
-   A user meets that fourth face exactly once, on their first sign-in. An admin
-   meets it once a day, whenever the 24-hour session they last verified has run
-   out. */
+   There is no "request access" face any more. Accounts are made by an admin
+   under Setup → Users: a public sign-up form has to answer "that email is
+   already registered", and that answer is a free list of who works here.
+
+   A user meets the passcode face exactly once, on their first sign-in. An
+   admin meets it once a day. */
 
 const POINTS = [
-  ["Admin", "creates and approves users, ticks the areas each one can see"],
+  ["Admin", "creates users and ticks the areas each one can see"],
   ["Users", "log in and find only their own work — no clutter, no risk"],
 ];
 
 const OTP_BLURB = {
   user_first_login: "This is your first sign-in, so we are checking the address is yours. It is asked once — after this, your email and password are all you need.",
   admin_session_renewal: "Admins confirm their address once each day. It is a new day, so confirm the code we just emailed you.",
+  account_unlock: "Confirm the code we just emailed you and the lock on your account will be lifted straight away.",
 };
 
 export default function LoginPage() {
-  const { login, register, bootstrap, needsBootstrap, verifyOtp, resendOtp, sessionExpired } = useAuth();
+  const {
+    login, bootstrap, needsBootstrap, verifyOtp, resendOtp, sessionExpired,
+    unlockStart, unlockVerify,
+  } = useAuth();
+  // "login" | "unlock" — the two things this screen can be doing.
   const [mode, setMode] = useState("login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [err, setErr] = useState("");
-  const [sent, setSent] = useState(false);
+  const [done, setDone] = useState("");
   const [busy, setBusy] = useState(false);
+  // Set when a 423 comes back, so the way out is offered exactly when it is
+  // needed rather than sitting on the form inviting people to try it.
+  const [locked, setLocked] = useState(false);
 
-  // The passcode step: the challenge handed back by /login, the typed code,
-  // and the seconds left before another code may be asked for.
+  // The passcode step: the challenge handed back by /login or /unlock/start,
+  // the typed code, and the seconds left before another code may be asked for.
   const [otp, setOtp] = useState(null);
   const [code, setCode] = useState("");
   const [cool, setCool] = useState(0);
@@ -48,10 +60,10 @@ export default function LoginPage() {
   const codeRef = useRef(null);
 
   const first = needsBootstrap;
-  // Creating an account (first-run admin or a request) asks for the password
-  // twice — a typo here would otherwise lock the person out of an account
-  // nobody can read back.
-  const creating = first || mode === "register";
+  // Only the first-run admin form sets a password here. It asks twice — a typo
+  // would otherwise lock the owner out of a system that has nobody to ask.
+  const creating = first;
+  const unlocking = mode === "unlock";
 
   // Resend cooldown, ticking down once a second while a code is outstanding.
   useEffect(() => {
@@ -76,6 +88,15 @@ export default function LoginPage() {
 
   const submit = async () => {
     setErr("");
+    if (unlocking) {
+      if (!email.trim()) { setErr("Enter the email address on your account."); return; }
+      setBusy(true);
+      const r = await unlockStart(email.trim());
+      setBusy(false);
+      if (!r.ok) { setErr(r.error); return; }
+      openChallenge(r.otp);
+      return;
+    }
     if (creating) {
       if (!name.trim() || !email.trim()) {
         setErr("Fill in the name and the email address.");
@@ -95,14 +116,21 @@ export default function LoginPage() {
     }
     setBusy(true);
     const r = first
-      ? await bootstrap({ name: name.trim(), email: email.trim(), password: pw })
-      : mode === "login"
-        ? await login(email.trim(), pw)
-        : await register({ name: name.trim(), email: email.trim(), password: pw });
+      ? await bootstrap({
+          name: name.trim(), email: email.trim(), password: pw, confirm_password: pw2,
+        })
+      : await login(email.trim(), pw);
     setBusy(false);
-    if (!r.ok) { setErr(r.error); return; }
+    if (!r.ok) {
+      setErr(r.error);
+      // 423 is the locked-account answer. Offer the way out only now: a
+      // permanent "unlock my account" link on the form would be an invitation
+      // to mail codes at other people's addresses.
+      setLocked(r.status === 423);
+      return;
+    }
+    setLocked(false);
     if (r.otp) { openChallenge(r.otp); return; }
-    if (mode === "register" && !first) setSent(true);
   };
 
   const submitCode = async () => {
@@ -110,16 +138,25 @@ export default function LoginPage() {
     if (c.length < 4) { setErr("Type the code from your email."); return; }
     setErr("");
     setBusy(true);
-    const r = await verifyOtp(otp.challenge, c);
+    const r = unlocking
+      ? await unlockVerify(otp.challenge, c)
+      : await verifyOtp(otp.challenge, c);
     setBusy(false);
-    // Success unmounts this screen — the provider now holds a session.
-    if (!r.ok) { setErr(r.error); setCode(""); codeRef.current?.focus(); }
+    if (!r.ok) { setErr(r.error); setCode(""); codeRef.current?.focus(); return; }
+    if (unlocking) {
+      // Unlocking grants no session — the password is still needed, which is
+      // what keeps a stolen mailbox from being a whole account on its own.
+      setOtp(null); setCode(""); setNotice(""); setLocked(false);
+      setMode("login");
+      setDone("Your account is unlocked. Sign in with your password.");
+    }
+    // A normal sign-in unmounts this screen: the provider now holds a session.
   };
 
   const again = async () => {
     setErr("");
     setBusy(true);
-    const r = await resendOtp(otp.challenge);
+    const r = unlocking ? await unlockStart(email.trim()) : await resendOtp(otp.challenge);
     setBusy(false);
     if (!r.ok) { setErr(r.error); return; }
     openChallenge(r.otp, "A new code is on its way — the earlier one no longer works.");
@@ -127,18 +164,23 @@ export default function LoginPage() {
 
   const backToPassword = () => {
     setOtp(null); setCode(""); setErr(""); setNotice(""); setPw("");
+    if (unlocking) setMode("login");
+  };
+
+  const toUnlock = () => {
+    setMode("unlock"); setErr(""); setDone(""); setPw(""); setPw2(""); setLocked(false);
   };
 
   const heading = otp
     ? "Check your email"
-    : first ? "Create the admin account" : mode === "login" ? "Sign in" : "Request access";
+    : first ? "Create the admin account" : unlocking ? "Unlock your account" : "Sign in";
   const blurb = otp
     ? OTP_BLURB[otp.reason] || "Confirm the code we just emailed you."
     : first
-      ? "This system has no users yet. The account you create here becomes the admin — full access, and the only one who can approve everybody else."
-      : mode === "login"
-        ? "Use the email and password your admin set up for you."
-        : "Tell us who you are — the admin approves new accounts before first sign-in.";
+      ? "This system has no users yet. The account you create here becomes the admin — full access, and the only one who can create everybody else."
+      : unlocking
+        ? "We will email a code to the address on your account. Confirming it lifts the lock straight away — you will still need your password to sign in."
+        : "Use the email and password your admin set up for you.";
 
   return (
     <div className="login">
@@ -201,10 +243,6 @@ export default function LoginPage() {
                 </Btn>
               </div>
             </div>
-          ) : sent ? (
-            <Note tone="teal" icon={Clock}>
-              Request sent. The admin will approve your account under <b>Setup → Users</b> — try signing in after that.
-            </Note>
           ) : (
             <div className="stack-sm">
               {sessionExpired && (
@@ -212,6 +250,7 @@ export default function LoginPage() {
                   Your 24-hour session has ended — sign in again to carry on.
                 </Note>
               )}
+              {done && <Note tone="teal" icon={Unlock}>{done}</Note>}
               {creating && (
                 <Field label="Your name">
                   <span className="login-in">
@@ -226,17 +265,19 @@ export default function LoginPage() {
                   <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@jaikvinglobal.com" onKeyDown={(e) => e.key === "Enter" && submit()} />
                 </span>
               </Field>
-              <Field label="Password">
-                <span className="login-in">
-                  <KeyRound size={15} />
-                  <PasswordInput value={pw} onChange={(e) => setPw(e.target.value)}
-                    autoComplete={creating ? "new-password" : "current-password"}
-                    onKeyDown={(e) => e.key === "Enter" && submit()} />
-                </span>
-                {/* Only while a password is being set — spelling the rules out
-                    on a sign-in box would just tell a stranger what to try. */}
-                <PasswordRules value={pw} identity={{ name, email }} show={creating} />
-              </Field>
+              {!unlocking && (
+                <Field label="Password">
+                  <span className="login-in">
+                    <KeyRound size={15} />
+                    <PasswordInput value={pw} onChange={(e) => setPw(e.target.value)}
+                      autoComplete={creating ? "new-password" : "current-password"}
+                      onKeyDown={(e) => e.key === "Enter" && submit()} />
+                  </span>
+                  {/* Only while a password is being set — spelling the rules out
+                      on a sign-in box would just tell a stranger what to try. */}
+                  <PasswordRules value={pw} identity={{ name, email }} show={creating} />
+                </Field>
+              )}
               {creating && (
                 <Field label="Confirm password">
                   <span className="login-in">
@@ -249,19 +290,37 @@ export default function LoginPage() {
               )}
               {creating && pw2 && pw !== pw2 && <Note tone="amber">The two passwords do not match yet.</Note>}
               {err && <Note tone="amber">{err}</Note>}
-              <Btn size="lg" disabled={busy} icon={first ? Rocket : mode === "login" ? LogIn : UserPlus} onClick={submit}>
-                {busy ? "Please wait…" : first ? "Create admin & continue" : mode === "login" ? "Sign in" : "Send request"}
+              {locked && (
+                <Note tone="amber" icon={LockKeyhole}>
+                  Too many failed attempts. It opens again by itself, or{" "}
+                  <button className="linklike" onClick={toUnlock}>confirm your email</button>{" "}
+                  to get back in now.
+                </Note>
+              )}
+              <Btn size="lg" disabled={busy}
+                   icon={first ? Rocket : unlocking ? Unlock : LogIn} onClick={submit}>
+                {busy ? "Please wait…"
+                  : first ? "Create admin & continue"
+                  : unlocking ? "Email me a code" : "Sign in"}
               </Btn>
             </div>
           )}
 
           {!first && !otp && (
-            <button className="login-switch" onClick={() => { setMode(mode === "login" ? "register" : "login"); setErr(""); setSent(false); setPw(""); setPw2(""); }}>
-              {mode === "login" ? "New here? Request access" : "Back to sign in"}
-            </button>
+            unlocking ? (
+              <button className="login-switch" onClick={() => { setMode("login"); setErr(""); }}>
+                Back to sign in
+              </button>
+            ) : (
+              <div className="login-foot-note">
+                Accounts are created by your admin under <b>Setup → Users</b>.
+                {" "}
+                <button className="linklike" onClick={toUnlock}>Locked out?</button>
+              </div>
+            )
           )}
         </div>
-        <div className="login-foot">Maintained and developed by <b>Avita Technologies</b> · V-5.6</div>
+        <div className="login-foot">Maintained and developed by <b>Avita Technologies</b> · V-5.7</div>
       </div>
     </div>
   );

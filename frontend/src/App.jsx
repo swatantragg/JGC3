@@ -4,6 +4,7 @@ import QueryProvider from "./providers/QueryProvider.jsx";
 import { ToastProvider } from "./providers/ToastProvider.jsx";
 import { AuthProvider, useAuth } from "./auth/AuthProvider.jsx";
 import LoginPage from "./auth/LoginPage.jsx";
+import ForcePasswordChange from "./auth/ForcePasswordChange.jsx";
 import AppShell from "./components/layout/AppShell.jsx";
 import { Spinner, Empty } from "./components/ui/index.jsx";
 import { ROUTE_PERMS, firstAllowedRoute } from "./lib/nav.js";
@@ -39,9 +40,13 @@ function Guard({ perm, children }) {
 const guard = (path, el) => <Guard perm={ROUTE_PERMS[path]}>{el}</Guard>;
 
 function Routed() {
-  const { user, ready } = useAuth();
+  const { user, ready, mustChangePassword } = useAuth();
   if (!ready) return <div className="page"><Spinner label="Starting up…" /></div>;
   if (!user) return <LoginPage />;
+  /* Signed in, but on a password an admin typed and read out. Nothing else is
+     reachable until it is replaced — the API refuses every other endpoint
+     anyway, so routing past this would only produce a wall of 403s. */
+  if (mustChangePassword) return <ForcePasswordChange />;
 
   return (
     <Routes>

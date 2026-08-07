@@ -1761,6 +1761,29 @@ textarea {
   font-weight: 600;
   cursor: pointer;
 }
+/* Under the sign-in form: who makes accounts, and the way out of a lockout. */
+.login-foot-note {
+  margin: 14px auto 0;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+/* A button that has to read as a link — used inside a sentence, where a real
+   button would break the line badly. */
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--teal-ink);
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.linklike:hover {
+  opacity: 0.8;
+}
 .login-demo {
   margin-top: 18px;
   border-top: 1px dashed var(--border);

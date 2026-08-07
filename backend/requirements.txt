@@ -3,6 +3,9 @@ uvicorn[standard]==0.34.0
 SQLAlchemy==2.0.36
 pydantic==2.10.4
 pydantic-settings==2.7.0
+# Backs pydantic's EmailStr. An address that reaches the mailer unvalidated is
+# a header-injection surface and a way to have a passcode delivered elsewhere.
+email-validator==2.2.0
 python-dotenv==1.0.1
 psycopg2-binary==2.9.10
 PyJWT==2.10.1

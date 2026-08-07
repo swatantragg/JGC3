@@ -1,61 +1,54 @@
 /* Thin fetch wrapper. Base URL comes from VITE_API_URL; when empty the app
-   calls same-origin /api (dev: Vite proxy, prod: nginx proxy).
+   calls same-origin /api (dev: Vite proxy, prod: the rewrite in vercel.json).
 
-   Every request carries the session token. A 401 means the token expired or
-   was revoked server-side, so we clear it and let the app fall back to the
-   login screen — subscribers are notified rather than the page reloaded, so
-   nothing in-flight is lost. */
+   The session is an httpOnly cookie the browser attaches by itself — there is
+   no token in this file, and that is the point. A token in localStorage can be
+   read by any script that gets onto the page, so one injected line is one
+   stolen admin session; a cookie marked httpOnly is invisible to JavaScript,
+   including an attacker's. `credentials: "include"` is what makes the browser
+   send it.
+
+   That only works while the API is same-origin, which is what the /api rewrite
+   in vercel.json arranges — the browser talks to the Vercel domain, and Vercel
+   forwards to Render server-to-server. Point VITE_API_URL straight at Render
+   and the cookie stops travelling.
+
+   A 401 means the session expired or was revoked server-side, so subscribers
+   are notified rather than the page reloaded, and nothing in flight is lost.
+   A 403 carrying X-Password-Change-Required means the account is holding a
+   password an admin set and must replace it before anything else opens. */
 const BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
-const TOKEN_KEY = "jg-token";
-
-let token = null;
-try { token = localStorage.getItem(TOKEN_KEY); } catch (e) { /* private mode */ }
 
 const listeners = new Set();
+const passwordChangeListeners = new Set();
+
 export const onUnauthorized = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
-
-export const getToken = () => token;
-
-export function setToken(next) {
-  token = next || null;
-  try {
-    next ? localStorage.setItem(TOKEN_KEY, next) : localStorage.removeItem(TOKEN_KEY);
-  } catch (e) { /* private mode */ }
-}
-
-/* When the stored session token stops being valid, in epoch milliseconds —
-   read straight off the token's own `exp` claim, so the browser and the API
-   agree on the moment without a round trip. Null when there is no token or it
-   carries no expiry. Reading the payload needs no signature check: nothing is
-   trusted from it, it only decides when to show the login screen again. */
-export function tokenExpiresAt() {
-  if (!token) return null;
-  try {
-    const raw = token.split(".")[1];
-    if (!raw) return null;
-    const b64 = raw.replace(/-/g, "+").replace(/_/g, "/");
-    const payload = JSON.parse(atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "=")));
-    return payload.exp ? payload.exp * 1000 : null;
-  } catch (e) {
-    return null;
-  }
-}
+export const onPasswordChangeRequired = (fn) => {
+  passwordChangeListeners.add(fn);
+  return () => passwordChangeListeners.delete(fn);
+};
 
 export class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, retryAfter) {
     super(message);
     this.status = status;
+    /* Seconds until a rate limit or a timed lockout lifts, straight off the
+       response, so the UI can count down instead of showing a dead end. */
+    this.retryAfter = retryAfter || null;
   }
 }
 
 async function request(method, path, body, extraHeaders) {
   const headers = { ...(extraHeaders || {}) };
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (token) headers.Authorization = `Bearer ${token}`;
+  /* Marks the call as programmatic. A cross-site form post cannot set it, so
+     it is one more thing an attacker cannot forge. */
+  headers["X-Requested-With"] = "XMLHttpRequest";
 
   const res = await fetch(BASE + path, {
     method,
-    headers: Object.keys(headers).length ? headers : undefined,
+    headers,
+    credentials: "include",   // send and accept the session cookie
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 
@@ -65,21 +58,27 @@ async function request(method, path, body, extraHeaders) {
       const j = await res.json();
       detail = j.detail || detail;
     } catch (e) { /* non-JSON error */ }
+
     if (res.status === 401) {
-      setToken(null);
       listeners.forEach((fn) => fn());
     }
-    throw new ApiError(typeof detail === "string" ? detail : JSON.stringify(detail), res.status);
+    if (res.status === 403 && res.headers.get("X-Password-Change-Required")) {
+      passwordChangeListeners.forEach((fn) => fn());
+    }
+
+    const retry = Number(res.headers.get("Retry-After")) || null;
+    throw new ApiError(typeof detail === "string" ? detail : JSON.stringify(detail), res.status, retry);
   }
   if (res.status === 204) return null;
   return res.json();
 }
 
-/* `headers` carries the step-up grant (`X-Step-Up`) on the two calls that read
-   or set a password — see app/deps.py:require_stepup. */
 export const apiGet = (path, headers) => request("GET", path, undefined, headers);
 export const apiPost = (path, body, headers) => request("POST", path, body ?? {}, headers);
 export const apiPut = (path, body, headers) => request("PUT", path, body ?? {}, headers);
 export const apiDelete = (path) => request("DELETE", path);
 
+/* `headers` carries the step-up grant (`X-Step-Up`) on the call that sets a
+   password — see app/deps.py:require_stepup. The grant is short-lived and held
+   in memory only, never written to storage. */
 export const stepUpHeader = (grant) => (grant ? { "X-Step-Up": grant } : undefined);
