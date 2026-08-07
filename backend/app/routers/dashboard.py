@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import require, current_user
+from ..deps import require, active_user
 from .. import models, calc
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -10,7 +10,7 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 _read = require("home", "reports.balance", "orders.reports")
 
 
-@router.get("/badges", dependencies=[Depends(current_user)])
+@router.get("/badges", dependencies=[Depends(active_user)])
 def badges(db: Session = Depends(get_db)):
     """The three counters the menu bar carries: purchase orders still open,
     boxes still to pack, and invoices whose shipment details are unfinished."""

@@ -1,13 +1,14 @@
 import { useCallback, useState } from "react";
 import * as api from "../api/endpoints.js";
 
-/* A second, fresher proof of identity for the two things a stale open tab
-   must never be able to do: read a password back, and set a new one.
+/* A second, fresher proof of identity for the thing a stale open tab must
+   never be able to do on its own: set somebody's password.
 
    The admin asks for a code, types it, and holds a grant for a few minutes —
-   long enough to read one password and set another without being asked twice,
-   short enough that walking away ends it. The grant lives in memory only; a
-   reload starts again, deliberately. */
+   long enough to sort out one or two accounts without being asked twice,
+   short enough that walking away from the screen ends it. The grant lives in
+   memory only; a reload starts again, deliberately, and nothing writes it to
+   storage where a script could find it. */
 export function useStepUp() {
   const [grant, setGrant] = useState(null);       // { token, until }
   const [challenge, setChallenge] = useState(null); // the code is outstanding

@@ -3,13 +3,13 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import require, current_user
+from ..deps import require, active_user
 from .. import models, schemas, calc
 
 router = APIRouter(prefix="/api/items", tags=["items"])
 
 # Masters are reference data every page reads; only Setup may change them.
-_read = current_user
+_read = active_user
 _write = require("setup.items")
 
 

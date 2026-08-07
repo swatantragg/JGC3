@@ -4,11 +4,22 @@ bcrypt for storage, a signed HS256 token for the session. The secret comes
 from JWT_SECRET in the environment — set a real one in production, the
 default only exists so a fresh clone boots.
 
-Two kinds of token are minted here and they must never be confused: the
-session token (`create_token`) opens the API, while the challenge token
-(`create_challenge_token`) only names the half-signed-in account waiting to
-type a mailed code. `purpose` in the payload keeps them apart — a challenge
-token presented to `current_user` decodes fine but is rejected on purpose.
+Four kinds of token are minted here and they must never be confused. `purpose`
+in the payload keeps them apart, and every reader checks it:
+
+  session    opens the API (`create_token`)
+  otp        names the half-signed-in account waiting to type a mailed code
+  stepup     proof an admin answered a passcode within the last few minutes
+  unlock     lets a locked-out account clear its own lock
+
+A challenge token presented to `current_user` decodes cleanly and is rejected
+on purpose — that check is the only thing standing between "typed the right
+password" and "signed in" while a passcode is outstanding.
+
+Session tokens also carry `tv`, the account's `token_version`. A JWT is
+otherwise valid until it expires, whatever happens to the account meanwhile;
+comparing `tv` against the live row is what lets a password change, a logout
+or an admin disabling somebody take effect immediately rather than in a day.
 """
 import hmac
 import secrets
@@ -23,6 +34,14 @@ from .config import settings
 ALGORITHM = "HS256"
 CHALLENGE_PURPOSE = "otp"
 STEPUP_PURPOSE = "stepup"
+UNLOCK_PURPOSE = "unlock"
+
+# Verified against when the email is unknown, so a miss costs the same time as
+# a hit. Without it, "no such account" returns in microseconds while a real
+# account spends ~100ms in bcrypt — a difference a script can measure, and a
+# free list of who works here. The value is the bcrypt hash of a random string
+# nobody holds.
+_DUMMY_HASH = bcrypt.hashpw(secrets.token_bytes(32), bcrypt.gensalt()).decode("utf-8")
 
 
 def hash_password(plain: str) -> str:
@@ -38,13 +57,23 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-def create_token(user_id: str) -> str:
+def burn_time() -> None:
+    """Spend what a real password check would have spent, and learn nothing.
+
+    Called on the "no such account" path so response timing cannot be used to
+    tell an address that exists from one that does not.
+    """
+    bcrypt.checkpw(b"no-such-account", _DUMMY_HASH.encode("utf-8"))
+
+
+def create_token(user_id: str, token_version: int = 1) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": user_id,
         "iat": now,
         "exp": now + timedelta(minutes=settings.jwt_expire_minutes),
         "purpose": "session",
+        "tv": token_version,
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=ALGORITHM)
 
@@ -96,6 +125,26 @@ def create_stepup_token(user_id: str) -> str:
 def decode_stepup_token(token: str) -> str | None:
     payload = decode_token(token or "")
     if not payload or payload.get("purpose") != STEPUP_PURPOSE:
+        return None
+    return payload.get("sub")
+
+
+def create_unlock_token(user_id: str) -> str:
+    """Handed to an account that has just proved its mailbox after being
+    locked out. Clears the lock and nothing else — it cannot open the API."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": user_id,
+        "iat": now,
+        "exp": now + timedelta(minutes=settings.otp_ttl_minutes + 5),
+        "purpose": UNLOCK_PURPOSE,
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=ALGORITHM)
+
+
+def decode_unlock_token(token: str) -> str | None:
+    payload = decode_token(token or "")
+    if not payload or payload.get("purpose") != UNLOCK_PURPOSE:
         return None
     return payload.get("sub")
 

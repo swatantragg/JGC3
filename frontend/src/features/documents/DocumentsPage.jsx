@@ -20,6 +20,7 @@ import {
   supplierSplitDocs, downloadSupplierDoc, downloadDocumentExcel, downloadDocumentPDF,
   downloadStageExcel, downloadStagePDF,
 } from "../../lib/docs.js";
+import { safeHtml } from "../../lib/safeHtml.js";
 import { dmy, dmyNum } from "../../lib/format.js";
 import { INV_STATUS_TONE } from "../../lib/constants.js";
 import ShipmentWizard from "../shipments/ShipmentWizard.jsx";
@@ -368,7 +369,17 @@ export default function DocumentsPage({ group }) {
               </div>
             )}
             <style>{PREVIEW_CSS}</style>
-            <div className="docprev docprev-paper" dangerouslySetInnerHTML={{ __html: previewHtml || `<div class="sub">No preview for this document.</div>` }} />
+            {/* The builders in lib/docs.js escape every value they interpolate,
+                so this markup should already be safe. Sanitising it anyway is
+                the point: that guarantee rests on ~3000 lines staying perfect
+                forever, and one field added without esc() would be stored XSS
+                on a page every admin opens. Buyer names, addresses and item
+                descriptions all come from the database, which is to say from
+                whatever somebody typed. */}
+            <div
+              className="docprev docprev-paper"
+              dangerouslySetInnerHTML={{ __html: safeHtml(previewHtml) }}
+            />
             <div className="row" style={{ marginTop: 12, gap: 7, fontSize: 11.5, color: "var(--teal-ink)" }}>
               <Check size={14} /> Live preview of the download — every figure pulled from{" "}
               {poMode ? `purchase order ${po.po}` : `invoice ${inv.invoice_no}`}. The Excel keeps its formulas.

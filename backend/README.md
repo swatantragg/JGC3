@@ -59,8 +59,13 @@ loads from any working directory):
 | `SMTP_USER` / `SMTP_PASSWORD` | Mailbox and a Google **App Password** | empty |
 | `SMTP_STARTTLS` / `SMTP_SSL` | `true`/`false` for port 587; swap for 465 | `true` / `false` |
 | `SMTP_FROM` / `SMTP_FROM_NAME` | Sender address and display name | `SMTP_USER` / app name |
-| `PASSWORD_VAULT_KEY` | Encrypts the readable-back copy of each password | derived from `JWT_SECRET` |
 | `STEPUP_TTL_MINUTES` | How long one emailed confirmation covers password work | `10` |
+| `ENVIRONMENT` | `production` closes `/docs`, sends HSTS, forces Secure cookies, and refuses a placeholder secret | `development` |
+| `COOKIE_SAMESITE` / `COOKIE_SECURE` | Session cookie policy — see *Authentication* | `lax` / `true` |
+| `LOCKOUT_SOFT_THRESHOLD` / `LOCKOUT_SOFT_MINUTES` | Failures before a timed lock, and how long it holds | `5` / `15` |
+| `LOCKOUT_HARD_THRESHOLD` / `LOCKOUT_WINDOW_HOURS` | Failures before a human is needed, and the window counted over | `10` / `24` |
+| `RATE_LIMIT_ENABLED`, `RL_*` | Sliding-window limits, `count/window` — see `app/ratelimit.py` | on |
+| `PASSWORD_HISTORY_SIZE` | Previous passwords a new one is checked against | `3` |
 
 With nothing configured, no mail is sent — the passcode is written to the
 server log instead, which keeps a fresh clone usable offline.
@@ -85,10 +90,35 @@ The container always listens on 8000 internally.
 
 ## Authentication & access
 
-Bearer JWT in the `Authorization` header, valid 24 hours. Everything under
-`/api` requires a signed-in, active account except `/api/auth/status`,
-`/api/auth/permissions`, `/api/auth/bootstrap`, `/api/auth/register`,
-`/api/auth/login`, `/api/auth/verify-otp` and `/api/auth/resend-otp`.
+The session is a JWT in an **httpOnly cookie**, valid 24 hours. It is never
+returned in a response body and page JavaScript cannot read it — a token the
+page can read is a token an injected script can read, and one stolen admin
+session is the whole system. An `Authorization: Bearer` header is still
+accepted for scripts and non-browser clients.
+
+The cookie is `SameSite=lax`, which is what stops a form on another site making
+the browser send it — the mechanism CSRF depends on. That requires the browser
+to see the API as same-origin, which is what the `/api` rewrite in
+`frontend/vercel.json` arranges. A second check in `app/main.py` refuses any
+write whose `Origin` header is not on `CORS_ORIGINS`.
+
+Everything under `/api` requires a signed-in, active account except
+`/api/auth/status`, `/api/auth/permissions`, `/api/auth/bootstrap`,
+`/api/auth/login`, `/api/auth/verify-otp`, `/api/auth/resend-otp` and
+`/api/auth/unlock/*`.
+
+**Revocation.** Each account carries a `token_version`, mirrored in the token's
+`tv` claim and compared on every request. Bumping it ends every session that
+account has open, instantly — which is what logout, a password change, an
+access change and "sign out everywhere" all do. Without it a JWT stays valid
+until it expires no matter what happens to the account.
+
+**There is no public sign-up.** Accounts are created by an admin under
+Setup → Users. A registration endpoint has to answer "that email is already
+registered", and that answer is a free list of who works here. For the same
+reason every sign-in failure — wrong password, no such account, pending,
+disabled — returns one identical 401, and an unknown address still costs a
+bcrypt so response timing cannot separate real addresses from invented ones.
 
 **Email verification.** `POST /login` checks the password and then answers with
 one of two shapes:
@@ -132,29 +162,56 @@ First run: `GET /api/auth/status` reports `needs_bootstrap: true` while the
 `users` table is empty, and `POST /api/auth/bootstrap` creates the owner
 admin. It refuses once any user exists.
 
-**Passwords.** Only an admin may read a password back or set one — a user
-cannot change their own — and both need a code answered in the last
-`STEPUP_TTL_MINUTES`: `POST /api/auth/step-up/start` mails it,
-`POST /api/auth/step-up/verify` returns a grant, and the grant travels on the
-`X-Step-Up` header of `GET|PUT /api/users/{id}/password`. A grant is a JWT with
-`purpose: "stepup"`, bound to the admin who earned it, and is rejected wherever
-a session token is expected.
+**Passwords cannot be read back.** Only a bcrypt hash is stored. There used to
+be a reversible encrypted copy beside it so an admin could reveal a password;
+it is gone, along with the column and `app/vault.py`. It meant a database dump
+was a plaintext credential dump — and since people reuse passwords, it put
+their mail and their bank at risk as well as this system.
 
-Showing a password at all means keeping a reversible copy beside the bcrypt
-hash (`users.password_enc`, encrypted with `PASSWORD_VAULT_KEY`). That is a
-deliberate weakening for an office that has to hand a forgotten password back:
-anyone holding both the database and the key can read every password in it, so
-a dump is now as sensitive as the key. Sign-in never consults that copy —
-`password_hash` remains the only thing checked — so clearing it locks nobody
-out, it only stops the reveal. Accounts whose password predates the column read
-back as *not recoverable*; the cure is to set a new one. See `app/vault.py`.
+Restoring access to a forgotten account means **setting** a new password:
+`PUT /api/users/{id}/password`, admin only, and only with a code answered in
+the last `STEPUP_TTL_MINUTES`. `POST /api/auth/step-up/start` mails it,
+`POST /api/auth/step-up/verify` returns a grant, and the grant travels on the
+`X-Step-Up` header. A grant is a JWT with `purpose: "stepup"`, bound to the
+admin who earned it, and is rejected wherever a session token is expected.
+
+Any password an admin sets is flagged `must_change_password`. It has to be read
+out over a phone or typed into a chat window, so it is a delivery mechanism
+rather than a secret; the holder is sent straight to a change-password screen
+at their next sign-in and every other endpoint answers 403 until it is done.
+After that only they know the live password. A new password is also checked
+against the last `PASSWORD_HISTORY_SIZE` hashes, which stops the
+change-then-change-straight-back move.
+
+**Failed sign-ins.** Two tiers, in `app/lockout.py`. `LOCKOUT_SOFT_THRESHOLD`
+failures in a row lock the account for `LOCKOUT_SOFT_MINUTES` and then it opens
+by itself; `LOCKOUT_HARD_THRESHOLD` inside `LOCKOUT_WINDOW_HOURS` is an attack
+rather than a typo and waits for a human. Either can be cleared by the holder
+answering a code at their own address (`POST /api/auth/unlock/start` →
+`/unlock/verify`), which grants no session — the password is still needed. That
+route matters: a lock only an admin can lift is a weapon anyone who knows an
+address can point at an account, repeatedly, with no credentials at all.
+Attempts made *while* locked are refused before the password is looked at and
+do not count, so nobody can drive an account to a permanent lock from outside.
+
+**Rate limits** (`app/ratelimit.py`) are counted in the database, not in memory:
+Render's free tier stops the container when it is quiet, and an in-process
+counter would come back empty and hand out a fresh budget. Per-account limits
+are the tight ones — they hold however many addresses the traffic arrives from.
+Per-IP limits are loose because one office shares one public address.
+
+**Audit** (`app/audit.py`, read at `/api/audit`) records sign-ins and the ones
+that failed, lockouts, password changes, permission edits and deletions.
+Nothing updates or deletes a row and credential-shaped fields are redacted
+before writing, so the log is evidence rather than another place secrets live.
 
 ## Endpoints (overview)
 
 | Resource | Path |
 | --- | --- |
-| Auth | `/api/auth/status`, `/permissions`, `/bootstrap`, `/register`, `/login`, `/verify-otp`, `/resend-otp`, `/step-up/start`, `/step-up/verify`, `/me`, `/change-password` |
-| Users (admin) | `/api/users`, `/api/users/{id}/password` (GET reveal · PUT set — both need `X-Step-Up`) |
+| Auth | `/api/auth/status`, `/permissions`, `/bootstrap`, `/login`, `/verify-otp`, `/resend-otp`, `/logout`, `/unlock/start`, `/unlock/verify`, `/step-up/start`, `/step-up/verify`, `/me`, `/change-password`, `/change-password/forced` |
+| Users (admin) | `/api/users`, `/api/users/{id}/password` (PUT set — needs `X-Step-Up`), `/{id}/unlock`, `/{id}/sign-out` |
+| Audit (admin) | `/api/audit`, `/api/audit/summary` — read-only |
 | Suppliers | `/api/suppliers` |
 | Buyers | `/api/buyers` |
 | Items | `/api/items` |

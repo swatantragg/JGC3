@@ -1,11 +1,22 @@
 """Pydantic request/response schemas."""
 from datetime import datetime
 from typing import Optional, Any
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+
+# Every address that enters the system is validated and lower-cased here, at
+# the edge, rather than by each route in turn. A malformed address is not a
+# cosmetic problem: it reaches the mailer, where it is a header-injection
+# surface and a way to have a passcode delivered somewhere unintended.
+class _Email(BaseModel):
+    @field_validator("email", mode="before", check_fields=False)
+    @classmethod
+    def _normalise(cls, v):
+        return str(v or "").strip().lower()
 
 
 # ---------- Users & auth ----------
@@ -21,23 +32,35 @@ class UserOut(ORMModel):
     # True once the person has typed a mailed passcode at least once.
     email_verified: bool = False
     email_verified_at: Optional[datetime] = None
+    # True while an admin-set password is still standing: the holder must
+    # replace it before any other screen opens.
+    must_change_password: bool = False
+    # Shown in Setup -> Users so an admin can see an account under attack.
+    hard_locked: bool = False
+    locked_until: Optional[datetime] = None
+    last_failed_at: Optional[datetime] = None
 
-    @field_validator("email_verified", mode="before")
+    @field_validator("email_verified", "must_change_password", "hard_locked", mode="before")
     @classmethod
     def _none_is_false(cls, v):
         return bool(v)
 
 
-class LoginRequest(BaseModel):
-    email: str
+class LoginRequest(_Email):
+    email: EmailStr
     password: str
 
 
 class TokenResponse(BaseModel):
-    token: str
+    """The session itself travels in an httpOnly cookie, which is why there is
+    no token field here — a value the page can read is a value an injected
+    script can steal."""
     user: UserOut
     # Present so one response shape covers both halves of the sign-in.
     otp_required: bool = False
+    # True when this sign-in used a password an admin set: the app must send
+    # the person straight to the change-password screen.
+    must_change_password: bool = False
 
 
 class OtpChallenge(BaseModel):
@@ -66,56 +89,99 @@ class StepUpGrant(BaseModel):
     expires_in: int
 
 
-class RevealedPassword(BaseModel):
-    """What an admin sees after confirming a code."""
-    user_id: str
-    email: str
-    password: Optional[str] = None
-    # False for accounts whose password was set before the readable-back copy
-    # existed, or after the vault key changed — the only cure is a new one.
-    recoverable: bool = True
+# ---------- Unlocking an account that locked itself ----------
+
+class UnlockStartRequest(_Email):
+    """"Unlock my account" — mails a code to the address on file.
+
+    Answers the same way whether or not the account exists or is locked:
+    telling a caller "no such account" here would hand back the enumeration
+    the sign-in path was just closed against.
+    """
+    email: EmailStr
 
 
-class PasswordSet(BaseModel):
-    """An admin setting somebody's password (their own included)."""
-    new_password: str
+class UnlockVerifyRequest(BaseModel):
+    challenge: str
+    code: str
 
 
+# ---------- Passwords ----------
+#
 # Passwords are not length-checked here: `app.passwords.check_password` runs in
 # every route that takes one and answers with a single readable 400 listing all
 # the broken rules, which a pydantic `min_length` would pre-empt with a 422.
-class RegisterRequest(BaseModel):
-    """Self sign-up. The account is created pending until an admin approves."""
-    name: str
-    email: str
-    password: str
+# The `confirm_password` fields are checked in `app.passwords.check_match`.
+
+class PasswordSet(BaseModel):
+    """An admin setting somebody else's password."""
+    new_password: str
+    confirm_password: str = ""
 
 
-class BootstrapRequest(RegisterRequest):
+class PasswordChange(BaseModel):
+    """Somebody replacing their own password."""
+    current_password: str
+    new_password: str
+    confirm_password: str = ""
+
+
+class ForcedPasswordChange(BaseModel):
+    """The same, on the one screen an account with `must_change_password` can
+    reach. Separate because it is the only password route that does not ask
+    for a step-up code — the person is holding a password an admin just gave
+    them, and demanding a mailed code as well would strand anyone whose
+    mailbox is the thing being set up."""
+    current_password: str
+    new_password: str
+    confirm_password: str = ""
+
+
+class BootstrapRequest(_Email):
     """Creates the very first admin — only works while no users exist."""
-
-
-class UserCreate(BaseModel):
     name: str
-    email: str
+    email: EmailStr
     password: str
+    confirm_password: str = ""
+
+
+class UserCreate(_Email):
+    name: str
+    email: EmailStr
+    password: str
+    confirm_password: str = ""
     role: str = "user"
     status: str = "active"
     access: list[str] = []
+    # An admin-set password is a delivery mechanism, not a secret. Left on, the
+    # holder replaces it at first sign-in and only they know the live one.
+    must_change_password: bool = True
 
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
-    email: Optional[str] = None
+    email: Optional[EmailStr] = None
     password: Optional[str] = None
     role: Optional[str] = None
     status: Optional[str] = None
     access: Optional[list[str]] = None
 
+    @field_validator("email", mode="before")
+    @classmethod
+    def _normalise(cls, v):
+        return str(v).strip().lower() if v else v
 
-class PasswordChange(BaseModel):
-    current_password: str
-    new_password: str
+
+# ---------- Audit ----------
+class AuditRow(ORMModel):
+    id: str
+    at: datetime
+    action: str
+    actor_email: Optional[str] = None
+    target_label: Optional[str] = None
+    ip: Optional[str] = None
+    outcome: str = "ok"
+    detail: Optional[dict] = None
 
 
 # ---------- Supplier ----------

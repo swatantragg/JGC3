@@ -21,8 +21,8 @@ def new_id() -> str:
 
 class User(Base):
     """An account. `role` is "admin" (everything, plus user management) or
-    "user" (only the leaf permissions ticked in `access`). New sign-ups land
-    as status="pending" until an admin approves them.
+    "user" (only the leaf permissions ticked in `access`). Accounts are made by
+    an admin under Setup -> Users; there is no public sign-up.
 
     Email verification: a user proves the address once — a one-time passcode
     on their very first sign-in — and `email_verified` stays true from then on,
@@ -30,15 +30,15 @@ class User(Base):
     per session lifetime: `otp_verified_at` records the last passcode they
     passed, and a sign-in more than OTP_ADMIN_REVERIFY_HOURS later asks again.
     The pending challenge itself lives in `otp_*` and is cleared once used.
+
+    Passwords are bcrypt hashes and nothing else. There is no readable-back
+    copy: an admin who needs to restore access to an account sets a new
+    password, which the holder is then made to replace on their next sign-in.
     """
     __tablename__ = "users"
     id = Column(String, primary_key=True, default=new_id)
     email = Column(String, nullable=False, unique=True, index=True)
     password_hash = Column(String, nullable=False)
-    # A second, reversible copy of the same password, so an admin can read one
-    # back after confirming a passcode. Sign-in never looks at it — see
-    # app/vault.py for what this costs and why it is here.
-    password_enc = Column(String, nullable=True)
     name = Column(String, nullable=False)
     role = Column(String, nullable=False, default="user")     # admin | user
     status = Column(String, nullable=False, default="pending")  # pending | active | disabled
@@ -53,6 +53,68 @@ class User(Base):
     otp_expires_at = Column(DateTime, nullable=True)
     otp_sent_at = Column(DateTime, nullable=True)       # for the resend cooldown
     otp_attempts = Column(Integer, nullable=False, default=0)
+
+    # Every session token carries this number. Bumping it makes each one that
+    # was already issued stop decoding as valid, which is what "sign out
+    # everywhere" and "this account was just disabled" actually need — a JWT
+    # is otherwise good until it expires, whatever happens to the account.
+    token_version = Column(Integer, nullable=False, default=1)
+
+    # ---------- Sign-in failures (see app/lockout.py) ----------
+    # `failed_attempts` is the run since the last success and drives the soft
+    # lock; `failed_window_start` dates that run so the hard threshold can be
+    # read over a day rather than over all time.
+    failed_attempts = Column(Integer, nullable=False, default=0)
+    failed_window_start = Column(DateTime, nullable=True)
+    locked_until = Column(DateTime, nullable=True)      # soft lock, expires by itself
+    hard_locked = Column(Boolean, nullable=False, default=False)  # needs a human
+    last_failed_at = Column(DateTime, nullable=True)
+    last_failed_ip = Column(String, nullable=True)
+
+    # An admin-set password is a delivery mechanism, not a secret — it is
+    # spoken aloud or typed into a chat window. This makes it last exactly one
+    # sign-in, after which only the holder knows the live password.
+    must_change_password = Column(Boolean, nullable=False, default=False)
+    password_changed_at = Column(DateTime, nullable=True)
+    # bcrypt hashes of the last few passwords, newest first. Hashes only —
+    # nothing here can be read back into a password.
+    password_history = Column(JSON, nullable=False, default=list)
+
+
+class AuditLog(Base):
+    """Append-only record of everything worth answering "who did that?" about.
+
+    Written for sign-ins, lockouts, password changes, permission edits and
+    account deletion. Nothing updates or deletes a row: the value of the table
+    is that it only ever grows, so an admin cannot quietly tidy their own
+    tracks through the application.
+    """
+    __tablename__ = "audit_log"
+    id = Column(String, primary_key=True, default=new_id)
+    at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    action = Column(String, nullable=False, index=True)   # "auth.login.ok", "user.password.set", …
+    actor_id = Column(String, nullable=True, index=True)  # who did it (None = anonymous)
+    actor_email = Column(String, nullable=True)           # kept flat: the account may be deleted later
+    target_id = Column(String, nullable=True, index=True)  # what it was done to
+    target_label = Column(String, nullable=True)
+    ip = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    outcome = Column(String, nullable=False, default="ok")  # ok | denied | error
+    detail = Column(JSON, nullable=True)                 # never a password or a code
+
+
+class RateLimitHit(Base):
+    """One counted request, for the sliding windows in app/ratelimit.py.
+
+    In the database rather than in memory on purpose: Render's free tier stops
+    the container after about fifteen minutes of quiet, and an in-process
+    counter would come back empty every time — handing an attacker a fresh
+    budget for the cost of a pause.
+    """
+    __tablename__ = "rate_limit_hits"
+    id = Column(String, primary_key=True, default=new_id)
+    bucket = Column(String, nullable=False, index=True)   # "login:ip:1.2.3.4"
+    at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 
 class Supplier(Base):

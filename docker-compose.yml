@@ -1,13 +1,16 @@
 # Full stack: FastAPI backend + React (nginx) frontend.
 #   docker compose up --build
 # Frontend:  http://localhost:8090
-# Backend:   http://localhost:8001  (docs at /docs)
+# Backend:   http://localhost:8001  (docs at /docs, and only while
+#            ENVIRONMENT is not "production")
 #
-# The database comes from backend/.env, which is mounted into the container —
-# one file is the single source of truth for both `python run.py` and Docker,
-# so the two never drift onto different databases. That file currently points
-# at Neon; drop the bundled Postgres in by starting the optional `db` profile
-# and setting DATABASE_URL to postgresql+psycopg2://jaikvin:jaikvin@db:5432/jaikvin
+# Secrets come from the environment, not from a file baked into an image.
+# backend/.env is read for local development; in production set the same names
+# in the host's own secret store (Render's dashboard, Docker secrets) and mount
+# nothing. A file on disk gets copied, backed up and screenshotted.
+#
+# The database currently points at Neon. To use the bundled Postgres instead,
+# start the optional profile and set DATABASE_URL accordingly:
 #
 #   docker compose --profile local-db up --build
 services:
@@ -17,21 +20,30 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: jaikvin
-      POSTGRES_PASSWORD: jaikvin
+      # No default. `jaikvin:jaikvin` was here and it is exactly the pair
+      # anybody scanning would try first; set POSTGRES_PASSWORD in a local
+      # .env or the shell, and compose will refuse to start without it.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD before starting the local database}
       POSTGRES_DB: jaikvin
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # Not published to the host: only the backend needs to reach it, and it can
+    # do so over the internal network. A database on a host port is a database
+    # anyone on the network can knock on.
+    expose:
+      - "5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U jaikvin"]
       interval: 5s
       timeout: 3s
       retries: 10
+    security_opt:
+      - no-new-privileges:true
 
   backend:
     build: ./backend
-    # Read-only mount: DATABASE_URL, CORS_ORIGINS and JWT_SECRET all come from
-    # here. Nothing is set under `environment:` because a real environment
-    # variable would silently win over the file.
+    # Read-only mount for local development. In production this file should not
+    # exist on the host at all — set the variables in the platform instead.
     volumes:
       - ./backend/.env:/app/.env:ro
     # Host port is overridable and defaults to 8001 to avoid clashing with any
@@ -39,16 +51,51 @@ services:
     # the frontend reaches it over the internal network (backend:8000).
     ports:
       - "${BACKEND_PORT:-8001}:8000"
+    # Nothing in this container should ever gain privileges it did not start
+    # with, and it has no reason to write outside its temporary directory.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # A runaway request should degrade this service, not take the host with it.
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
       args:
-        VITE_API_URL: ""   # empty → browser calls same-origin /api, nginx proxies to backend
+        # Empty → the browser calls same-origin /api and nginx proxies it. A
+        # full URL here makes the call cross-site and the session cookie stops
+        # being sent — see frontend/DEPLOY.md.
+        VITE_API_URL: ""
     depends_on:
       - backend
     ports:
-      - "${FRONTEND_PORT:-8090}:80"
+      # The container listens on 8080 because it runs unprivileged.
+      - "${FRONTEND_PORT:-8090}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.5"
+    restart: unless-stopped
 
 volumes:
   pgdata:

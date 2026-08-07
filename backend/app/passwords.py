@@ -67,3 +67,46 @@ def check_password(password: str, *, name: str = "", email: str = "") -> None:
     if not bad:
         return
     raise HTTPException(400, "The password must " + "; ".join(bad) + ".")
+
+
+def check_match(password: str, confirm: str) -> None:
+    """Both boxes must agree.
+
+    Checked on the server, not only in the browser: the confirm box exists so
+    a typo cannot lock somebody out of a brand-new account, and a rule that
+    lives only in JavaScript is not a rule. Blank is accepted so an API client
+    that does not send the field is not broken by it — the browser always does.
+    """
+    if confirm and password != confirm:
+        raise HTTPException(400, "The two passwords do not match.")
+
+
+# ---------- History ----------
+#
+# Keeping the last few hashes stops the change-then-change-straight-back move,
+# which otherwise defeats every forced reset. Hashes only — nothing stored here
+# can be turned back into a password.
+#
+# Deliberately not paired with an expiry date. Scheduled rotation is what
+# produces Summer2025! followed by Summer2026! and a note under the keyboard;
+# NIST SP 800-63B advises against it for exactly that reason. Rotation here is
+# event-driven instead: on a reset, on a suspected breach, on offboarding.
+
+def check_not_reused(new_password: str, history: list[str] | None, current_hash: str = "") -> None:
+    """Raise 400 when this password is one of the recent ones."""
+    from .security import verify_password  # local import: security imports config, not this
+
+    candidates = list(history or [])
+    if current_hash:
+        candidates.insert(0, current_hash)
+    for old in candidates:
+        if old and verify_password(new_password, old):
+            raise HTTPException(
+                400, "That password was used recently — please choose a different one."
+            )
+
+
+def push_history(history: list[str] | None, retiring_hash: str, keep: int) -> list[str]:
+    """The history list with the password just replaced added, newest first."""
+    out = [retiring_hash] + [h for h in (history or []) if h and h != retiring_hash]
+    return out[:max(0, keep)]

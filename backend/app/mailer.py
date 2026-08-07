@@ -50,7 +50,8 @@ def _body(name: str, code: str, minutes: int, reason: str) -> tuple[str, str]:
     line = {
         "user_first_login": "Confirm this is you to finish signing in.",
         "admin_session_renewal": "Admins confirm their address once a day — confirm this is you to sign in.",
-        "admin_step_up": "Confirm this is you before viewing or changing an account password.",
+        "admin_step_up": "Confirm this is you before changing an account password.",
+        "account_unlock": "Confirm this is you to unlock your account.",
     }.get(reason, "Confirm this is you to continue.")
     text = (
         f"Hello {who},\n\n"
@@ -80,7 +81,7 @@ def _body(name: str, code: str, minutes: int, reason: str) -> tuple[str, str]:
       </p>
     </div>
     <div style="padding:14px 26px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:11px">
-      Maintained and developed by Avita Technologies · V-5.6
+      Maintained and developed by Avita Technologies · V-5.7
     </div>
   </div>
 </div>"""
@@ -193,4 +194,83 @@ def send_otp_email(to_email: str, name: str, code: str, reason: str) -> bool:
         raise MailError(str(exc)) from exc
 
     log.info("verification code sent to %s via %s", to_email, settings.mail_provider)
+    return True
+
+
+# ---------- "Somebody has been guessing at your account" ----------
+
+def _lockout_body(name: str, tier: str, minutes: int, when: str, ip: str) -> tuple[str, str]:
+    who = (name or "there").split(" ")[0]
+    if tier == "hard":
+        headline = "Your account has been locked"
+        what = (
+            "There have been repeated failed sign-in attempts on your account, so it "
+            "has been locked. Use \"Unlock my account\" on the sign-in screen to confirm "
+            "your email address, or ask the administrator to reset it for you."
+        )
+    else:
+        headline = "Too many failed sign-in attempts"
+        what = (
+            f"Your account has been locked for {minutes} minutes after several failed "
+            "sign-in attempts. It will open again by itself, or you can use "
+            "\"Unlock my account\" on the sign-in screen to confirm your email and get "
+            "back in straight away."
+        )
+    tail = (
+        "If this was you, no action is needed beyond signing in again. "
+        "If it was not, change your password as soon as you are back in — "
+        "somebody else knows your email address and is guessing at the password."
+    )
+    text = (
+        f"Hello {who},\n\n{headline}\n\n{what}\n\n"
+        f"Last attempt: {when}{f' from {ip}' if ip else ''}\n\n{tail}\n\n"
+        "— Jaikvin Global Export System\n"
+    )
+    html = f"""\
+<div style="font-family:Segoe UI,Helvetica,Arial,sans-serif;background:#f4f6f9;padding:28px">
+  <div style="max-width:480px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden">
+    <div style="background:#7f1d1d;padding:20px 26px">
+      <div style="color:#fff;font-size:19px;font-weight:700;letter-spacing:-.3px">Jaikvin Global</div>
+      <div style="color:#fecaca;font-size:11px;letter-spacing:4px;margin-top:3px">SECURITY ALERT</div>
+    </div>
+    <div style="padding:26px">
+      <p style="margin:0 0 6px;color:#0f172a;font-size:15px">Hello {who},</p>
+      <p style="margin:0 0 12px;color:#0f172a;font-size:15px;font-weight:600">{headline}</p>
+      <p style="margin:0 0 16px;color:#475569;font-size:13.5px;line-height:1.55">{what}</p>
+      <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px 14px;
+                  color:#7f1d1d;font-size:12.5px">
+        Last attempt: <b>{when}</b>{f' from <b>{ip}</b>' if ip else ''}
+      </div>
+      <p style="margin:16px 0 0;color:#64748b;font-size:12.5px;line-height:1.55">{tail}</p>
+    </div>
+    <div style="padding:14px 26px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:11px">
+      Maintained and developed by Avita Technologies · V-5.7
+    </div>
+  </div>
+</div>"""
+    return text, html
+
+
+def send_lockout_warning(to_email: str, name: str, tier: str, minutes: int,
+                         when: str, ip: str = "") -> bool:
+    """Tell an account holder their account was just locked.
+
+    The person being attacked is the one who benefits from knowing, and this
+    reaches them rather than whoever was guessing. Never raises: the lock is
+    already applied, and a mail fault must not change that.
+    """
+    if not settings.mail_configured:
+        log.warning("mail is not configured — %s lockout on %s not announced", tier, to_email)
+        return False
+    subject = ("Your Jaikvin Global account has been locked" if tier == "hard"
+               else "Too many failed sign-in attempts on your Jaikvin Global account")
+    text, html = _lockout_body(name, tier, minutes, when, ip)
+    try:
+        if settings.mail_provider in ("brevo", "resend"):
+            _send_http(to_email, subject, text, html)
+        else:
+            _send_smtp(to_email, subject, text, html)
+    except Exception:  # noqa: BLE001 — a warning that will not send is not a failed sign-in
+        log.exception("could not send the lockout warning to %s", to_email)
+        return False
     return True

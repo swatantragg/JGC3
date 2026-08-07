@@ -6,18 +6,32 @@ export const auth = {
   status: () => apiGet("/api/auth/status"),
   permissions: () => apiGet("/api/auth/permissions"),
   bootstrap: (b) => apiPost("/api/auth/bootstrap", b),
-  register: (b) => apiPost("/api/auth/register", b),
-  // Answers with a session token, or with { otp_required, challenge, … } when
-  // the address still has to be proved by a mailed code.
+  // There is no register(): accounts are made by an admin under Setup → Users.
+  // A public sign-up endpoint that says "that email is already registered" is
+  // a free list of who works here, which is where a phishing run starts.
+  //
+  // Answers with the signed-in user (the session itself arrives as an httpOnly
+  // cookie), or with { otp_required, challenge, … } when the address still has
+  // to be proved by a mailed code.
   login: (b) => apiPost("/api/auth/login", b),
   verifyOtp: (b) => apiPost("/api/auth/verify-otp", b),
   resendOtp: (b) => apiPost("/api/auth/resend-otp", b),
   me: () => apiGet("/api/auth/me"),
-  // Reading a password back or setting one needs a code answered minutes ago:
-  // start → verify hands back a grant that rides on the two calls below.
+  // Ends the session here *and* everywhere — the server bumps the account's
+  // token version, so a token copied out of this browser dies too.
+  logout: () => apiPost("/api/auth/logout"),
+  // Locked out after too many wrong passwords: prove the mailbox, get back in
+  // without waiting and without needing an admin.
+  unlockStart: (b) => apiPost("/api/auth/unlock/start", b),
+  unlockVerify: (b) => apiPost("/api/auth/unlock/verify", b),
+  // Setting somebody's password needs a code answered minutes ago:
+  // start → verify hands back a grant that rides on the call below.
   stepUpStart: () => apiPost("/api/auth/step-up/start"),
   stepUpVerify: (b) => apiPost("/api/auth/step-up/verify", b),
   changePassword: (b, grant) => apiPost("/api/auth/change-password", b, stepUpHeader(grant)),
+  // Replacing an admin-set password at first sign-in. No step-up code: the
+  // point is to retire that password within seconds of receiving it.
+  changePasswordForced: (b) => apiPost("/api/auth/change-password/forced", b),
 };
 
 export const users = {
@@ -25,9 +39,21 @@ export const users = {
   create: (b) => apiPost("/api/users", b),
   update: (id, b) => apiPut(`/api/users/${id}`, b),
   remove: (id) => apiDelete(`/api/users/${id}`),
-  password: (id, grant) => apiGet(`/api/users/${id}/password`, stepUpHeader(grant)),
-  setPassword: (id, newPassword, grant) =>
-    apiPut(`/api/users/${id}/password`, { new_password: newPassword }, stepUpHeader(grant)),
+  // No password(): a password cannot be read back. The reversible copy that
+  // used to make that possible is gone, so a database dump is no longer a
+  // plaintext credential dump. Setting a new one is the way to restore access.
+  setPassword: (id, newPassword, confirmPassword, grant) =>
+    apiPut(`/api/users/${id}/password`,
+           { new_password: newPassword, confirm_password: confirmPassword },
+           stepUpHeader(grant)),
+  unlock: (id) => apiPost(`/api/users/${id}/unlock`),
+  signOut: (id) => apiPost(`/api/users/${id}/sign-out`),
+};
+
+/* Who did what — admin only, and read-only by design. */
+export const audit = {
+  list: (params) => apiGet(`/api/audit${qs(params)}`),
+  summary: (days) => apiGet(`/api/audit/summary${qs({ days })}`),
 };
 
 export const costing = {
