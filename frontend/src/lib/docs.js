@@ -20,6 +20,7 @@
 
 import { downloadDocsExcel, downloadPDF } from "./download.js";
 import { primeLogo, logoImage, LOGO_SRC } from "./logo.js";
+import { colLetter } from "./xlsx.js";
 
 // The supplier order prints on the letterhead, so the mark is fetched up front.
 primeLogo();
@@ -244,8 +245,10 @@ function fnameFor(no, name, ctx) {
   return `Doc_${no}_${String(name).replace(/[^A-Za-z0-9]+/g, "_")}${stamp ? `_${stamp}` : ""}`;
 }
 const sum = (a, k) => a.reduce((s, x) => s + (Number(x[k]) || 0), 0);
+/* Who signs the export papers, and where they are signed. */
+const SIGNATORY = "Mr Aalok M Shah";
 const declBlock = (ctx) => { const E = ctx.EXPORTER; return `<table style="width:100%"><tr><td class="k" style="width:20%">Place</td><td>Mumbai</td><td class="k" style="width:20%">Date</td><td>${ddmm(ctx.inv.date)}</td></tr>
-  <tr><td class="k">Signature</td><td colspan="3">For ${esc(E.name)} &nbsp;— &nbsp;Mr Aalok M Shah, Proprietor</td></tr></table>`; };
+  <tr><td class="k">Signature</td><td colspan="3">For ${esc(E.name)} &nbsp;— &nbsp;${SIGNATORY}, Proprietor</td></tr></table>`; };
 
 /* ============================================================================
    BUILDERS — one per document number
@@ -438,6 +441,59 @@ function fitSheet(sheet, opts = {}) {
   });
 
   return { ...sheet, widths, heights };
+}
+
+/* ---- printed forms ---------------------------------------------------------
+   The e-way bill and the despatch instruction are not tables. They are runs of
+   merged cells laid across one fixed grid — a label two columns wide, the box
+   beside it five — and that is what makes the boxes on the sheet line up the
+   way they line up on the form.
+
+   A row is written as [span, cell] pairs whose spans add up to the grid, and
+   the builder does the two things that are easy to get wrong by hand: it
+   merges the run, and it gives the cells the run covers only the edges the run
+   itself owns. Leave them their own left and right and Excel rules a line down
+   every column the run crosses — the box comes out striped.               */
+const trimEdges = (edges, first, last) =>
+  [...edges].filter((c) => (c !== "l" || first) && (c !== "r" || last)).join("");
+
+function formGrid(width) {
+  const rows = [];
+  const merges = [];
+  const heights = [];
+
+  const edgesOf = (s, first, last) => {
+    const b = s ? s.border : undefined;
+    if (typeof b !== "string") return s;                 // false / undefined pass through
+    const [raw, rgb] = b.split("#");
+    const kept = trimEdges(raw === "box" ? "lrtb" : raw, first, last);
+    return { ...s, border: kept ? (rgb ? `${kept}#${rgb}` : kept) : false };
+  };
+
+  /* `cells` is [[span, cell], …]; a cell is the workbook writer's own
+     { v | f, t?, s? }. A trailing gap in the grid is left blank. */
+  const row = (cells = [], height) => {
+    const out = [];
+    (cells || []).forEach(([span, cell]) => {
+      const room = width - out.length;
+      if (room < 1) return;                              // the grid is full
+      const n = Math.max(1, Math.min(span, room));
+      const at = out.length + 1;
+      for (let k = 0; k < n; k++) {
+        const s = edgesOf(cell.s, k === 0, k === n - 1);
+        out.push(k === 0 ? { ...cell, s } : { v: "", s });
+      }
+      if (n > 1) merges.push(`${colLetter(at)}${rows.length + 1}:${colLetter(at + n - 1)}${rows.length + 1}`);
+    });
+    rows.push(out);
+    if (height) heights[rows.length - 1] = height;
+    return rows.length;
+  };
+  /* A gap carries one blank styled cell: a row with nothing in it at all is
+     left out of the file, and its height would go with it. */
+  const gap = (height) => row([[1, { v: "", s: { border: false } }]], height);
+
+  return { rows, merges, heights, row, gap, at: () => rows.length };
 }
 
 const WB = {
@@ -2020,7 +2076,9 @@ const EW_SHIP_TO = {
   name: "ALL CARGO TERMINALS LTD", addr: "NEXT TO AMEYA CFS, JNPT AREA",
   place: "Village Khopta", pin: "410206", state: "MAHARASHTRA",
 };
-const ewCommon = (arr, pick) => {
+/* The value that turns up most often in a set of lines — what a paper that
+   describes a whole consignment in one line has to print for it. */
+const commonOf = (arr, pick) => {
   const seen = {};
   arr.forEach((x) => { const k = String(pick(x) || "").trim(); if (k) seen[k] = (seen[k] || 0) + 1; });
   return Object.entries(seen).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
@@ -2038,7 +2096,7 @@ const ewAddr = (addr) => {
 /* What the consignment is called on the bill — the factory's range, not the
    size band a particular line happens to sit in. */
 const ewGoods = (arr) => {
-  const rule = ewCommon(arr, (x) => x.it.stickerRule || "pp");
+  const rule = commonOf(arr, (x) => x.it.stickerRule || "pp");
   if (rule === "grn") return "NYLON MOULDED FITTINGS";
   if (rule === "oswin") return "PP EXTRUDED PIPES";
   return "PP MOULDED FITTINGS";
@@ -2051,7 +2109,7 @@ function eway10Block(ctx, sid, arr) {
   const taxable = sum(arr, "valTotal");
   const igst = Math.round(taxable * 0.18 * 100) / 100;
   const goods = ewGoods(arr);
-  const hsn = (ewCommon(arr, (x) => x.it.hsn) || "").slice(0, 4);
+  const hsn = (commonOf(arr, (x) => x.it.hsn) || "").slice(0, 4);
   const [sAddr1, sAddr2] = ewAddr(sp.addr);
   const money = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const box = (v, cls = "") => `<td class="fld ${cls}">${v === "" ? "&nbsp;" : v}</td>`;
@@ -2121,15 +2179,149 @@ function eway10Block(ctx, sid, arr) {
     </table>
   </div>`;
 }
+/* The same form as a worksheet. Thirteen columns carry every band of it: the
+   thirteen transaction-type options set the grid, and each of the other bands
+   is a run of merged cells across the same thirteen — which is what keeps the
+   boxes under one another instead of each table finding its own edges.
+
+   The figures are live: the item's taxable value drives the IGST and the
+   invoice total, so an operator who corrects a quantity or a value in the
+   sheet before keying it in sees the tax follow.                            */
+const EW = {                                     // the form's own styles
+  b: { font: "refb", border: false, valign: "center" },
+  lbl: { font: "ref", border: false, valign: "center" },
+  lblW: { font: "ref", border: false, valign: "center", wrap: true },
+  hd: { font: "ref", border: false, valign: "bottom" },
+  hdC: { font: "ref", border: false, align: "center", valign: "bottom", wrap: true },
+  sys: { font: "ref", border: false, align: "center", valign: "center" },
+  fld: { font: "ref", border: "box", valign: "center", wrap: true },
+  fldC: { font: "ref", border: "box", align: "center", valign: "center", wrap: true },
+  ph: { font: "refgy", border: "box", valign: "center", wrap: true },
+  phC: { font: "refgy", border: "box", align: "center", valign: "center", wrap: true },
+  num: { font: "ref", border: "box", align: "center", valign: "center", fmt: "int" },
+  money: { font: "ref", border: "box", align: "center", valign: "center", fmt: "num" },
+  bandB: { font: "refb", border: "tb", align: "center", valign: "center", wrap: true },
+  bandI: { font: "refi", border: "tb", align: "center", valign: "center", wrap: true },
+  bandOn: { font: "refb", border: "tb", align: "center", valign: "center", wrap: true },
+  optOn: { font: "refb", border: "box", align: "center", valign: "center" },
+  opt: { font: "refi", border: "box", align: "center", valign: "center" },
+};
+function eway10Sheet(ctx, sid, arr) {
+  const sp = supFor(ctx, sid);
+  const tr = transportInfo(ctx, sid);
+  const goods = ewGoods(arr);
+  const hsn = (commonOf(arr, (x) => x.it.hsn) || "").slice(0, 4);
+  const [sAddr1, sAddr2] = ewAddr(sp.addr);
+  const G = formGrid(13);
+  const { row, gap } = G;
+  const cell = (v, s, extra) => [1, { v, s, ...extra }];
+  const run = (span, v, s, extra) => [span, { v, s, ...extra }];
+
+  /* Bill From / Bill To — label, box, label, box, and the state at the right,
+     the five fields the portal puts on each of these lines. */
+  const party = (title, right, p) => {
+    row([run(5, title, EW.hd), run(8, right, EW.hd)]);
+    row([run(2, "Name", EW.lbl), run(3, p.name, EW.fld), run(1, "Address", EW.lbl), run(5, p.addr1, EW.fld), run(2, "", EW.lbl)]);
+    row([run(2, "GSTIN", EW.lbl), run(3, p.gstin, EW.fld), run(1, "", EW.lbl), run(5, p.addr2, EW.fld), run(2, "", EW.lbl)]);
+    row([run(2, "State", EW.lbl), run(3, p.state, EW.fld), run(1, "Place", EW.lbl), run(5, p.place, EW.fld), run(2, "", EW.lbl)]);
+    row([run(2, "", EW.lbl), run(3, "", EW.lbl), run(1, "Pincode", EW.lbl), run(5, p.pin, EW.fld), run(2, p.pinState, EW.fldC)]);
+  };
+
+  row([run(4, "EWAY BILL FORMAT", EW.b), run(3, "", EW.lbl), run(6, "E - WAY BILL SYSTEM", EW.sys)]);
+  row([run(7, "", EW.lbl), run(6, "e - WayBill Entry Form", EW.sys)]);
+  gap();
+  row([run(4, "Transaction details", EW.lbl)]);
+  row([cell("Transaction  Type", EW.bandB), cell("Outward", EW.bandI), cell("Inward", EW.bandOn),
+    cell("Sub Type", EW.bandB), cell("Supply", EW.bandOn), cell("Export", EW.bandI), cell("Job Work", EW.bandI),
+    cell("SKD / CKD", EW.bandI), cell("Recipient Not Known", EW.bandI), cell("For Own Use", EW.bandI),
+    cell("Exhibition Or Fairs", EW.bandI), cell("Line Sales", EW.bandI), cell("Others", EW.bandI)]);
+  gap();
+  row([run(2, "Document Type", EW.lbl), run(3, "Tax Invoice", EW.ph),
+    run(2, "Document No", EW.lbl), run(2, "Your Tax Invoice No", EW.ph),
+    run(2, "Document Date", EW.lbl), run(2, "Your Tax Invoice Date", EW.ph)]);
+  gap();
+
+  party("Bill From", "Despatch From", {
+    name: sp.name || "", gstin: sp.gstin || "", state: sp.state || "DAMAN AND DIU",
+    addr1: sAddr1, addr2: sAddr2, place: sp.place || "", pin: sp.pin || "", pinState: sp.state || "DAMAN AND DIU",
+  });
+  gap(9);
+  party("Bill To", "Ship To", {
+    name: ctx.EXPORTER.name, gstin: ctx.EXPORTER.gstin, state: "MAHARASHTRA",
+    addr1: EW_SHIP_TO.name, addr2: EW_SHIP_TO.addr, place: EW_SHIP_TO.place,
+    pin: EW_SHIP_TO.pin, pinState: EW_SHIP_TO.state,
+  });
+  gap();
+
+  row([run(4, "Item Details", EW.lbl)]);
+  row([run(2, "Product Name", EW.hdC), run(2, "Descripton", EW.hdC), run(1, "HSN", EW.hdC),
+    run(1, "Quantity", EW.hdC), run(1, "Unit", EW.hdC), run(2, "Value/Taxable\nValue(RS)", EW.hdC),
+    run(4, "Tax Rate (C+S+I+C)", EW.hdC)], 26);
+  const item = G.at() + 1;
+  row([run(2, goods, EW.fld), run(2, goods, EW.fld), run(1, hsn, EW.fldC, { t: "s" }),
+    run(1, sum(arr, "pieces"), EW.num, { t: "n" }), run(1, "PCS", EW.fldC),
+    run(2, sum(arr, "valTotal"), EW.money, { t: "n" }),
+    run(1, 0, EW.money, { t: "n" }), run(1, 0, EW.money, { t: "n" }),
+    run(1, 18, EW.money, { t: "n" }), run(1, 0, EW.money, { t: "n" })], 25.5);
+  gap();
+
+  row([run(3, "Total Amt / Taxable Amt", EW.hdC), run(2, "CGST Amount", EW.hdC), run(2, "SGST Amount", EW.hdC),
+    run(2, "IGST Amount", EW.hdC), run(2, "CESS Amount", EW.hdC), run(2, "Total Inv . Value", EW.hdC)]);
+  const tot = G.at() + 1;
+  row([[3, { f: `H${item}`, s: EW.money }], run(2, 0, EW.money, { t: "n" }), run(2, 0, EW.money, { t: "n" }),
+    [2, { f: `ROUND(H${item}*L${item}/100,2)`, s: EW.money }], run(2, 0, EW.money, { t: "n" }),
+    [2, { f: `A${tot}+D${tot}+F${tot}+H${tot}+J${tot}`, s: EW.money }]]);
+  gap();
+
+  row([run(4, "Transportation Details", EW.lbl)]);
+  row([run(2, "Transpoter Name", EW.lbl), run(3, tr.name === "—" ? "" : tr.name, EW.fldC),
+    run(2, "Transpoter ID", EW.lbl), run(2, tr.transportId || "", EW.fldC),
+    run(2, "Approximate Distance (inKM)", EW.lblW), run(2, "", EW.fldC)]);
+  gap();
+
+  row([run(4, "PART - B", EW.lbl)]);
+  row([run(3, "Mode", EW.lbl), run(3, "Road", EW.optOn), run(3, "Rail", EW.opt), run(2, "Air", EW.opt), run(2, "Ship", EW.opt)]);
+  row([run(3, "Vehicle Type", EW.lbl), run(3, "Regular", EW.optOn), run(7, "Over Dimensional Cargo", EW.opt)]);
+  const veh = tr.veh && tr.veh !== "—";
+  row([run(3, "Vehicle No", EW.lbl), run(10, veh ? tr.veh : "Please give the Truck Number Here", veh ? EW.fldC : EW.phC)]);
+  row([run(3, "Transpoter Doc. No & Date", EW.lbl), run(5, "LR Number", EW.phC), run(5, "LR Date", EW.phC)]);
+
+  return fitSheet({
+    name: "E-way",
+    rows: G.rows,
+    merges: G.merges,
+    heights: G.heights,
+    widths: [12, 10, 10, 10, 10, 12, 10, 10, 12, 12, 12, 10, 12],
+    defaultRowHeight: 15,
+    colStyle: { font: "ref", border: false, valign: "center" },
+    page: {
+      paper: 9, orientation: "landscape", fit: true, fitH: 0,
+      margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 },
+    },
+  }, { widen: false });
+}
+
 // Supplier-wise e-way documents (one per supplier) — for the split download.
 export function ewaySupplierDocs(ctx) {
   const lines = L(ctx), bySup = {}; lines.forEach((x) => { (bySup[x.supId] = bySup[x.supId] || []).push(x); });
   return Object.entries(bySup).map(([sid, arr]) => {
     const sp = supFor(ctx, sid);
-    return { supplierId: sid, code: sp.code || sid, name: sp.name || sid, html: eway10Block(ctx, sid, arr) };
+    return {
+      supplierId: sid, code: sp.code || sid, name: sp.name || sid,
+      docName: `Eway_Purchase_10_${(sp.code || sid).replace(/[^A-Za-z0-9]+/g, "_")}`,
+      html: eway10Block(ctx, sid, arr),
+      sheets: [eway10Sheet(ctx, sid, arr)],
+    };
   });
 }
-B["10"] = (ctx) => ({ name: "Eway_Purchase_10", html: ewaySupplierDocs(ctx).map((d) => d.html).join("<br>") });
+B["10"] = (ctx) => {
+  const docs = ewaySupplierDocs(ctx);
+  return {
+    name: "Eway_Purchase_10",
+    html: docs.map((d) => d.html).join("<br>"),
+    sheets: docs.map((d) => ({ ...d.sheets[0], name: docs.length > 1 ? `${d.code} E-way` : "E-way" })),
+  };
+};
 B["11A"] = (ctx) => {
   const s = ctx.inv.ship || {};
   const html = `<div class="title">DELIVERY ORDER (D.O.)</div>${exporterBlock(ctx)}<br>
@@ -2185,6 +2377,34 @@ function despatchMarks(ctx, arr) {
   return `All Packages to be marked as ${mark}${from ? ` ${from} – ${to}` : ""} / ${pkgs} Packages${kinds}`;
 }
 
+/* The letterhead itself — the name in Centaur maroon with the mark against the
+   right margin, the rule in the house red, and the contact strip along the
+   foot. Both letters in the library are printed on it. */
+const letterheadBlock = (E) => `<table class="dlhead"><tr>
+      <td><div class="brand">${esc(E.name)}</div><div class="sub">${esc(E.sub || "Merchant Exporters")}</div></td>
+      <td class="lg"><img src="${LOGO_SRC}" alt=""></td></tr></table>
+    <div class="rule"></div>`;
+const letterFootBlock = (E) => `<div class="rule"></div>
+    <table class="dlfoot"><tr>
+      <td><div>${esc(E.iec)}</div><div class="b">${esc(E.gstin)}</div></td>
+      <td class="r"><div>+91-${esc(E.tel)}</div><div class="b">${esc(E.email)}</div><div>${esc(E.addr)}</div></td>
+    </tr></table>`;
+
+/* Both letters that end this way — the undertaking, then the signature over
+   the printed name, then the date and the space for the signature itself. */
+function letterSignRows(G, ctx, E) {
+  G.row([[3, { v: "", s: DL.body }], [3, { v: `For M/s. ${E.name}`, s: DL.body }]]);
+  G.gap(18);
+  G.gap(18);
+  G.row([[3, { v: "", s: DL.body }], [3, { v: `Proprietor- ${SIGNATORY}`, s: DL.body }]]);
+  G.row([[2, { v: `Date   :   ${ddmm(ctx.inv.date)}`, s: DL.body }], [2, { v: "Signature   :", s: DL.body }], [2, { v: "", s: DL.body }]]);
+  G.gap();
+}
+const letterFieldBlock = (label, value) => `<table class="fld"><tr>
+      <td class="lbl">${esc(label)}</td><td class="b">${esc(value)}</td></tr></table>`;
+const letterSignBlock = (ctx, E) => `<p class="sign">For M/s. ${esc(E.name)}<br>Proprietor- ${esc(SIGNATORY)}</p>
+    <p>Date &nbsp; : &nbsp; ${ddmm(ctx.inv.date)} &nbsp;&nbsp;&nbsp;&nbsp; Signature &nbsp; :</p>`;
+
 function despatch11Block(ctx, sid, arr) {
   const sp = supFor(ctx, sid);
   const E = ctx.EXPORTER;
@@ -2197,10 +2417,7 @@ function despatch11Block(ctx, sid, arr) {
 
   const step = (n, body) => `<tr><td class="n">${n})</td><td>${body}</td></tr>`;
   return `<div class="dl">
-    <table class="dlhead"><tr>
-      <td><div class="brand">${esc(E.name)}</div><div class="sub">${esc(E.sub || "Merchant Exporters")}</div></td>
-      <td class="lg"><img src="${LOGO_SRC}" alt=""></td></tr></table>
-    <div class="rule"></div>
+    ${letterheadBlock(E)}
 
     <div class="ref">${esc(letterRef(ctx))}<br>${esc(LETTER_DATE(ctx.inv.date))}</div>
     <p class="to">${to}</p>
@@ -2223,12 +2440,118 @@ function despatch11Block(ctx, sid, arr) {
     <p>Yours faithfully,<br>For ${esc(E.name)},</p>
     <p class="sign">Proprietor</p>
 
-    <div class="rule"></div>
-    <table class="dlfoot"><tr>
-      <td><div>${esc(E.iec)}</div><div class="b">${esc(E.gstin)}</div></td>
-      <td class="r"><div>+91-${esc(E.tel)}</div><div class="b">${esc(E.email)}</div><div>${esc(E.addr)}</div></td>
-    </tr></table>
+    ${letterFootBlock(E)}
   </div>`;
+}
+
+/* The same letter as a worksheet — six columns: a narrow one for the numbers
+   of the instructions, four for the body, and the last for what the footer
+   sets against the right margin. Nothing here is a table, so the sheet is the
+   letter's own blocks laid on that grid, the mark anchored top right and the
+   two rules drawn in the letterhead's red. */
+const DL = {
+  brand: { font: "brand", border: false, valign: "center" },
+  sub: { font: "brands", border: false, valign: "center" },
+  rule: { font: "base", border: "b#C00000", valign: "center" },
+  body: { font: "base", border: false, valign: "top", wrap: true },
+  b: { font: "letb", border: false, valign: "top", wrap: true },
+  key: { font: "base", border: false, valign: "top" },
+  n: { font: "base", border: false, align: "left", valign: "top" },
+  mid: { font: "base", border: false, align: "center", valign: "top", wrap: true },
+  midB: { font: "letb", border: false, align: "center", valign: "top" },
+  bx: { font: "base", border: "box", valign: "center", wrap: true },
+  // The declarations are typed to both margins, as their copies are.
+  just: { font: "base", border: false, valign: "top", wrap: true, align: "justify" },
+  foot: { font: "letmn", border: false, valign: "center" },
+  footB: { font: "letmnb", border: false, valign: "center" },
+  footR: { font: "letmn", border: false, align: "right", valign: "center" },
+  footRB: { font: "letmnb", border: false, align: "right", valign: "center" },
+};
+/* The same letterhead on the worksheet side: the masthead rows, the contact
+   strip, and the paper both letters are set up on. */
+function letterheadRows(G, E) {
+  G.row([[4, { v: E.name, s: DL.brand }], [2, { v: "", s: DL.brand }]], 30);
+  G.row([[4, { v: E.sub || "Merchant Exporters", s: DL.sub }], [2, { v: "", s: DL.sub }]], 16);
+  G.row([[6, { v: "", s: DL.rule }]], 6);
+  G.gap(6);
+}
+function letterFootRows(G, E) {
+  G.row([[6, { v: "", s: DL.rule }]], 6);
+  G.row([[3, { v: E.iec, s: DL.foot }], [3, { v: `+91-${E.tel}`, s: DL.footR }]]);
+  G.row([[3, { v: E.gstin, s: DL.footB }], [3, { v: E.email, s: DL.footRB }]]);
+  // The address is longer than the half-row it sits in on paper; a merged cell
+  // clips rather than runs on, so it takes the width of the sheet.
+  G.row([[6, { v: E.addr, s: { ...DL.footR, wrap: true } }]]);
+}
+function letterSheet(name, G) {
+  const mark = logoImage();
+  return fitSheet({
+    name,
+    rows: G.rows,
+    merges: G.merges,
+    heights: G.heights,
+    widths: [6, 18, 18, 18, 18, 18],
+    defaultRowHeight: 14.25,
+    colStyle: { font: "base", border: false, valign: "top" },
+    // Top right of the letterhead, level with the exporter's name.
+    image: mark ? { ...mark, col: 5, colOff: 190500, row: 0, rowOff: 19050, cy: 533400, cx: Math.round(533400 * (172 / 165)) } : null,
+    page: {
+      paper: 9, orientation: "portrait", fit: true, fitH: 0,
+      margins: { left: 0.6, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 },
+    },
+  }, { widen: false });
+}
+
+function despatch11Sheet(ctx, sid, arr) {
+  const sp = supFor(ctx, sid);
+  const E = ctx.EXPORTER;
+  const [addr1, addr2] = ewAddr(sp.addr);
+  const place = String(sp.place || "");
+  const named = place && addr2.toLowerCase().includes(place.toLowerCase());
+  const to = [`Messrs. ${sp.name || ""},`, addr1,
+    [addr2, named ? "" : place, sp.pin].filter(Boolean).join(" ").replace(/\s+/g, " ")].filter(Boolean);
+
+  const G = formGrid(6);
+  const { row, gap } = G;
+  const line = (text, s = DL.body) => row([[6, { v: text, s }]]);
+  const step = (n, text) => row([[1, { v: `${n})`, s: DL.n }], [5, { v: text, s: DL.body }]]);
+
+  letterheadRows(G, E);
+
+  line(letterRef(ctx));
+  line(LETTER_DATE(ctx.inv.date));
+  gap();
+  to.forEach((l) => line(l));
+  gap();
+  row([[1, { v: "Ref", s: DL.key }], [5, { v: `Our Export Order ${poBannerList(ctx)}`, s: DL.body }]]);
+  gap();
+  line(`DESPATCH DATE: ${LETTER_DAY(ctx.inv.date)}`, DL.b);
+  gap();
+  line("With reference to the above, we give hereunder the dispatch instructions:");
+  gap();
+
+  step(1, despatchMarks(ctx, arr));
+  step(2, "Book the consignment for delivery at JNPT/Dhronagiri (Door Delivery)");
+  step(3, `Lorry receipt to be made in our name a/c. M/s. ${CFS.agent} Mumbai, on freight to pay.`);
+  step(4, "L/R to show goods for export");
+  step(5, [`Goods to be delivered at:`, `Messrs ${CFS.agent},`, ...CFS.lines,
+    `Person to contact: ${CFS.contacts}`,
+    `They will assist them to off-load the cargo. All the contacts are of the representative of M/s. ${CFS.agent}`].join("\n"));
+  gap();
+
+  line("We hope the matter is clear and awaiting your early response.  Upon dispatch of the goods send us your Invoice.");
+  gap();
+  line("Thanking you,");
+  gap();
+  line("Yours faithfully,");
+  line(`For ${E.name},`);
+  gap(18);
+  gap(18);
+  line("Proprietor");
+  gap();
+
+  letterFootRows(G, E);
+  return letterSheet("Despatch", G);
 }
 
 /* One despatch instruction per supplier — for the split download. */
@@ -2241,122 +2564,775 @@ export function despatchSupplierDocs(ctx) {
       supplierId: sid, code: sp.code || sid, name: sp.name || sid,
       docName: `Despatch_Instructions_11_${(sp.code || sid).replace(/[^A-Za-z0-9]+/g, "_")}`,
       html: despatch11Block(ctx, sid, arr),
+      sheets: [despatch11Sheet(ctx, sid, arr)],
     };
   });
 }
 
-B["11"] = (ctx) => ({
-  name: "Despatch_Instructions_11",
-  html: despatchSupplierDocs(ctx).map((d) => d.html).join('<div class="pgbrk"></div>'),
-  page: "portrait",
-});
+B["11"] = (ctx) => {
+  const docs = despatchSupplierDocs(ctx);
+  return {
+    name: "Despatch_Instructions_11",
+    html: docs.map((d) => d.html).join('<div class="pgbrk"></div>'),
+    sheets: docs.map((d) => ({ ...d.sheets[0], name: docs.length > 1 ? `${d.code} Despatch` : "Despatch" })),
+    page: "portrait",
+  };
+};
 
 /* ---------- Stage C · Pre-shipment (12–29) ---------- */
+
+/* Doc 12 · Shipment boxes & volume — against 12-Shipment Boxes & volume.xlsx.
+
+   Their sheet is the container weighed and valued: a line for every range a
+   factory sent, that factory's lines totalled under them, and the whole
+   shipment totalled at the foot — then the container's capacity in cubic
+   metres and what is still free.
+
+   Three cells drive the arithmetic and they sit in the heading, exactly where
+   their sheet keeps them: the GST rate on the purchase (I1), the GST rate on
+   the sale (M1) and the day's exchange rate (O1). Every line points at those,
+   so correcting one re-values the sheet — which is the whole reason the client
+   works in this file rather than reading a printout.
+
+   The last two columns are the check the sheet exists for: O is the sales
+   value converted at that rate and P is what it differs from the rupee figure
+   the papers were raised at.                                              */
+
+/* Their accounting format — figures aligned on the decimal, a dash for nil. */
+const ACC = '_ * #,##0.00_ ;_ * \\-#,##0.00_ ;_ * "-"??_ ;_ @_ ';
+/* A 20ft container's usable volume. Their sheet types it in and takes the
+   balance off it, so it stays a cell the client can overwrite for a 40ft. */
+const CONTAINER_CBM = 29;
+
+const BV = {                                     // 12 · their sheet's styles
+  hd: { font: "calb", fill: "grey", border: "box", valign: "center" },
+  hdC: { font: "calb", fill: "grey", border: "box", align: "center", valign: "center", wrap: true },
+  hdPct: { font: "calb", fill: "grey", border: "box", align: "center", valign: "center", fmt: "0%" },
+  hdRate: { font: "calb", fill: "grey", border: "box", align: "center", valign: "center", fmt: "0.00" },
+  lbl: { font: "calb", fill: "grey", border: "box" },
+  hsn: { font: "calb", fill: "grey", border: "box", fmt: "0.0000" },
+  band: { font: "calb", fill: "grey", border: "box" },
+  int: { font: "cal", border: "box", fmt: "0" },
+  vol: { font: "cal", border: "box", fmt: "0.00" },
+  wt: { font: "cal", border: "box", fmt: "0.000" },
+  acc: { font: "cal", border: "box", fmt: ACC },
+  tInt: { font: "calb", fill: "grey", border: "box", fmt: "0" },
+  tVol: { font: "calb", fill: "grey", border: "box", fmt: "0.00" },
+  tWt: { font: "calb", fill: "grey", border: "box", fmt: "0.000" },
+  tAcc: { font: "calb", fill: "grey", border: "box", fmt: ACC },
+};
+
+/* A block per factory, a line per range inside it — OSWIN on its own, VP as
+   VP-PP and VP-GRN, which is how their column A reads. */
+function boxVolBlocks(ctx) {
+  const bySup = new Map();
+  L(ctx).forEach((x) => {
+    if (!bySup.has(x.supId)) bySup.set(x.supId, { code: x.sup.code || x.supId, ranges: new Map() });
+    const b = bySup.get(x.supId);
+    const key = (x.it.stickerRule || "pp") === "grn" ? "GRN" : "PP";
+    if (!b.ranges.has(key)) b.ranges.set(key, { key, hsn: [], box: 0, vol: 0, qty: 0, net: 0, gross: 0, pur: 0, usd: 0, inr: 0 });
+    const g = b.ranges.get(key);
+    g.hsn.push(x.it.hsn);
+    g.box += x.boxes; g.vol += x.volTotal; g.qty += x.pieces;
+    g.net += x.netTotal; g.gross += x.grossTotal;
+    g.pur += x.valTotal; g.usd += x.fobTotal; g.inr += x.rbiTotal;
+  });
+  return [...bySup.values()].map((b) => ({
+    code: b.code,
+    rows: [...b.ranges.values()]
+      .sort((p, q) => (p.key === q.key ? 0 : p.key === "PP" ? -1 : 1))
+      .map((g) => {
+        // One line stands for a whole range, so it takes the range's own HSN.
+        const raw = commonOf(g.hsn, (h) => h);
+        return {
+          ...g,
+          label: b.ranges.size > 1 ? `${b.code}-${g.key}` : b.code,
+          hsn: hsnValue({ hsn: raw }),
+          hsnText: raw,
+        };
+      }),
+  }));
+}
+
+function boxesVolumeSheet(ctx, blocks, ex) {
+  const H = (v) => ({ v, s: BV.hdC });
+  const out = [[
+    { v: "", s: BV.hd }, { v: "HSN", s: BV.hd }, H("BOX"), H("VOLUME"), H("QUANTITY"), H("NET WT"), H("GROSS WT"),
+    H("Taxable Purchase"), { v: 0.18, t: "n", s: BV.hdPct }, H("Total Pur value"),
+    H("Taxable Sales (USD)"), H("Taxable Sales (INR)"), { v: 0.18, t: "n", s: BV.hdPct }, H("Total Sale value"),
+    { v: ex, t: "n", s: BV.hdRate }, H("DIFF"),
+  ]];
+  const heights = [30];
+
+  const blank = () => Array(16).fill(null).map(() => ({ v: "", s: BV.band }));
+  const totals = [];                       // the row each block totals on
+  blocks.forEach((b) => {
+    const first = out.length + 1;
+    b.rows.forEach((g) => {
+      const r = out.length + 1;
+      out.push([
+        { v: g.label, s: BV.lbl },
+        g.hsn == null ? { v: g.hsnText, s: { ...BV.hsn, fmt: undefined } } : { v: g.hsn, t: "n", s: BV.hsn },
+        { v: g.box, t: "n", s: BV.int },
+        { v: g.vol, t: "n", s: BV.vol },
+        { v: g.qty, t: "n", s: BV.int },
+        { v: g.net, t: "n", s: BV.wt },
+        { v: g.gross, t: "n", s: BV.wt },
+        { v: g.pur, t: "n", s: BV.acc },
+        { f: `H${r}*$I$1`, s: BV.acc },
+        { f: `H${r}+I${r}`, s: BV.acc },
+        { v: g.usd, t: "n", s: BV.acc },
+        { v: g.inr, t: "n", s: BV.acc },
+        { f: `L${r}*$M$1`, s: BV.acc },
+        { f: `L${r}+M${r}`, s: BV.acc },
+        { f: `K${r}*$O$1`, s: BV.acc },
+        { f: `L${r}-O${r}`, s: BV.acc },
+      ]);
+    });
+    const last = out.length;
+    const sumOf = (col, style) => ({ f: `SUM(${col}${first}:${col}${last})`, s: style });
+    out.push([
+      { v: "TOTAL", s: BV.lbl }, { v: "", s: BV.lbl },
+      sumOf("C", BV.tInt), sumOf("D", BV.tVol), sumOf("E", BV.tInt), sumOf("F", BV.tWt), sumOf("G", BV.tWt),
+      ..."HIJKLMNOP".split("").map((c) => sumOf(c, BV.tAcc)),
+    ]);
+    totals.push(out.length);
+    out.push(blank());
+  });
+
+  const add = (col, style) => (totals.length
+    ? { f: totals.map((r) => `${col}${r}`).join("+"), s: style }
+    : { v: "", s: style });
+  out.push([
+    { v: "TOTAL", s: BV.lbl }, { v: "", s: BV.lbl },
+    add("C", BV.tInt), add("D", BV.tVol), add("E", BV.tInt), add("F", BV.tWt), add("G", BV.tWt),
+    ..."HIJKLMNOP".split("").map((c) => add(c, BV.tAcc)),
+  ]);
+  const grand = out.length;
+
+  const foot = (label, cell) => {
+    const row = Array(16).fill(null).map(() => ({ v: "", s: BV.band }));
+    row[0] = { v: label, s: BV.lbl };
+    row[3] = cell;
+    out.push(row);
+    return out.length;
+  };
+  const cap = foot("CAPACITY", { v: CONTAINER_CBM, t: "n", s: BV.tVol });
+  foot("BALANCE", { f: `D${cap}-D${grand}`, s: BV.tVol });
+
+  /* Their widths are the design and the headings are wrapped to fit them, so
+     the sheet is not re-measured. Only the label column is: their factories
+     are OSWIN and KP, ours can be VPPlastics-GRN. */
+  const label = out.reduce((m, r) => Math.max(m, String(r[0]?.v ?? "").length), 8);
+  return fitSheet({
+    name: "Boxes & volume",
+    rows: out,
+    heights,
+    widths: [Math.max(9.85546875, label + 1.5), 10.42578125, 9.140625, 9.140625, 9.140625, 9.140625, 9.140625,
+      16, 13.28515625, 13.85546875, 12.85546875, 12.5703125, 12.28515625, 12.5703125, 12.85546875, 13.5703125],
+    defaultColWidth: 9.140625,
+    defaultRowHeight: 15,
+    colStyle: { font: "cal", border: false },
+    freeze: 1,
+    /* Their copy was never set up to print — A4 portrait, default margins —
+       and sixteen columns do not go on portrait paper. It is turned and fitted
+       to one page across, which is how the PDF of it prints too. */
+    page: {
+      paper: 9, orientation: "landscape", fit: true, fitH: 0,
+      margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 },
+    },
+  }, { widen: false });
+}
+
 B["12"] = (ctx) => {
-  const lines = L(ctx), ex = exRate(ctx), bySup = {};
-  lines.forEach((x) => { const k = x.sup.code || "—"; (bySup[k] = bySup[k] || { hsn: x.it.hsn, box: 0, vol: 0, qty: 0, net: 0, gross: 0, pur: 0, sale: 0 }); const g = bySup[k]; g.box += x.boxes; g.vol += x.volTotal; g.qty += x.pieces; g.net += x.netTotal; g.gross += x.grossTotal; g.pur += x.valTotal; g.sale += x.fobTotal; });
-  const rows = Object.entries(bySup).map(([k, g]) => ({ k, ...g }));
-  const cols = [
-    { h: "Supplier", f: (r) => esc(r.k) }, { h: "HSN", f: (r) => esc(r.hsn) },
-    { h: "Box", r: 1, key: "box", t: "int", v: (r) => r.box, f: (r) => r.box },
-    { h: "Volume", r: 1, key: "vol", t: "num", v: (r) => r.vol, f: (r) => num(r.vol, 2) },
-    { h: "Quantity", r: 1, key: "qty", t: "int", v: (r) => r.qty, f: (r) => r.qty.toLocaleString("en-IN") },
-    { h: "Net Wt", r: 1, key: "net", t: "num", v: (r) => r.net, f: (r) => num(r.net) },
-    { h: "Gross Wt", r: 1, key: "gross", t: "num", v: (r) => r.gross, f: (r) => num(r.gross) },
-    { h: "Taxable Purchase ₹", r: 1, key: "pur", t: "inr", v: (r) => r.pur, f: (r) => num(r.pur) },
-    { h: "GST 18% ₹", r: 1, key: "gst", t: "inr", fml: "{pur}*0.18", f: (r) => num(r.pur * 0.18) },
-    { h: "Taxable Sales $", r: 1, key: "sale", t: "usd", v: (r) => r.sale, f: (r) => usd(r.sale) },
-    { h: "Taxable Sales ₹", r: 1, key: "saleinr", t: "inr", fml: `{sale}*${ex}`, f: (r) => num(r.sale * ex) },
-  ];
-  const foot = [{ v: "TOTAL", span: 2 }, { v: sum(rows, "box"), r: 1, sum: "box", t: "int" },
-    { v: num(sum(rows, "vol"), 2), r: 1, sum: "vol", t: "num" },
-    { v: sum(rows, "qty").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
-    { v: num(sum(rows, "net")), r: 1, sum: "net", t: "num" },
-    { v: num(sum(rows, "gross")), r: 1, sum: "gross", t: "num" },
-    { v: num(sum(rows, "pur")), r: 1, sum: "pur", t: "inr" },
-    { v: num(sum(rows, "pur") * 0.18), r: 1, sum: "gst", t: "inr" },
-    { v: usd(sum(rows, "sale")), r: 1, sum: "sale", t: "usd" },
-    { v: num(sum(rows, "sale") * ex), r: 1, sum: "saleinr", t: "inr" }];
-  const html = `<div class="title">12 · SHIPMENT BOXES &amp; VOLUME</div><div class="sub">Invoice ${esc(ctx.inv.invoiceNo)} DT ${ddmm(ctx.inv.date)} · Rate @ Rs. ${ex}/$</div>${tableOf(cols, rows, foot)}`;
-  return { name: "Shipment_Boxes_Volume_12", html };
+  const ex = exRate(ctx);
+  const blocks = boxVolBlocks(ctx);
+  const acc = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const cell = (v, t, val) => `<td class="r" data-t="${t}" data-v="${val}">${v}</td>`;
+  const money = (n) => cell(acc(n), "num", n);
+
+  const lineRow = (g) => `<tr>
+      <td class="g b">${esc(g.label)}</td>
+      <td class="g b r">${esc(g.hsn == null ? g.hsnText : g.hsn.toFixed(4))}</td>
+      ${cell(g.box, "int", g.box)}
+      ${cell(wbFixed(g.vol, 2), "num", g.vol)}
+      ${cell(g.qty, "int", g.qty)}
+      ${cell(wbFixed(g.net, 3), "num3", g.net)}
+      ${cell(wbFixed(g.gross, 3), "num3", g.gross)}
+      ${money(g.pur)}${money(g.pur * 0.18)}${money(g.pur * 1.18)}
+      ${money(g.usd)}${money(g.inr)}${money(g.inr * 0.18)}${money(g.inr * 1.18)}
+      ${money(g.usd * ex)}${money(g.inr - g.usd * ex)}
+    </tr>`;
+
+  const totalRow = (label, rows) => {
+    const t = (k) => rows.reduce((s, g) => s + (Number(g[k]) || 0), 0);
+    const g = { box: t("box"), vol: t("vol"), qty: t("qty"), net: t("net"), gross: t("gross"), pur: t("pur"), usd: t("usd"), inr: t("inr") };
+    return `<tr class="g b">
+      <td class="g b">${label}</td><td class="g"></td>
+      <td class="r g">${g.box}</td><td class="r g">${wbFixed(g.vol, 2)}</td><td class="r g">${g.qty}</td>
+      <td class="r g">${wbFixed(g.net, 3)}</td><td class="r g">${wbFixed(g.gross, 3)}</td>
+      <td class="r g">${acc(g.pur)}</td><td class="r g">${acc(g.pur * 0.18)}</td><td class="r g">${acc(g.pur * 1.18)}</td>
+      <td class="r g">${acc(g.usd)}</td><td class="r g">${acc(g.inr)}</td><td class="r g">${acc(g.inr * 0.18)}</td>
+      <td class="r g">${acc(g.inr * 1.18)}</td><td class="r g">${acc(g.usd * ex)}</td>
+      <td class="r g">${acc(g.inr - g.usd * ex)}</td></tr>`;
+  };
+
+  const all = blocks.flatMap((b) => b.rows);
+  const spacer = `<tr class="g">${Array(16).fill('<td class="g"></td>').join("")}</tr>`;
+  const volume = all.reduce((s, g) => s + g.vol, 0);
+  const footRow = (label, value) => `<tr><td class="g b">${label}</td><td class="g"></td><td class="g"></td>
+      <td class="r g b">${wbFixed(value, 2)}</td>${Array(12).fill('<td class="g"></td>').join("")}</tr>`;
+
+  const html = `<div class="title">12 · SHIPMENT BOXES &amp; VOLUME</div>
+    <div class="sub">Invoice ${esc(ctx.inv.invoiceNo)} DT ${ddmm(ctx.inv.date)} · GST 18% · Rate @ Rs. ${ex}/$</div>
+    <table class="wb">
+      <tr>
+        <th class="g"></th><th class="g">HSN</th><th class="g">BOX</th><th class="g">VOLUME</th><th class="g">QUANTITY</th>
+        <th class="g">NET WT</th><th class="g">GROSS WT</th><th class="g">Taxable Purchase</th><th class="g">18%</th>
+        <th class="g">Total Pur value</th><th class="g">Taxable Sales (USD)</th><th class="g">Taxable Sales (INR)</th>
+        <th class="g">18%</th><th class="g">Total Sale value</th><th class="g">${ex}</th><th class="g">DIFF</th>
+      </tr>
+      ${blocks.map((b) => b.rows.map(lineRow).join("") + totalRow("TOTAL", b.rows) + spacer).join("")}
+      ${totalRow("TOTAL", all)}
+      ${footRow("CAPACITY", CONTAINER_CBM)}
+      ${footRow("BALANCE", CONTAINER_CBM - volume)}
+    </table>`;
+  return { name: "Shipment_Boxes_Volume_12", html, sheet: boxesVolumeSheet(ctx, blocks, ex) };
 };
-B["13"] = (ctx) => {
+/* Doc 13 · Export value declaration — against 13-Export Value Declaration.pdf.
+
+   The customs Annexure-A: a typed form, ticked box by ticked box, not a table
+   of answers. What changes per shipment is what their copy highlights — the
+   shipping bill and invoice, the terms of payment and delivery, and the date
+   under the signature; the rest is the form as printed.
+
+   Their own copy carries boxes after only some of the options on lines 3 and
+   4, so the X for a plain sale ended up in the first box there was. Every
+   option is given its own box here and the one that applies is the one
+   ticked — a declaration that reads "sale on consignment basis" against an
+   FOB sale is worse than a form that does not match theirs box for box.
+
+   The form is described once, as runs across a 24-column grid, and the page
+   and the worksheet are both laid out from that description, so the paper the
+   CHA signs and the sheet the office keeps cannot drift apart.            */
+const EV = {
+  t: { font: "tnr", border: false, align: "center", valign: "center" },
+  n: { font: "tnr", border: false, valign: "center" },
+  nt: { font: "tnr", border: false, valign: "top" },
+  w: { font: "tnr", border: false, valign: "top", wrap: true },
+  u: { font: "tnru", border: false, valign: "center" },
+  x: { font: "tnr", border: "box", align: "center", valign: "center" },
+  c: { font: "tnr", border: false, align: "center", valign: "center" },
+};
+const EVD_CLASS = { t: "ttl", n: "", nt: "nt", w: "w", u: "u", x: "bx", c: "c" };
+
+function evd13Rows(ctx) {
   const s = ctx.inv.ship || {};
-  const html = `<div class="title">ANNEXURE-A · EXPORT VALUE DECLARATION</div>
-    <div class="sub">(See Customs Valuation (Determination of Value of Export Goods) Rules, 2007)</div>
-    <table style="width:100%">
-      <tr><td class="k">1. Shipping Bill No. &amp; Date</td><td>${esc(s.sbNo || "—")} ${s.sbDate ? "DT " + ddmm(s.sbDate) : ""}</td></tr>
-      <tr><td class="k">2. Invoice No. &amp; Date</td><td>${esc(ctx.inv.invoiceNo)} DT ${ddmm(ctx.inv.date)}</td></tr>
-      <tr><td class="k">3. Nature of Transaction</td><td>Sale</td></tr>
-      <tr><td class="k">4. Method of Valuation</td><td>Rule 3</td></tr>
-      <tr><td class="k">5. Seller &amp; buyer related?</td><td>No</td></tr>
-      <tr><td class="k">7. Terms of Payment</td><td>${esc(s.payment || "D.P. SIGHT DRAFT")}</td></tr>
-      <tr><td class="k">8. Terms of Delivery</td><td>${esc(s.terms || "FOB MUMBAI")}</td></tr>
-      <tr><td class="k">FOB Value</td><td class="b">${usd(sum(L(ctx), "fobTotal"))}</td></tr>
-    </table>
-    <p>DECLARATION: We hereby declare that the information furnished above is true, complete and correct in every respect.</p>${declBlock(ctx)}`;
-  return { name: "Export_Value_Declaration_13", html };
+  const E = ctx.EXPORTER;
+  // The bill is numbered when the CHA files it, which is after this is signed;
+  // until then the line prints blank, as their copy does.
+  const sb = s.sbNo ? `: ${s.sbNo} Dt. ${s.sbDate ? ddmm(s.sbDate) : ""}`.trim() : "";
+  const R = (...cells) => ({ cells });
+  const GAP = { gap: true };
+  const tick = (on) => [1, on ? "X" : "", "x"];
+
+  return [
+    R([24, "ANNEXURE-A", "t"]),
+    R([24, "EXPORT VALUE DECLARATION", "t"]),
+    R([24, "(See Rule of customs Valuation (Determination of Value of export goods) Rules 2007)", "t"]),
+    GAP,
+    R([12, "1.  Shipping Bill No. & Date.", "n"], [12, sb, "n"]),
+    GAP,
+    R([12, "2.  Invoice No. & Date.", "n"], [12, `: ${ctx.inv.invoiceNo} Dt. ${ddmm(ctx.inv.date)}`, "n"]),
+    GAP,
+    R([24, "3.  Nature of Transaction.", "n"]),
+    R([3, "Sale", "n"], tick(true), [9, "Sale on consignment basis", "n"], tick(false),
+      [3, "Gift", "n"], tick(false), [6, "", "n"]),
+    R([3, "Sample", "n"], tick(false), [3, "Other", "n"], tick(false), [16, "", "n"]),
+    GAP,
+    R([10, "4.  Method of Valuation", "n"], [2, "Rule 3", "n"], tick(true), [2, "Rule 4", "n"], tick(false),
+      [2, "Rule 5", "n"], tick(false), [2, "Rule 6", "n"], tick(false), [2, "", "n"]),
+    R([10, "", "n"], [14, "(See Export Valuation Rules)", "n"]),
+    GAP,
+    R([13, "5.  Whether seller and buyer are related", "n"], [2, "Yes", "n"], tick(false),
+      [2, "No", "n"], tick(true), [5, "", "n"]),
+    GAP,
+    R([13, "6.  If yes, whether relationship", "n"], [2, "Yes", "n"], tick(false),
+      [2, "No", "n"], tick(false), [5, "", "n"]),
+    GAP,
+    R([12, "7.  Terms of Payment", "n"], [12, `: ${s.payment || "D.P. SIGHT DRAFT"}`, "n"]),
+    GAP,
+    R([12, "8.  Terms of Delivery", "n"], [12, `: ${s.terms || "FOB MUMBAI"}`, "n"]),
+    GAP,
+    R([24, "9.  Previous exports of identical/similar goods if any", "n"]),
+    R([12, "Shipping Bill No. & date.", "n"], [12, ": No.", "n"]),
+    GAP,
+    R([19, "10.  Any other relevant information (Attach separate sheet, if necessary)", "n"], [5, ":NIL", "n"]),
+    GAP,
+    R([24, "DECLARATION:", "u"]),
+    R([1, "1.", "nt"], [23, "We hereby declare that the information furnished above is true, complete and correct in every respect.", "w"]),
+    GAP,
+    R([1, "2.", "nt"], [23, "We also undertake to bring to the notice of proper officer any particulars, which subsequently come to our knowledge, which will have bearing on a valuation.", "w"]),
+    GAP,
+    R([10, "Place: Mumbai", "n"], [14, `For M/s. ${E.name}`, "c"]),
+    R([10, `Date: ${ddmm(ctx.inv.date)}`, "n"], [14, "", "c"]),
+    { gap: true, h: 40 },                       // the stamp and the signature go here
+    R([10, "", "n"], [14, `Proprietor- ${SIGNATORY}`, "c"]),
+    R([10, "", "n"], [14, "Signature of the Exporter", "c"]),
+    R([10, "", "n"], [14, "Name of the Signatory.", "c"]),
+  ];
+}
+
+function evd13Sheet(ctx) {
+  const G = formGrid(24);
+  evd13Rows(ctx).forEach((r) => {
+    if (r.gap) { G.gap(r.h || 8); return; }
+    G.row(r.cells.map(([span, v, k]) => [span, { v, s: EV[k] }]));
+  });
+  return fitSheet({
+    name: "Declaration",
+    rows: G.rows,
+    merges: G.merges,
+    heights: G.heights,
+    widths: Array(24).fill(4),
+    defaultRowHeight: 16.5,
+    colStyle: { font: "tnr", border: false },
+    page: {
+      paper: 9, orientation: "portrait", fit: true, fitH: 0,
+      margins: { left: 0.7, right: 0.7, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 },
+    },
+  }, { widen: false });
+}
+
+B["13"] = (ctx) => {
+  const body = evd13Rows(ctx).map((r) => (r.gap
+    ? '<tr class="gap"><td colspan="24"></td></tr>'
+    : `<tr>${r.cells.map(([span, v, k]) => {
+      const cls = EVD_CLASS[k];
+      return `<td${cls ? ` class="${cls}"` : ""}${span > 1 ? ` colspan="${span}"` : ""}>${esc(v)}</td>`;
+    }).join("")}</tr>`)).join("");
+  const html = `<div class="evd"><table><colgroup>${'<col>'.repeat(24)}</colgroup>${body}</table></div>`;
+  return { name: "Export_Value_Declaration_13", html, sheet: evd13Sheet(ctx), page: "portrait" };
 };
+/* Doc 14 · SCOMET declaration — against 14-Scomet Declaration.pdf. The four
+   undertakings the DGFT wants from an exporter, on the same letterhead as the
+   despatch instruction. Only the invoice and the date change with the
+   shipment; the undertakings are their standing text and are printed word for
+   word, including the two slips their copy carries ("contravene the contravene
+   the", "do not confirm to unclear transfer") — this is a declaration that has
+   been filed in this wording for years, and editing it is the client's call,
+   not ours. */
+const SCOMET_TERMS = [
+  "Our products do not fall under restricted or negative list of items under FTP 2009-2014 nor these are categorized under SCOMET (Special Chemicals, Organisms, Materials, Equipment & Technologies) list.",
+  "Export of our products are neither covered under EU Registration 423/2007 nor the Customer is listed under OFAC (Office of the Foreign Asset Control under U.S. Department of Treasury) SDN list.",
+  "Supplier stated in the export invoice(s) are not meant for any military/nuclear activities or development. The Goods stated in the invoice do not confirm to unclear transfer or proliferation activities.",
+  "These supplies do not contravene the contravene the Resolution 1929(2010) of United Nations Security Council or Provisions of INECIRC/254/Rev-9/Part2(IAEA Document)",
+];
+const scometRef = (ctx) => `${ctx.inv.invoiceNo} Dt ${ddmm(ctx.inv.date)}`;
+
+function scomet14Sheet(ctx) {
+  const E = ctx.EXPORTER;
+  const G = formGrid(6);
+  const { row, gap } = G;
+
+  letterheadRows(G, E);
+  row([[2, { v: "Invoice No & Date", s: DL.body }], [4, { v: scometRef(ctx), s: DL.b }]]);
+  gap();
+  row([[6, { v: `WE M/S. ${E.name} FURTHER UNDERTAKE AND CONFIRM`, s: DL.mid }]]);
+  gap();
+  SCOMET_TERMS.forEach((t) => {
+    row([[1, { v: "•", s: DL.n }], [5, { v: t, s: DL.just }]]);
+    gap(6);
+  });
+  gap();
+  row([[6, { v: "Thanking you.", s: DL.body }]]);
+  gap();
+  row([[3, { v: `For M/s. ${E.name}`, s: DL.body }]]);
+  gap(18);
+  gap(18);
+  row([[3, { v: `Proprietor- ${SIGNATORY}`, s: DL.body }]]);
+  gap();
+  row([[3, { v: ddmm(ctx.inv.date), s: DL.body }]]);
+  gap();
+
+  letterFootRows(G, E);
+  return letterSheet("SCOMET", G);
+}
+
 B["14"] = (ctx) => {
   const E = ctx.EXPORTER;
-  const html = `<div class="title">SCOMET DECLARATION</div>${exporterBlock(ctx)}<br>
-    <table style="width:100%"><tr><td class="k">Invoice No &amp; Date</td><td class="b">${esc(ctx.inv.invoiceNo)} DT ${ddmm(ctx.inv.date)}</td></tr></table>
-    <p>WE M/S. ${esc(E.name)} FURTHER UNDERTAKE AND CONFIRM:</p>
-    <p>• Our products do not fall under the restricted / negative list under FTP nor are categorized under the SCOMET list.<br>
-    • Exports are neither covered under EU Registration 423/2007 nor is the customer listed under OFAC SDN list.<br>
-    • The goods are not meant for any military / nuclear activity or development.<br>
-    • These supplies do not contravene UNSC Resolution 1929(2010) or IAEA document INFCIRC/254.</p>${declBlock(ctx)}`;
-  return { name: "Scomet_Declaration_14", html };
-};
-B["15"] = (ctx) => {
-  const html = `<div class="title">SDF DECLARATION</div>${exporterBlock(ctx)}<br>
-    <table style="width:100%">
-      <tr><td class="k">Invoice No</td><td class="b">${esc(ctx.inv.invoiceNo)}</td><td class="k">Date</td><td class="b">${ddmm(ctx.inv.date)}</td></tr>
-      <tr><td class="k">Name of Exporter</td><td>Mr Aalok M Shah</td><td class="k">Designation</td><td>Proprietor</td></tr>
+  const html = `<div class="dl just">
+    ${letterheadBlock(E)}
+
+    ${letterFieldBlock("Invoice No & Date", scometRef(ctx))}
+    <p class="mid">WE M/S. ${esc(E.name)} FURTHER UNDERTAKE AND CONFIRM</p>
+
+    <table class="ins">
+      ${SCOMET_TERMS.map((t) => `<tr><td class="n">•</td><td>${esc(t)}</td></tr>`).join("")}
     </table>
-    <p>I/We declare that the particulars given herein above are true, correct and complete. I/We undertake to abide by the provisions of the Foreign Exchange Management Act, 1999, including realization / repatriation of foreign exchange.</p>
-    <p>Documents enclosed: Invoice cum Packing-List — APPLICABLE.</p>${declBlock(ctx)}`;
-  return { name: "SDF_Declaration_15", html };
+
+    <p>Thanking you.</p>
+    <p class="sign">For M/s. ${esc(E.name)}<br>Proprietor- ${esc(SIGNATORY)}</p>
+    <p>${ddmm(ctx.inv.date)}</p>
+
+    ${letterFootBlock(E)}
+  </div>`;
+  return { name: "Scomet_Declaration_14", html, sheet: scomet14Sheet(ctx), page: "portrait" };
 };
+/* Doc 15 · SDF declaration — against 15-SDF Declaration.pdf. The customs SDF,
+   on the letterhead: what is declared, what is enclosed and against which of
+   the four heads, the particulars of the exporter, and the undertaking under
+   FEMA. The customs broker's half of the particulars is left empty — the CHA
+   fills it in when the shipping bill is filed. */
+const SDF_ENCLOSURES = [
+  // The first head runs to three lines on their form, with its answer against
+  // the middle one; the rest are a line each.
+  [["Duty Exemption Entitlement Certificate /", "Advance Authorisation /", "Duty Free Import Authorisation Declaration"], "NOT APPLICABLE", 1],
+  [["Invoice cum Packing-List"], "APPLICABLE", 0],
+  [["Quota / Inspection Certificates"], "NOT APPLICABLE", 0],
+  [["Others (Specify)"], "NOT APPLICABLE", 0],
+];
+const SDF_FEMA = "I/We undertake to abide by the provisions of Foreign Exchange Management Act, 1999, as amended from time to time, including realization or repatriation of foreign exchange to or from India.";
+
+/* The particulars box: ours on the left, the customs broker's on the right. */
+const sdfParticulars = (ctx) => [
+  ["Invoice No", ctx.inv.invoiceNo, "Date", ddmm(ctx.inv.date)],
+  ["Name of the Exporter", SIGNATORY, "Name of Customs Broker", ""],
+  ["Designation", "Proprietor", "Designation", ""],
+  ["", "", "Identity Card Number", ""],
+];
+
+function sdf15Sheet(ctx) {
+  const E = ctx.EXPORTER;
+  const G = formGrid(6);
+  const { row, gap } = G;
+
+  letterheadRows(G, E);
+  row([[6, { v: "D E C L A R A T I O N", s: DL.midB }]]);
+  gap();
+  row([[6, { v: "I/We declare that the particulars given herein above are true, correct and complete.", s: DL.body }]]);
+  gap();
+  row([[6, { v: "I/We enclose herewith copies of the following documents *:", s: DL.body }]]);
+  gap();
+
+  SDF_ENCLOSURES.forEach(([lines, answer, at], n) => lines.forEach((text, i) => {
+    row([[1, { v: i === 0 ? `${n + 1}.` : "", s: DL.n }],
+      [3, { v: text, s: DL.body }],
+      [2, { v: i === at ? answer : "", s: DL.body }]]);
+  }));
+  gap();
+
+  sdfParticulars(ctx).forEach((cells) => row([
+    [2, { v: cells[0], s: DL.bx }], [1, { v: cells[1], s: DL.bx }],
+    [2, { v: cells[2], s: DL.bx }], [1, { v: cells[3], s: DL.bx }],
+  ]));
+  gap();
+
+  row([[6, { v: SDF_FEMA, s: DL.just }]]);
+  gap();
+  row([[6, { v: "* To be submitted with the exports goods in the warehouse.", s: DL.body }]]);
+  gap();
+
+  letterSignRows(G, ctx, E);
+  letterFootRows(G, E);
+  return letterSheet("SDF", G);
+}
+
+B["15"] = (ctx) => {
+  const E = ctx.EXPORTER;
+  const encl = SDF_ENCLOSURES.map(([lines, answer, at], n) => lines.map((text, i) => `<tr>
+        <td class="n">${i === 0 ? `${n + 1}.` : ""}</td>
+        <td>${esc(text)}</td>
+        <td class="ans">${i === at ? answer : ""}</td>
+      </tr>`).join("")).join("");
+  const box = sdfParticulars(ctx).map((cells) => `<tr>${cells
+    .map((v, i) => `<td${i === 0 || i === 2 ? ' class="lbl"' : ""}>${esc(v)}</td>`).join("")}</tr>`).join("");
+
+  const html = `<div class="dl just">
+    ${letterheadBlock(E)}
+
+    <p class="mid b">D E C L A R A T I O N</p>
+    <p>I/We declare that the particulars given herein above are true, correct and complete.</p>
+    <p>I/We enclose herewith copies of the following documents *:</p>
+
+    <table class="ins encl">${encl}</table>
+    <table class="bx">${box}</table>
+
+    <p>${esc(SDF_FEMA)}</p>
+    <p>* To be submitted with the exports goods in the warehouse.</p>
+
+    ${letterSignBlock(ctx, E)}
+
+    ${letterFootBlock(E)}
+  </div>`;
+  return { name: "SDF_Declaration_15", html, sheet: sdf15Sheet(ctx), page: "portrait" };
+};
+/* Doc 16 · RoDTEP declaration — against 16-RoDTEP Declaration.pdf. The
+   annexure the shipping bill is filed with when the shipment claims RoDTEP,
+   on the letterhead. The three undertakings are the scheme's own wording and
+   are printed as they stand; only the invoice and the date change. */
+const RODTEP_TITLE = "DECLARATION TO BE FILED AS PART OF SHIPPING BILL OR BILL OF EXPORT FOR EXPORT OF GOODS UNDER RoDTEP SCHEME";
+const RODTEP_LEAD = "“I/We, in regard to my/our claim under RoDTEP scheme made in this Shipping Bill or Bill of Export, hereby declare that:";
+const RODTEP_TERMS = [
+  "1. I/ We undertake to abide by the provisions, including conditions, restrictions, exclusions and time-limits as provided under RoDTEP scheme, and relevant notifications, regulations, etc., as amended from time to time.",
+  "2. Any claim made in this shipping bill or bill of export is not with respect to any duties or taxes or levies which are exempted or remitted or credited under any other mechanism outside RoDTEP.",
+  "3. I/We undertake to preserve and make available relevant documents relating to the exported goods for the purposes of audit in the manner and for the time period prescribed in the Customs Audit Regulations, 2018.”",
+];
+
+function rodtep16Sheet(ctx) {
+  const E = ctx.EXPORTER;
+  const G = formGrid(6);
+  const { row, gap } = G;
+
+  letterheadRows(G, E);
+  row([[6, { v: "Annexure", s: DL.mid }]]);
+  gap();
+  row([[6, { v: RODTEP_TITLE, s: DL.mid }]]);
+  gap();
+  row([[2, { v: "Invoice No & Date", s: DL.body }], [4, { v: scometRef(ctx), s: DL.b }]]);
+  gap();
+  row([[6, { v: RODTEP_LEAD, s: DL.just }]]);
+  gap();
+  RODTEP_TERMS.forEach((t) => { row([[6, { v: t, s: DL.just }]]); gap(6); });
+  gap();
+
+  letterSignRows(G, ctx, E);
+  letterFootRows(G, E);
+  return letterSheet("RoDTEP", G);
+}
+
 B["16"] = (ctx) => {
-  const html = `<div class="title">RoDTEP DECLARATION</div>${exporterBlock(ctx)}<br>
-    <table style="width:100%"><tr><td class="k">Invoice No &amp; Date</td><td class="b">${esc(ctx.inv.invoiceNo)} DT ${ddmm(ctx.inv.date)}</td></tr></table>
-    <p>I/We, in regard to our claim under the RoDTEP scheme made in this Shipping Bill / Bill of Export, hereby declare that:</p>
-    <p>1. We undertake to abide by the provisions, conditions, restrictions, exclusions and time-limits under the RoDTEP scheme and relevant notifications.<br>
-    2. Any claim made is not with respect to duties/taxes/levies exempted, remitted or credited under any other mechanism outside RoDTEP.<br>
-    3. We undertake to preserve and make available relevant documents for audit per the Customs Audit Regulations, 2018.</p>${declBlock(ctx)}`;
-  return { name: "RoDTEP_Declaration_16", html };
+  const E = ctx.EXPORTER;
+  const html = `<div class="dl just">
+    ${letterheadBlock(E)}
+
+    <p class="mid">Annexure</p>
+    <p class="mid">${esc(RODTEP_TITLE)}</p>
+    ${letterFieldBlock("Invoice No & Date", scometRef(ctx))}
+
+    <p>${esc(RODTEP_LEAD)}</p>
+    ${RODTEP_TERMS.map((t) => `<p>${esc(t)}</p>`).join("")}
+
+    ${letterSignBlock(ctx, E)}
+
+    ${letterFootBlock(E)}
+  </div>`;
+  return { name: "RoDTEP_Declaration_16", html, sheet: rodtep16Sheet(ctx), page: "portrait" };
 };
-// Proforma groups items by FOB basis (per piece / per 100 / customize). The GD
-// code and Box columns are intentionally left off this download format.
+
+/* Doc 17 · Proforma invoice — against 17-Proforma Invoice of Buyer.pdf, which
+   is the buyer's own purchase order form: their name and tagline over the
+   words PURCHASE ORDER, the order number and date, us in the TO box and their
+   warehouse in the DELIVER TO box, the account code they file us under, then
+   the goods banded by range — a band per item group, as their form bands them
+   — priced per piece or per hundred, and the freight and delivery terms under
+   it with their contact strip along the foot.
+
+   Their letterhead is the buyer's, not ours, so it is held on the buyer master
+   (Setup → Buyers) and prints from there. A buyer whose form we do not
+   reproduce simply leaves those fields blank and the boxes print empty, which
+   is what a blank form does.
+
+   Two things about their paper this cannot follow. Their grid is a fixed frame
+   that carries its running value to the next page as "Balance c/f" and totals
+   on the last; ours is one flow, so it rules the frame out to a full page and
+   totals once. And the logo above their name is theirs to supply — there is
+   nowhere in the app to keep it. */
 const fobModeOf = (it) => it?.fobMode || "100";
-const modeLabel = (m) => (m === "piece" ? "Per piece" : m === "custom" ? "Customize" : "Per 100 pieces");
-B["17"] = (ctx) => {
-  const rows = L(ctx);
-  const order = ["piece", "100", "custom"];
-  const g = {}; rows.forEach((r) => { const m = fobModeOf(r.it); (g[m] = g[m] || []).push(r); });
-  const groups = order.filter((m) => g[m]?.length);
-  const head = `<tr><th>Code</th><th>Size</th><th>Len (MM)</th><th data-k="pieces">Pieces</th><th data-k="rate">Rate $</th><th data-k="amount">Total Value $</th></tr>`;
-  const section = (m) => {
-    const arr = g[m], per100 = m === "100";
-    const body = arr.map((r) => {
-      const rate = per100 ? r.fobPc * 100 : r.fobPc;
-      // Amount = pieces × rate, divided by 100 on the per-hundred basis, so
-      // the download recalculates whichever way the item is quoted.
-      return `<tr><td>${esc(r.it.code)}</td><td class="c">${esc(r.it.size)}</td><td class="c">${esc(r.it.length)}</td><td class="r" data-t="int" data-v="${r.pieces}">${r.pieces.toLocaleString("en-IN")}</td><td class="r" data-t="${per100 ? "usd" : "usd4"}" data-v="${rate}">${per100 ? usd(rate) + "/100" : usdp(rate) + "/pc"}</td><td class="r" data-t="usd" data-f="{pieces}*{rate}${per100 ? "/100" : ""}">${usd(r.fobTotal)}</td></tr>`;
-    }).join("");
-    return `<tr class="sec"><td colspan="6">${modeLabel(m)}</td></tr>${head}${body}<tr class="sec"><td colspan="3">Subtotal — ${modeLabel(m)}</td><td class="r">${sum(arr, "pieces").toLocaleString("en-IN")}</td><td></td><td class="r">${usd(sum(arr, "fobTotal"))}</td></tr>`;
+const perLabel = (it) => (fobModeOf(it) === "piece" ? "Per Piece" : "Per 100 Pieces");
+const bandOf = (it) => String(it.group || "").trim()
+  || ((it.stickerRule || "pp") === "grn" ? "NYLON MOULDED FITTINGS" : "PP MOULDED FITTINGS");
+/* Their form is a ruled frame, not a table that stops with the goods. */
+const PROFORMA_ROWS = 22;
+
+/* A band per item group, in the order the invoice runs. A band whose goods have
+   no length loses that column, as their moulded-fitting pages do. */
+function proformaBands(ctx) {
+  const bands = new Map();
+  L(ctx).forEach((r) => {
+    const key = bandOf(r.it);
+    if (!bands.has(key)) bands.set(key, []);
+    bands.get(key).push(r);
+  });
+  return [...bands.entries()].map(([head, rows]) => ({
+    head,
+    rows,
+    lengths: rows.some((r) => String(r.it.length || "").trim()),
+    per: commonOf(rows, (r) => fobModeOf(r.it)) === "piece" ? "Per Piece" : "Per 100 Pieces",
+  }));
+}
+/* The month the goods are due — their form names it, in capitals. */
+const deliveryMonth = (ctx) => (ctx.inv.date
+  ? new Date(ctx.inv.date).toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase() : "");
+/* What one line is priced at: per piece as quoted, or per hundred. */
+const proformaRate = (r) => (fobModeOf(r.it) === "piece" ? r.fobPc : r.fobPc * 100);
+/* The buyer's own contact strip, as the four centred lines their form ends on.
+   A line with nothing in it is left out rather than printed empty. */
+function proformaFooter(b) {
+  const join = (parts, sep) => parts.filter(Boolean).join(sep);
+  return [
+    join([b.name, b.abn && `ABN ${b.abn}`, b.acn && `ACN ${b.acn}`], " - "),
+    join([b.addr, b.poBox], " * "),
+    join([b.tel && `Tel : ${b.tel}`, b.fax && `Fax : ${b.fax}`], " * "),
+    join([b.web && `Web : ${b.web}`, b.email && `Email : ${b.email}`], " * "),
+  ].filter(Boolean);
+}
+
+function proforma17Sheet(ctx, bands) {
+  const E = ctx.EXPORTER;
+  const b = ctx.buyer;
+  const P = {
+    ttl: { font: "refb11", border: false, align: "right", valign: "center" },
+    brand: { font: "refb14", border: false, align: "center", valign: "center" },
+    sub: { font: "ref", border: false, align: "center", valign: "center" },
+    lbl: { font: "ref", border: false, valign: "center" },
+    val: { font: "refb", border: false, valign: "center" },
+    box: { font: "ref", border: "box", valign: "top", wrap: true },
+    boxC: { font: "ref", border: "box", align: "center", valign: "center" },
+    band: { font: "refb", border: "box", valign: "center" },
+    head: { font: "refb", border: "box", align: "center", valign: "center", wrap: true },
+    code: { font: "ref", border: "box", align: "center", valign: "center" },
+    per: { font: "ref", border: "box", align: "center", valign: "center", wrap: true },
+    num: { font: "ref", border: "box", align: "center", valign: "center", fmt: "int" },
+    money: { font: "ref", border: "box", align: "right", valign: "center", fmt: USD },
+    blank: { font: "ref", border: "box", valign: "center" },
+    tot: { font: "refb", border: "box", align: "right", valign: "center", fmt: USD },
+    totLbl: { font: "refb", border: "box", align: "right", valign: "center" },
+    plain: { font: "ref", border: false, valign: "center" },
+    foot: { font: "ref", border: false, align: "center", valign: "center", wrap: true },
   };
-  const grand = `<tr class="tot"><td colspan="3">TOTAL</td><td class="r">${sum(rows, "pieces").toLocaleString("en-IN")}</td><td></td><td class="r">${usd(sum(rows, "fobTotal"))}</td></tr>`;
-  const html = `<div class="title">17 · PROFORMA INVOICE (Buyer)</div>
-    <table style="width:100%"><tr><td style="width:52%">${exporterBlock(ctx)}</td>
-    <td><table style="width:100%"><tr><td class="k">PO No.</td><td class="b">${esc(ctx.buyer.orderNo)}</td></tr>
-    <tr><td class="k">Date</td><td class="b">${ddmm(ctx.inv.date)}</td></tr>
-    <tr><td class="k">Deliver To</td><td>${esc(ctx.buyer.name)} T/A ${esc(ctx.buyer.brand)}<br>${esc(ctx.buyer.addr || "")}</td></tr>
-    <tr><td class="k">Terms</td><td>${esc(ctx.inv.ship?.terms || "FOB MUMBAI")}</td></tr></table></td></tr></table>
-    <table>${groups.map(section).join("")}${grand}</table>
-    <p class="sub">Freight to collect / payable at destination. Delivery ${dmy(ctx.inv.date)}. Items grouped by pricing basis.</p>`;
-  return { name: "Proforma_Invoice_17", html };
+  const G = formGrid(7);
+  const { row, gap } = G;
+
+  row([[4, { v: "", s: P.plain }], [3, { v: "PURCHASE ORDER", s: P.ttl }]]);
+  row([[3, { v: b.name || "", s: P.brand }], [1, { v: "NO.", s: P.lbl }], [3, { v: b.orderNo || "", s: P.val }]], 21);
+  row([[3, { v: b.tagline || (b.brand ? `T/A ${b.brand}` : ""), s: P.sub }],
+    [1, { v: "DATE", s: P.lbl }], [3, { v: ddmm(ctx.inv.date), s: P.val }]]);
+  gap();
+
+  row([[3, { v: "TO:", s: P.lbl }], [4, { v: "DELIVER TO:", s: P.lbl }]]);
+  row([[3, { v: [E.name, E.addr].filter(Boolean).join("\n"), s: P.box }],
+    [4, { v: [`${b.name || ""}${b.brand ? ` T/A ${b.brand}` : ""}`, b.addr || b.shipTo || ""].filter(Boolean).join("\n"), s: P.box }]], 42);
+  row([[3, { v: "A/C CODE", s: P.head }], [4, { v: "TEL NUMBER", s: P.head }]]);
+  row([[3, { v: b.acCode || "", s: P.boxC }], [4, { v: `+91-${E.tel}`, s: P.boxC }]]);
+  gap();
+
+  const first = G.at() + 1;
+  let lines = 0;
+  bands.forEach((band) => {
+    row([[7, { v: band.head, s: P.band }]]);
+    const H = (v) => ({ v, s: P.head });
+    row(band.lengths
+      ? [[1, H("CODE")], [1, H("SIZE (MM / IN)")], [1, H("LEN (MM)")], [1, H("PIECES")], [1, H("RATE")], [1, H(band.per)], [1, H("TOTAL VALUE")]]
+      : [[1, H("CODE")], [2, H("SIZE (MM)")], [1, H("PIECES")], [1, H("RATE")], [1, H(band.per)], [1, H("TOTAL VALUE")]]);
+    band.rows.forEach((r) => {
+      const line = G.at() + 1;
+      const per100 = fobModeOf(r.it) !== "piece";
+      const cells = [
+        [1, { v: r.it.code || "", s: P.code }],
+        band.lengths ? [1, { v: r.it.size || "", s: P.code }] : [2, { v: r.it.size || "", s: P.code }],
+      ];
+      if (band.lengths) cells.push([1, { v: r.it.length || "", s: P.code }]);
+      cells.push(
+        [1, { v: r.pieces, t: "n", s: P.num }],
+        [1, { v: proformaRate(r), t: "n", s: P.money }],
+        [1, { v: perLabel(r.it), s: P.per }],
+        [1, { f: `D${line}*E${line}${per100 ? "/100" : ""}`, s: P.money }],
+      );
+      row(cells);
+      lines += 1;
+    });
+  });
+  // The rest of the frame, ruled and empty, as their form prints it.
+  for (let i = lines; i < PROFORMA_ROWS; i++) row([[7, { v: "", s: P.blank }]]);
+  const last = G.at();
+  row([[5, { v: "", s: P.plain }], [1, { v: "Total", s: P.totLbl }],
+    [1, { f: first <= last ? `SUM(G${first}:G${last})` : "0", s: P.tot }]]);
+  gap();
+
+  row([[1, { v: "FREIGHT", s: P.head }], [3, { v: "TO COLLECT / PAYABLE AT DESTINATION", s: P.boxC }],
+    [3, { v: `FOR ${b.name || ""}${b.brand ? ` T/A ${b.brand}` : ""}`, s: P.foot }]]);
+  row([[1, { v: "DELIVERY", s: P.head }], [3, { v: deliveryMonth(ctx), s: P.boxC }], [3, { v: "", s: P.plain }]]);
+  gap();
+  proformaFooter(b).forEach((l) => row([[7, { v: l, s: P.foot }]]));
+
+  return fitSheet({
+    name: "Proforma",
+    rows: G.rows,
+    merges: G.merges,
+    heights: G.heights,
+    widths: [13, 17, 11, 11, 11, 15, 15],
+    defaultRowHeight: 14.25,
+    colStyle: { font: "ref", border: false, valign: "center" },
+    page: {
+      paper: 9, orientation: "portrait", fit: true, fitH: 0,
+      margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 },
+    },
+  }, { widen: false });
+}
+
+/* A blank line in the form, matching the worksheet's own gap rows. */
+const SPACE = '<tr class="nb"><td class="nb" colspan="7" style="height:9px"></td></tr>';
+
+B["17"] = (ctx) => {
+  const E = ctx.EXPORTER;
+  const b = ctx.buyer;
+  const bands = proformaBands(ctx);
+  const total = sum(L(ctx), "fobTotal");
+  const addr = (lines) => lines.filter(Boolean).map(esc).join("<br>");
+  const lines = bands.reduce((n, band) => n + band.rows.length, 0);
+
+  const section = (band) => {
+    const H = band.lengths
+      ? ["CODE", "SIZE (MM / IN)", "LEN (MM)", "PIECES", "RATE", band.per, "TOTAL VALUE"]
+      : ["CODE", ["SIZE (MM)", 2], "PIECES", "RATE", band.per, "TOTAL VALUE"];
+    const head = `<tr>${H.map((h) => (Array.isArray(h)
+      ? `<th colspan="${h[1]}">${esc(h[0])}</th>` : `<th>${esc(h)}</th>`)).join("")}</tr>`;
+    const body = band.rows.map((r) => {
+      const rate = proformaRate(r);
+      return `<tr><td class="c">${esc(r.it.code)}</td>
+        <td class="c"${band.lengths ? "" : ' colspan="2"'}>${esc(r.it.size)}</td>
+        ${band.lengths ? `<td class="c">${esc(r.it.length)}</td>` : ""}
+        <td class="c" data-t="int" data-v="${r.pieces}">${r.pieces.toLocaleString("en-IN")}</td>
+        <td class="r" data-t="usd" data-v="${rate}">${usd(rate)}</td>
+        <td class="c">${esc(perLabel(r.it))}</td>
+        <td class="r" data-t="usd" data-v="${r.fobTotal}">${usd(r.fobTotal)}</td></tr>`;
+    }).join("");
+    return `<tr class="po"><td colspan="7">${esc(band.head)}</td></tr>${head}${body}`;
+  };
+
+  /* The masthead, the addresses and the account code repeat at the top of
+     every printed page, as they do on page 2 of their own form. */
+  const html = `<table class="wb bpo">
+      <colgroup><col style="width:14%"><col style="width:18%"><col style="width:11%"><col style="width:11%">
+        <col style="width:11%"><col style="width:15%"><col style="width:20%"></colgroup>
+      <thead>
+        <tr class="nb"><td class="nb" colspan="4"></td><td class="nb b r" colspan="3">PURCHASE ORDER</td></tr>
+        <tr class="nb"><td class="nb big c" colspan="3">${esc(b.name || "")}</td>
+          <td class="nb">NO.</td><td class="nb b" colspan="3">${esc(b.orderNo || "")}</td></tr>
+        <tr class="nb"><td class="nb c" colspan="3">${esc(b.tagline || (b.brand ? `T/A ${b.brand}` : ""))}</td>
+          <td class="nb">DATE</td><td class="nb b" colspan="3">${ddmm(ctx.inv.date)}</td></tr>
+        ${SPACE}
+        <tr class="nb"><td class="nb" colspan="3">TO:</td><td class="nb" colspan="4">DELIVER TO:</td></tr>
+        <tr><td class="party" colspan="3">${addr([E.name, E.addr])}</td>
+          <td class="party" colspan="4">${addr([`${b.name || ""}${b.brand ? ` T/A ${b.brand}` : ""}`, b.addr || b.shipTo])}</td></tr>
+        <tr><th colspan="3">A/C CODE</th><th colspan="4">TEL NUMBER</th></tr>
+        <tr><td class="c" colspan="3">${esc(b.acCode || "")}</td><td class="c" colspan="4">+91-${esc(E.tel)}</td></tr>
+        ${SPACE}
+      </thead>
+      <tbody>
+        ${bands.map(section).join("")}
+        ${Array(Math.max(0, PROFORMA_ROWS - lines)).fill('<tr><td colspan="7">&nbsp;</td></tr>').join("")}
+        <tr><td class="nb" colspan="5"></td><td class="b r">Total</td><td class="r b">${usd(total)}</td></tr>
+        ${SPACE}
+        <tr><th>FREIGHT</th><td class="c" colspan="3">TO COLLECT / PAYABLE AT DESTINATION</td>
+          <td class="c" colspan="3" rowspan="2">FOR ${esc(b.name || "")}${b.brand ? ` T/A ${esc(b.brand)}` : ""}</td></tr>
+        <tr><th>DELIVERY</th><td class="c" colspan="3">${esc(deliveryMonth(ctx))}</td></tr>
+        ${SPACE}
+        ${proformaFooter(b).map((l) => `<tr class="nb"><td class="nb c" colspan="7">${esc(l)}</td></tr>`).join("")}
+      </tbody>
+    </table>`;
+  return { name: "Proforma_Invoice_17", html, sheet: proforma17Sheet(ctx, bands), page: "portrait" };
 };
 B["18"] = (ctx) => {
   const rows = L(ctx), ex = exRate(ctx);
@@ -2775,15 +3751,9 @@ export const DOC_META = {
 export const PO_DOCS = DOC_GROUPS.find((g) => g.k === "PO").docs.slice();
 export const isPoDoc = (no) => PO_DOCS.includes(String(no));
 
-/* Papers with nothing to put in a spreadsheet. The e-way bill is a form to be
-   keyed into the portal and the despatch instruction is a letter — both are
-   read on paper, and a sheet of their text would only be in the way. They
-   download as PDF alone. */
-export const PDF_ONLY_DOCS = ["10", "11"];
-export const isPdfOnly = (no) => PDF_ONLY_DOCS.includes(String(no));
-
-/* The two papers each supplier receives on their own, rather than as one
-   combined sheet: the supplier purchase order and the inward e-way bill. */
+/* The three papers each supplier receives on their own, rather than as one
+   combined sheet: the purchase order, the inward e-way bill and the despatch
+   instruction. */
 export const SUPPLIER_SPLIT_DOCS = { 6: supplierPoDocs, 10: ewaySupplierDocs, 11: despatchSupplierDocs };
 export function supplierSplitDocs(no, ctx) {
   const fn = SUPPLIER_SPLIT_DOCS[String(no)];
@@ -2799,13 +3769,15 @@ function buildOne(no, ctx, report) {
  *  per supplier, so Excel gets a sheet each and the PDF a page each.
  *
  *  A builder that copies one of the client's own workbooks hands back a `sheet`
- *  as well: the Excel download uses it verbatim instead of converting the HTML,
- *  which is how doc 2 comes out looking like 2-Barcode.xlsx. */
+ *  as well — or `sheets`, when the document is a workbook of its own. The Excel
+ *  download uses those verbatim instead of converting the HTML, which is how
+ *  doc 2 comes out looking like 2-Barcode.xlsx and doc 10 like the portal's
+ *  entry form. */
 export function documentParts(no, ctx, report) {
   const split = supplierSplitDocs(no, ctx);
   if (split.length > 1) return split.map((d) => ({ name: `${d.code}`, html: d.html, sheets: d.sheets, docName: d.docName }));
   const out = buildOne(no, ctx, report);
-  return out ? [{ name: DOC_META[no] || out.name, html: out.html, sheet: out.sheet, page: out.page, docName: out.name }] : [];
+  return out ? [{ name: DOC_META[no] || out.name, html: out.html, sheet: out.sheet, sheets: out.sheets, page: out.page, docName: out.name }] : [];
 }
 
 export function documentFilename(no, ctx, report) {
@@ -2819,7 +3791,6 @@ export function hasBuilder(no) { return !!B[no] || ["36", "37", "38", "39"].incl
    Both formats come off the same parts, so an Excel and a PDF of the same
    document can never show different figures. */
 export function downloadDocumentExcel(no, ctx, report) {
-  if (isPdfOnly(no)) return false;              // a form and a letter — PDF only
   const parts = documentParts(no, ctx, report);
   if (!parts.length) { alert(`Document ${no} generator not available.`); return false; }
   downloadDocsExcel(documentFilename(no, ctx, report), parts);
@@ -2853,7 +3824,7 @@ function stageParts(numbers, ctxFor, report) {
 export function downloadStageExcel(filename, numbers, ctxFor, report) {
   const parts = numbers.flatMap((no) => {
     const ctx = resolveCtx(ctxFor, no);
-    if (!ctx || isPdfOnly(no)) return [];       // the PDF-only papers sit this one out
+    if (!ctx) return [];
     let p = [];
     try { p = documentParts(no, ctx, report); } catch (e) { return []; }
     return p.map((x, i) => ({ ...x, name: `${no}${i || p.length > 1 ? ` ${x.name}` : ""}` }));
@@ -2873,9 +3844,8 @@ export function downloadStagePDF(title, numbers, ctxFor, report) {
 /* Kept for the screens that offer a single one-click Excel grab. */
 export const buildDocument = (no, ctx, report) => downloadDocumentExcel(no, ctx, report);
 
-/** One supplier's copy of a split document (6 · supplier PO, 10 · e-way). */
+/** One supplier's copy of a split document (6 · PO, 10 · e-way, 11 · despatch). */
 export function downloadSupplierDoc(no, ctx, supplierId, format = "excel") {
-  if (isPdfOnly(no) && format !== "pdf") return false;
   const d = supplierSplitDocs(no, ctx).find((x) => x.supplierId === supplierId);
   if (!d) return false;
   const filename = `${d.docName}_${String(ctx.po || ctx.inv.invoiceNo || "").replace(/[^A-Za-z0-9]+/g, "-")}`;
@@ -2932,6 +3902,9 @@ export const PREVIEW_CSS = `
   .docprev table.wb tr.po td.red,.docprev table.wb th.red{color:#ff0000;}
   .docprev table.wb th.r{text-align:right;}
   .docprev table.wb .nb{border:none;}
+  /* 12 · Boxes & volume bands its headings, labels and totals in the 25% grey
+     its workbook uses, rather than leaving them white like the older sheets. */
+  .docprev table.wb td.g,.docprev table.wb th.g,.docprev table.wb tr.g td{background:#bfbfbf;color:#000;}
   .docprev table.wb tr.hd2 th{height:20px;}
   .docprev table.wb tr.tot td{background:#fff;color:#000;font-weight:700;}
   .docprev table.wb tr.tot td.o{border-left:none;border-right:none;}
@@ -2940,6 +3913,11 @@ export const PREVIEW_CSS = `
   .docprev table.wb .bh{font-weight:700;text-align:center;}
   .docprev table.wb .code{font-weight:700;text-align:center;}
   .docprev table.wb .desc{white-space:normal;}
+  /* 17 · Proforma is the buyer's own purchase order form: their name across the
+     top, the two address boxes under it, and the goods banded by range. */
+  .docprev table.bpo .big{font-size:16px;font-weight:700;color:#000;}
+  .docprev table.bpo .party{text-align:left;vertical-align:top;white-space:normal;}
+  .docprev table.bpo td.nb,.docprev table.bpo th.nb{border:none;}
 
   /* 6 · Suppliers' PO is a letter, not a table: the exporter's name in Centaur
      maroon, the form's labels in blue, the title in red, and the whole page
@@ -2987,10 +3965,27 @@ export const PREVIEW_CSS = `
   .docprev .ew .ewpart .lbl{padding-right:12px;}
   .docprev .ew .ewline .fld{min-width:120px;}
 
+  /* 13 · Export value declaration — the customs form as it is typed: Times,
+     centred heading, and a box against every option so the ticked one reads
+     unambiguously. */
+  /* A fixed table layout needs a width it can divide, and the paper around it
+     is only as wide as its content — so the form states its own. */
+  .docprev .evd{font-family:"Times New Roman",Times,serif;font-size:14px;color:#000;width:760px;}
+  .docprev .evd table{border-collapse:collapse;width:100%;table-layout:fixed;}
+  .docprev .evd td{border:none;padding:1px 3px;vertical-align:middle;white-space:nowrap;}
+  .docprev .evd .ttl{text-align:center;}
+  .docprev .evd .c{text-align:center;}
+  .docprev .evd .u{text-decoration:underline;}
+  .docprev .evd .w{white-space:normal;vertical-align:top;}
+  .docprev .evd .nt{vertical-align:top;}
+  .docprev .evd .bx{border:1px solid #000;text-align:center;font-weight:700;}
+  .docprev .evd tr.gap td{height:10px;}
+
   /* 11 · Despatch instructions — the letter, on the letterhead. */
   .docprev .dl{font-family:Calibri,Arial,sans-serif;font-size:13px;color:#000;max-width:820px;line-height:1.45;}
   .docprev .dl table{border-collapse:collapse;width:100%;margin:0;}
   .docprev .dl td{border:none;padding:0;vertical-align:top;}
+  .docprev .dl .ins td,.docprev .dl table.fld td,.docprev .dl table.bx td{font-size:13px;}
   .docprev .dl .brand{font-family:Centaur,Georgia,serif;font-size:44px;font-weight:700;color:#8b0000;letter-spacing:1px;line-height:1;}
   .docprev .dl .sub{font-family:Centaur,Georgia,serif;font-size:17px;color:#8b0000;letter-spacing:2px;padding-left:60px;}
   .docprev .dl .lg{width:120px;text-align:right;}
@@ -3006,6 +4001,15 @@ export const PREVIEW_CSS = `
   .docprev .dl .ins{margin:0 0 12px;width:auto;}
   .docprev .dl .ins td{padding:0 0 4px;}
   .docprev .dl .ins .n{width:56px;padding-left:26px;}
+  .docprev .dl .mid{text-align:center;}
+  .docprev .dl.just p,.docprev .dl.just .ins td{text-align:justify;}
+  .docprev .dl.just .mid,.docprev .dl.just .sign{text-align:left;}
+  .docprev .dl.just .mid{text-align:center;}
+  .docprev .dl table.fld{width:100%;margin:0 0 12px;}
+  .docprev .dl table.fld .lbl{width:25%;}
+  .docprev .dl .encl .ans{padding-left:30px;white-space:nowrap;}
+  .docprev .dl table.bx{margin:14px 0;width:100%;}
+  .docprev .dl table.bx td{border:1px solid #000;padding:3px 6px;}
   .docprev .dl .dlfoot{margin-top:2px;font-size:12px;color:#8b0000;}
   .docprev .dl .dlfoot .r{text-align:right;}
 `;

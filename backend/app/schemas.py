@@ -224,6 +224,12 @@ class Supplier(SupplierBase, ORMModel):
 
 
 # ---------- Buyer ----------
+# The buyer's own letterhead — what their purchase order (document 17) prints
+# around the goods. Blank is normal: only a buyer whose form we reproduce needs
+# to have them filled in.
+BUYER_LETTERHEAD = ("tagline", "ac_code", "abn", "acn", "tel", "fax", "web", "email", "po_box")
+
+
 class BuyerBase(BaseModel):
     name: str
     brand: str = ""
@@ -233,8 +239,17 @@ class BuyerBase(BaseModel):
     addr: str = ""
     order_no: str = ""
     our_reference: str = ""
+    tagline: str = ""
+    ac_code: str = ""
+    abn: str = ""
+    acn: str = ""
+    tel: str = ""
+    fax: str = ""
+    web: str = ""
+    email: str = ""
+    po_box: str = ""
 
-    @field_validator("our_reference", mode="before")
+    @field_validator("our_reference", *BUYER_LETTERHEAD, mode="before")
     @classmethod
     def _ref_none_is_blank(cls, v):
         return v or ""
@@ -254,6 +269,15 @@ class BuyerUpdate(BaseModel):
     addr: Optional[str] = None
     order_no: Optional[str] = None
     our_reference: Optional[str] = None
+    tagline: Optional[str] = None
+    ac_code: Optional[str] = None
+    abn: Optional[str] = None
+    acn: Optional[str] = None
+    tel: Optional[str] = None
+    fax: Optional[str] = None
+    web: Optional[str] = None
+    email: Optional[str] = None
+    po_box: Optional[str] = None
 
 
 class Buyer(BuyerBase, ORMModel):

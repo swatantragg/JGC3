@@ -148,6 +148,18 @@ class Buyer(Base):
     # Our own file reference for this buyer — prints under the shipping marks
     # on the supplier purchase order and carries into the Excel exports.
     our_reference = Column(String, default="")
+    # The buyer's own letterhead, as it appears on their purchase order — the
+    # form document 17 reproduces. `ac_code` is the account code they file us
+    # under; the rest is the contact strip along the foot of their paper.
+    tagline = Column(String, default="")
+    ac_code = Column(String, default="")
+    abn = Column(String, default="")
+    acn = Column(String, default="")
+    tel = Column(String, default="")
+    fax = Column(String, default="")
+    web = Column(String, default="")
+    email = Column(String, default="")
+    po_box = Column(String, default="")
 
 
 class Item(Base):

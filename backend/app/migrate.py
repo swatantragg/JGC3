@@ -47,7 +47,10 @@ BACKFILL = {
         "must_change_password": "false",
     },
     "suppliers": {"addr": "''", "pin": "''", "state": "''", "your_reference": "''"},
-    "buyers": {"our_reference": "''"},
+    "buyers": {
+        "our_reference": "''", "tagline": "''", "ac_code": "''", "abn": "''", "acn": "''",
+        "tel": "''", "fax": "''", "web": "''", "email": "''", "po_box": "''",
+    },
     "transports": {"supplier_ids": None},   # JSON — leave NULL, read as []
     # po_lines price columns are deliberately absent: NULL is meaningful there
     # ("no snapshot — read the item master"), so they must not be backfilled.

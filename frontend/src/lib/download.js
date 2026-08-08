@@ -82,12 +82,21 @@ export function downloadGridPDF(title, columns, rows, opts) {
    with the app, and nothing leaves the machine.                            */
 /* Most of the library is wide enough to want landscape; a document that copies
    a client workbook prints the way that workbook is set up (2 · Barcode is
-   portrait, as its sheet is), so the page rule is chosen per print job. */
-const pageRule = (orientation) => `@page { size: A4 ${orientation === "portrait" ? "portrait" : "landscape"}; margin: 10mm; }`;
+   portrait, as its sheet is), so the page rule is chosen per print job.
+
+   The margin is zero on purpose. The browser prints its own header and footer
+   — the date, the page's title, the localhost URL, "1/1" — into the margin
+   box of the paper, and nothing in CSS switches that off; leave no margin and
+   there is nowhere for it to go. The inset every document needs comes back as
+   padding on the document itself, below. */
+const pageRule = (orientation) => `@page { size: A4 ${orientation === "portrait" ? "portrait" : "landscape"}; margin: 0; }`;
 
 const PRINT_CSS = `
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; box-sizing: border-box; }
-  body { font-family: Calibri, Arial, sans-serif; font-size: 10pt; color: #243b53; margin: 0; padding: 4mm; }
+  body { font-family: Calibri, Arial, sans-serif; font-size: 10pt; color: #243b53; margin: 0; padding: 0; }
+  /* The page's own margin, now that @page has none. A document that runs past
+     one page keeps its side inset and starts the next page nearer the top. */
+  .jg-doc { padding: 10mm; }
   table { border-collapse: collapse; margin-bottom: 6px; width: 100%; page-break-inside: auto; }
   tr { page-break-inside: avoid; page-break-after: auto; }
   thead { display: table-header-group; }
@@ -121,12 +130,20 @@ const PRINT_CSS = `
   table.wb tr.po td.red, table.wb th.red { color: #ff0000 !important; }
   table.wb th.r { text-align: right; }
   table.wb .nb { border: none !important; }
+  /* 12 · Boxes & volume bands its headings, labels and totals in the 25% grey
+     its workbook uses, rather than leaving them white like the older sheets. */
+  table.wb td.g, table.wb th.g { background: #bfbfbf !important; color: #000 !important; }
+  table.wb tr.g td { background: #bfbfbf !important; color: #000 !important; }
   table.wb tr.tot td { background: #fff !important; color: #000 !important; font-weight: 700; }
   table.wb tr.tot td.o { border-left: none !important; border-right: none !important; }
   table.wb .gd { color: #339966 !important; font-weight: 700; }
   table.wb .gdc { color: #339966 !important; font-weight: 700; text-align: center; }
   table.wb .bh { font-weight: 700; text-align: center; }
   table.wb .code { font-weight: 700; text-align: center; }
+  /* 17 · Proforma — the buyer's purchase order form. */
+  table.bpo .big { font-size: 13pt; font-weight: 700; color: #000; }
+  table.bpo .party { text-align: left; vertical-align: top; white-space: normal; }
+  table.bpo td.nb, table.bpo th.nb { border: none !important; }
 
   /* 6 · Suppliers' PO — the letter, printed as their Page1 prints. */
   table.wb.letter { border: 1px solid #000; table-layout: fixed; width: 100%; }
@@ -171,10 +188,28 @@ const PRINT_CSS = `
   .ew .ewpart .lbl { padding-right: 10px; }
   .ew .ewline .fld { min-width: 110px; }
 
+  /* 13 · Export value declaration — the customs form, typed. Every line is a
+     run across the same 24-column grid, so the boxes sit under one another. */
+  .evd { font-family: "Times New Roman", Times, serif; font-size: 12pt; color: #000; }
+  .evd table { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 0; }
+  .evd td { border: none !important; padding: 1px 2px; vertical-align: middle; font-size: 12pt; white-space: nowrap; }
+  .evd .ttl { text-align: center; }
+  .evd .c { text-align: center; }
+  .evd .u { text-decoration: underline; }
+  .evd .w { white-space: normal; vertical-align: top; }
+  .evd .nt { vertical-align: top; }
+  .evd .bx { border: 1px solid #000 !important; text-align: center; }
+  .evd tr.gap td { height: 8pt; }
+
   /* 11 · Despatch instructions — the letter, on the letterhead. */
   .dl { font-family: Calibri, Arial, sans-serif; font-size: 10.5pt; color: #000; line-height: 1.45; }
   .dl table { border-collapse: collapse; width: 100%; margin: 0; }
   .dl td { border: none !important; padding: 0; vertical-align: top; }
+  /* The letter's own tables are the letter: its instructions, its field lines
+     and its particulars box read at the body's size, not the 8.5pt the rest of
+     the library sets for a table cell. The masthead and the contact strip keep
+     the sizes of their own. */
+  .dl .ins td, .dl table.fld td, .dl table.bx td { font-size: 10.5pt; }
   .dl .brand { font-family: Centaur, Georgia, serif; font-size: 34pt; font-weight: 700; color: #8b0000 !important; letter-spacing: 1px; line-height: 1; }
   .dl .sub { font-family: Centaur, Georgia, serif; font-size: 13pt; color: #8b0000 !important; letter-spacing: 2px; padding-left: 48px; }
   .dl .lg { width: 100px; text-align: right; }
@@ -190,6 +225,15 @@ const PRINT_CSS = `
   .dl .ins { margin: 0 0 10px; width: auto; }
   .dl .ins td { padding: 0 0 3px; }
   .dl .ins .n { width: 50px; padding-left: 22px; }
+  .dl .mid { text-align: center; }
+  .dl.just p, .dl.just .ins td { text-align: justify; }
+  .dl.just .mid { text-align: center; }
+  .dl.just .sign { text-align: left; }
+  .dl table.fld { width: 100%; margin: 0 0 10px; }
+  .dl table.fld .lbl { width: 25%; }
+  .dl .encl .ans { padding-left: 26px; white-space: nowrap; }
+  .dl table.bx { margin: 12px 0; width: 100%; }
+  .dl table.bx td { border: 1px solid #000 !important; padding: 2px 5px; }
   .dl .dlfoot { margin-top: 2px; font-size: 9pt; color: #8b0000 !important; }
   .dl .dlfoot .r { text-align: right; }
 `;
