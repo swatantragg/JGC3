@@ -10,8 +10,17 @@ Full-stack rebuild of the export operations tool, ported from `prototype2`.
 
 ```bash
 cd JGC3
+cp .env.example .env                 # compose settings — ports, local-db password
+cp backend/.env.example backend/.env # application settings — DB, secrets, mail
 docker compose up --build
 ```
+
+**The two `.env` files do different jobs and cannot replace each other.**
+`JGC3/.env` is the only file compose itself reads, and the only source for the
+`${...}` placeholders in `docker-compose.yml`. `backend/.env` is mounted into
+the backend container and read by the application. A variable written into the
+wrong one is simply unset — which is what `required variable
+POSTGRES_PASSWORD is missing a value` means.
 
 - Frontend: http://localhost:8090
 - Backend API + docs: http://localhost:8001/docs
@@ -20,15 +29,54 @@ The stack is FastAPI + nginx-served React. nginx proxies `/api` to the
 backend, so the browser makes same-origin calls — the frontend works fully at
 :8090 regardless of the backend's published port.
 
-**Database.** `backend/.env` is mounted into the backend container, so Docker
-and a local `python run.py` always hit the same database (currently Neon
-Postgres). To use the bundled Postgres container instead, point `DATABASE_URL`
-at `postgresql+psycopg2://jaikvin:jaikvin@db:5432/jaikvin` and start the
-optional profile:
+**Database — the hosted Neon Postgres, in development too.** `DATABASE_URL` in
+`backend/.env` is the single switch, and `backend/.env` is mounted into the
+backend container, so `docker compose up`, `python run.py` and every script in
+`backend/scripts/` all reach the same Neon project. A row written from a laptop
+is on the deployed site straight away; the schema keeps up by itself, because
+`create_all` plus the additive `migrate.py` run on every boot.
+
+Copy the URL from the Neon console into `backend/.env` (`?sslmode=require` is
+required) and nothing else needs configuring:
+
+```
+DATABASE_URL=postgresql://USER:PASSWORD@HOST.neon.tech/neondb?sslmode=require
+```
+
+Two things follow from sharing one database, and they are the price of the
+convenience: **there is no separate development copy**, so a test deletion or a
+re-run of `import_masters.py` acts on live data, and two people working at once
+share one schema. `app/database.py` handles the other Neon trait — the endpoint
+sleeps when idle, so connections are pre-pinged, recycled every five minutes and
+given a connect timeout; expect a few seconds on the first request after a quiet
+spell. Neon's **branching** gives an isolated copy-on-write database with its own
+URL if that is ever wanted.
+
+For a throwaway database instead, point `DATABASE_URL` at
+`sqlite:///./jaikvin-dev.db`, or use the bundled Postgres container:
+
+```bash
+python3 -c "import secrets;print(secrets.token_urlsafe(24))"   # pick a password
+```
+
+Put it in `JGC3/.env` as `POSTGRES_PASSWORD`, repeat the same value in
+`backend/.env` so the backend can log in, then start the optional profile:
+
+```bash
+# backend/.env
+DATABASE_URL=postgresql+psycopg2://jaikvin:THAT_PASSWORD@db:5432/jaikvin
+```
 
 ```bash
 docker compose --profile local-db up --build
 ```
+
+There is no default password — `jaikvin:jaikvin` is the first pair anyone
+scanning would try. The db container refuses to initialise without one, so a
+blank value fails when the profile starts, not before; `docker compose up`
+without `--profile local-db` never needs it at all. Note that the password is
+baked into the `pgdata` volume on first run, so changing it later means
+`docker compose down -v` (which erases the local database).
 
 **Ports.** Defaults are host **8090** (frontend) and **8001** (backend) —
 8000 and 8080 were already taken in this environment ("port already allocated").

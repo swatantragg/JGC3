@@ -9,6 +9,14 @@
 # in the host's own secret store (Render's dashboard, Docker secrets) and mount
 # nothing. A file on disk gets copied, backed up and screenshotted.
 #
+# TWO DIFFERENT .env FILES, AND THEY ARE NOT INTERCHANGEABLE:
+#   ./.env          — read by compose itself, and the ONLY source for the
+#                     ${...} placeholders below. Copy it from .env.example.
+#   ./backend/.env  — never seen by compose; mounted into the backend container
+#                     and read by the application at runtime.
+# Putting POSTGRES_PASSWORD in backend/.env therefore does nothing for the
+# placeholder in the db service — it has to be in ./.env or the shell.
+#
 # The database currently points at Neon. To use the bundled Postgres instead,
 # start the optional profile and set DATABASE_URL accordingly:
 #
@@ -21,9 +29,18 @@ services:
     environment:
       POSTGRES_USER: jaikvin
       # No default. `jaikvin:jaikvin` was here and it is exactly the pair
-      # anybody scanning would try first; set POSTGRES_PASSWORD in a local
-      # .env or the shell, and compose will refuse to start without it.
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD before starting the local database}
+      # anybody scanning would try first, so the value has to come from the
+      # environment — copy .env.example to .env (next to this file) and put it
+      # there, or export it in the shell.
+      #
+      # `:?` USED TO BE HERE AND MUST NOT COME BACK. Compose interpolates the
+      # whole file before it decides which services the command selected, so a
+      # required-variable marker on a `profiles:` service aborts every run,
+      # including a plain `docker compose up` that never touches this container.
+      # An empty value is safe: the postgres entrypoint refuses to initialise a
+      # cluster without a superuser password, so the check still happens — just
+      # at the moment the database is actually asked for.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       POSTGRES_DB: jaikvin
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -82,10 +99,15 @@ services:
       # The container listens on 8080 because it runs unprivileged.
       - "${FRONTEND_PORT:-8090}:8080"
     read_only: true
+    # Only /tmp. A tmpfs on /var/cache/nginx and /var/run used to be here, and
+    # was the reason this container restart-looped on "mkdir() ... (13:
+    # Permission denied)": Docker creates a tmpfs owned by root with mode 0755,
+    # which masks the ownership the image set at build time, and nginx runs as
+    # uid 101. /tmp is the exception — Docker makes that one 1777 — so nginx's
+    # pid file and temp directories are pointed there instead (frontend's
+    # Dockerfile and nginx.conf).
     tmpfs:
       - /tmp
-      - /var/cache/nginx
-      - /var/run
     security_opt:
       - no-new-privileges:true
     cap_drop:
