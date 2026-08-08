@@ -81,7 +81,7 @@ def _body(name: str, code: str, minutes: int, reason: str) -> tuple[str, str]:
       </p>
     </div>
     <div style="padding:14px 26px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:11px">
-      Maintained and developed by Avita Technologies · V-5.7
+      Maintained and developed by Avita Technologies · V-5.0.1
     </div>
   </div>
 </div>"""
@@ -244,7 +244,7 @@ def _lockout_body(name: str, tier: str, minutes: int, when: str, ip: str) -> tup
       <p style="margin:16px 0 0;color:#64748b;font-size:12.5px;line-height:1.55">{tail}</p>
     </div>
     <div style="padding:14px 26px;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:11px">
-      Maintained and developed by Avita Technologies · V-5.7
+      Maintained and developed by Avita Technologies · V-5.0.1
     </div>
   </div>
 </div>"""
