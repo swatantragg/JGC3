@@ -227,7 +227,7 @@ class Supplier(SupplierBase, ORMModel):
 # The buyer's own letterhead — what their purchase order (document 17) prints
 # around the goods. Blank is normal: only a buyer whose form we reproduce needs
 # to have them filled in.
-BUYER_LETTERHEAD = ("tagline", "ac_code", "abn", "acn", "tel", "fax", "web", "email", "po_box")
+BUYER_LETTERHEAD = ("tagline", "ac_code", "abn", "acn", "tel", "fax", "web", "email", "po_box", "logo")
 
 
 class BuyerBase(BaseModel):
@@ -248,6 +248,7 @@ class BuyerBase(BaseModel):
     web: str = ""
     email: str = ""
     po_box: str = ""
+    logo: str = ""
 
     @field_validator("our_reference", *BUYER_LETTERHEAD, mode="before")
     @classmethod
@@ -278,6 +279,7 @@ class BuyerUpdate(BaseModel):
     web: Optional[str] = None
     email: Optional[str] = None
     po_box: Optional[str] = None
+    logo: Optional[str] = None
 
 
 class Buyer(BuyerBase, ORMModel):

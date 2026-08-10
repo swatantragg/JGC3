@@ -140,10 +140,33 @@ const PRINT_CSS = `
   table.wb .gdc { color: #339966 !important; font-weight: 700; text-align: center; }
   table.wb .bh { font-weight: 700; text-align: center; }
   table.wb .code { font-weight: 700; text-align: center; }
-  /* 17 · Proforma — the buyer's purchase order form. */
-  table.bpo .big { font-size: 13pt; font-weight: 700; color: #000; }
-  table.bpo .party { text-align: left; vertical-align: top; white-space: normal; }
+  /* 17 · Proforma — the buyer's purchase order form.
+
+     Their paper is set much tighter than the rest of the library: a 7pt body
+     on a 9pt line, their name at 14pt over it and the contact strip at 6.5pt.
+     The sizes are measured off their own printed form, so the copy fills the
+     page the way theirs does rather than running on to a second sheet. */
+  table.bpo { table-layout: fixed; width: 100%; }
+  table.bpo td, table.bpo th { font-size: 7pt; padding: 0 4px; line-height: 1.3; }
+  table.bpo .big { font-size: 14pt; font-weight: 700; color: #000; }
+  table.bpo .tag { font-size: 10pt; }
+  table.bpo .ttl { font-size: 8pt; }
+  table.bpo .val { font-size: 8.5pt; }
+  table.bpo .foot { font-size: 6.5pt; }
+  table.bpo .party { text-align: left; vertical-align: top; white-space: normal; font-weight: 700; text-transform: uppercase; padding: 3px 5px; }
   table.bpo td.nb, table.bpo th.nb { border: none !important; }
+  table.bpo .bpo-logo { height: 44pt; width: auto; display: block; margin: 0 auto 1px; }
+  /* Their goods are ruled down the columns but not across — one line under the
+     headings, then nothing between the items. */
+  table.bpo tr.ln td { border-top: none !important; border-bottom: none !important; }
+  /* A band heading stranded at the foot of a page, with its columns overleaf,
+     reads as a heading for nothing — keep it with what it heads. */
+  table.bpo tr.po { break-after: avoid; page-break-after: avoid; }
+  /* A run of the form that is one unbroken box: the cell gives up its padding
+     to the table inside it, and that table draws no rules of its own. */
+  table.bpo td.bx { padding: 0; }
+  table.bpo table.in { width: 100%; table-layout: fixed; border-collapse: collapse; margin: 0; }
+  table.bpo table.in td { border: none !important; padding: 1px 5px; font-size: 7pt; }
 
   /* 6 · Suppliers' PO — the letter, printed as their Page1 prints. */
   table.wb.letter { border: 1px solid #000; table-layout: fixed; width: 100%; }
@@ -281,8 +304,24 @@ export function downloadPDF(title, docs, opts = {}) {
       // Safari never fires onafterprint from a frame; sweep up regardless.
       setTimeout(cleanup, 60000);
     };
-    // Give the frame a tick to lay the tables out before measuring pages.
-    setTimeout(go, 120);
+    /* A tick to lay the tables out before measuring pages — and, if the
+       document carries images, however much longer they need to decode. The
+       buyer's mark on document 17 is a data: URL, which is fast but not free,
+       and printing before it has decoded drops it from the sheet. Whatever is
+       still not ready after a second is not going to be, so the print goes
+       ahead rather than leaving the dialog waiting on it. */
+    const ready = () => {
+      const imgs = [...doc.images].filter((i) => !i.complete);
+      if (!imgs.length) return Promise.resolve();
+      return Promise.race([
+        Promise.all(imgs.map((i) => new Promise((res) => {
+          i.addEventListener("load", res, { once: true });
+          i.addEventListener("error", res, { once: true });
+        }))),
+        new Promise((res) => setTimeout(res, 1000)),
+      ]);
+    };
+    setTimeout(() => { ready().then(go); }, 120);
   } catch (e) {
     cleanup();
     alert("Could not build the PDF in this browser — use the Excel download instead.");

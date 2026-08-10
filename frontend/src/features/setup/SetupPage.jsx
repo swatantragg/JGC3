@@ -78,6 +78,10 @@ const BUYER_SCHEMA = [
   /* The buyer's own letterhead. Document 17 reproduces their purchase order
      form, so these are their details, not ours — leave them blank for a buyer
      whose form we do not print. */
+  {
+    key: "logo", label: "Logo", type: "image", span: 2,
+    hint: "The mark above their name on their letterhead, as it prints at the top of document 17.",
+  },
   { key: "tagline", label: "Tagline", span: 2, hint: "The line under their name on their letterhead — e.g. Plumbing & Irrigation." },
   { key: "ac_code", label: "A/C code", hint: "The account code they file us under, as it prints on their purchase order." },
   { key: "abn", label: "ABN" }, { key: "acn", label: "ACN" },
@@ -91,7 +95,7 @@ const BUYER_SCHEMA = [
 const BLANK_SUPPLIER = { code: "", name: "", place: "", gstin: "", addr: "", pin: "", state: "", your_reference: "" };
 const BLANK_BUYER = {
   name: "", brand: "", country: "", curr: "USD", ship_to: "", addr: "", order_no: "", our_reference: "",
-  tagline: "", ac_code: "", abn: "", acn: "", tel: "", fax: "", web: "", email: "", po_box: "",
+  tagline: "", ac_code: "", abn: "", acn: "", tel: "", fax: "", web: "", email: "", po_box: "", logo: "",
 };
 const BLANK_TRANSPORT = { name: "", transport_id: "", supplier_ids: [] };
 
@@ -184,9 +188,12 @@ export default function SetupPage() {
           {buyers.length ? buyers.map((b, i) => (
             <div key={b.id} style={{ padding: "14px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
               <div className="row" style={{ justifyContent: "space-between" }}>
-                <div>
-                  <div style={{ color: "var(--ink)", fontWeight: 650, fontSize: 14 }}>{b.name}</div>
-                  <div style={{ fontSize: 11.5, color: "var(--faint)" }}>Trading as {b.brand || "—"}</div>
+                <div className="row" style={{ gap: 10, alignItems: "center" }}>
+                  {b.logo && <img src={b.logo} alt="" style={{ height: 28, maxWidth: 60, objectFit: "contain" }} />}
+                  <div>
+                    <div style={{ color: "var(--ink)", fontWeight: 650, fontSize: 14 }}>{b.name}</div>
+                    <div style={{ fontSize: 11.5, color: "var(--faint)" }}>Trading as {b.brand || "—"}</div>
+                  </div>
                 </div>
                 <div className="row" style={{ gap: 8 }}>
                   <EditBtn onClick={() => setEditing({ type: "buyer", value: b })} />

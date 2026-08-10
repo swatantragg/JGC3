@@ -9,7 +9,7 @@ No seed / dummy rows are created — every record is entered through the API.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, String, Integer, Float, ForeignKey, JSON, DateTime
+from sqlalchemy import Boolean, Column, String, Text, Integer, Float, ForeignKey, JSON, DateTime
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -160,6 +160,10 @@ class Buyer(Base):
     web = Column(String, default="")
     email = Column(String, default="")
     po_box = Column(String, default="")
+    # The mark above their name on that same letterhead — a data: URL (Setup's
+    # upload reads the file straight into one) or a path under public/. Kept as
+    # Text since a data: URL runs well past String's practical length.
+    logo = Column(Text, default="")
 
 
 class Item(Base):

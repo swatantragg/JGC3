@@ -49,7 +49,7 @@ BACKFILL = {
     "suppliers": {"addr": "''", "pin": "''", "state": "''", "your_reference": "''"},
     "buyers": {
         "our_reference": "''", "tagline": "''", "ac_code": "''", "abn": "''", "acn": "''",
-        "tel": "''", "fax": "''", "web": "''", "email": "''", "po_box": "''",
+        "tel": "''", "fax": "''", "web": "''", "email": "''", "po_box": "''", "logo": "''",
     },
     "transports": {"supplier_ids": None},   # JSON — leave NULL, read as []
     # po_lines price columns are deliberately absent: NULL is meaningful there

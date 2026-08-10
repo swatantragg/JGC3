@@ -3129,19 +3129,42 @@ B["16"] = (ctx) => {
    it with their contact strip along the foot.
 
    Their letterhead is the buyer's, not ours, so it is held on the buyer master
-   (Setup → Buyers) and prints from there. A buyer whose form we do not
-   reproduce simply leaves those fields blank and the boxes print empty, which
-   is what a blank form does.
+   (Setup → Buyers) and prints from there — including the mark above their
+   name, uploaded once as `logo` and carried as a data: URL. A buyer whose form
+   we do not reproduce simply leaves those fields blank and the boxes print
+   empty, which is what a blank form does.
 
-   Two things about their paper this cannot follow. Their grid is a fixed frame
+   One thing about their paper this cannot follow: their grid is a fixed frame
    that carries its running value to the next page as "Balance c/f" and totals
    on the last; ours is one flow, so it rules the frame out to a full page and
-   totals once. And the logo above their name is theirs to supply — there is
-   nowhere in the app to keep it. */
+   totals once. */
 const fobModeOf = (it) => it?.fobMode || "100";
 const perLabel = (it) => (fobModeOf(it) === "piece" ? "Per Piece" : "Per 100 Pieces");
-const bandOf = (it) => String(it.group || "").trim()
-  || ((it.stickerRule || "pp") === "grn" ? "NYLON MOULDED FITTINGS" : "PP MOULDED FITTINGS");
+/* Their purchase order bands the goods by product family, in the order the
+   form runs — not by the size band the master groups them under. A pipe is a
+   pipe to the buyer whether it is 15MM or 50MM; what separates the bands is
+   what the thing IS: extruded pipe threaded male-to-male, the same male-to-
+   female, moulded fittings, nylon fittings, and the cartons they travel in.
+   The master's own group is what says which: the size bands and the plain
+   pipe/tube groups are the MxM pipes, "PP PIPES M/F THREADED" the MxF ones. */
+const PROFORMA_FAMILIES = [
+  ["mxm", "PP EXTRUDED PIPES : MxM THREADED"],
+  ["mxf", "PP EXTRUDED PIPES : MxF THREADED"],
+  ["ppm", "PP MOULDED FITTINGS"],
+  ["grn", "NYLON MOULDED FITTINGS"],
+  ["box", "CORRUGATED BOXES"],
+];
+function familyOf(it) {
+  const g = String(it.group || "").trim().toLowerCase();
+  const code = String(it.code || it.gd || "").toUpperCase();
+  if (g.includes("corrugated") || g.includes("carton") || /^GD\d/.test(code)) return "box";
+  if ((it.stickerRule || "pp") === "grn" || g.includes("grn") || g.includes("nylon")) return "grn";
+  if (g.includes("m/f") || g.includes("mxf")) return "mxf";
+  if (g.includes("moulded")) return "ppm";
+  if (/\d\s*mm|pipe|tube/.test(g)) return "mxm";
+  return "ppm";
+}
+const bandOf = (it) => PROFORMA_FAMILIES.find(([k]) => k === familyOf(it))[1];
 /* Their form is a ruled frame, not a table that stops with the goods. */
 const PROFORMA_ROWS = 22;
 
@@ -3150,17 +3173,26 @@ const PROFORMA_ROWS = 22;
 function proformaBands(ctx) {
   const bands = new Map();
   L(ctx).forEach((r) => {
-    const key = bandOf(r.it);
+    const key = familyOf(r.it);
     if (!bands.has(key)) bands.set(key, []);
     bands.get(key).push(r);
   });
-  return [...bands.entries()].map(([head, rows]) => ({
-    head,
-    rows,
-    lengths: rows.some((r) => String(r.it.length || "").trim()),
-    per: commonOf(rows, (r) => fobModeOf(r.it)) === "piece" ? "Per Piece" : "Per 100 Pieces",
-  }));
+  // Families in the order their form prints them, whatever order they were
+  // packed in; anything unrecognised follows, under its own heading.
+  return PROFORMA_FAMILIES.filter(([k]) => bands.has(k)).map(([k, head]) => {
+    const rows = bands.get(k);
+    return {
+      head,
+      rows,
+      boxes: k === "box",
+      lengths: rows.some((r) => String(r.it.length || "").trim()),
+      per: commonOf(rows, (r) => fobModeOf(r.it)) === "piece" ? "Per Piece" : "Per 100 Pieces",
+    };
+  });
 }
+/* Who the order is signed for, as their form sets it — in capitals, above the
+   space their stamp and signature go in. */
+const forLine = (b) => `FOR ${b.name || ""}${b.brand ? ` T/A ${b.brand}` : ""}`.toUpperCase();
 /* The month the goods are due — their form names it, in capitals. */
 const deliveryMonth = (ctx) => (ctx.inv.date
   ? new Date(ctx.inv.date).toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase() : "");
@@ -3176,6 +3208,45 @@ function proformaFooter(b) {
     join([b.tel && `Tel : ${b.tel}`, b.fax && `Fax : ${b.fax}`], " * "),
     join([b.web && `Web : ${b.web}`, b.email && `Email : ${b.email}`], " * "),
   ].filter(Boolean);
+}
+/* Setup's upload keeps the buyer's mark as a data: URL — decoded here into the
+   raw bytes a oneCellAnchor picture wants, the same shape logo.js builds for
+   the exporter's own mark. It is anchored to sit above their name, roughly
+   centred on the four columns the name is centred on, and stands about the
+   five-eighths of an inch it stands on their own paper. */
+const LOGO_CY = 553000;              // EMU, 914400 to the inch
+const PROFORMA_COL_EMU = 766762;     // one column of the eight, at 11.5 characters
+
+/* A PNG carries its pixel size in the IHDR chunk, at a fixed offset; a JPEG
+   does not, so one is taken as square and the sheet shows it a shade wide
+   rather than refusing to place it. */
+function pngAspect(data) {
+  const be = (o) => (data[o] << 24 | data[o + 1] << 16 | data[o + 2] << 8 | data[o + 3]) >>> 0;
+  if (data.length < 24 || data[0] !== 0x89 || data[1] !== 0x50) return 1;
+  const w = be(16), h = be(20);
+  return w && h ? w / h : 1;
+}
+
+function buyerLogoImage(b) {
+  const m = /^data:image\/(png|jpe?g);base64,(.+)$/i.exec(b.logo || "");
+  if (!m) return null;
+  const ext = m[1].toLowerCase() === "jpg" ? "jpeg" : m[1].toLowerCase();
+  const bin = atob(m[2]);
+  const data = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i);
+  const cx = Math.round(LOGO_CY * pngAspect(data));
+  // Centred on columns A–D, which is where their name sits under it.
+  const left = Math.round((PROFORMA_COL_EMU * 4 - cx) / 2);
+  return {
+    data,
+    ext,
+    col: Math.floor(left / PROFORMA_COL_EMU),
+    colOff: left % PROFORMA_COL_EMU,
+    row: 0,
+    rowOff: 20000,
+    cy: LOGO_CY,
+    cx,
+  };
 }
 
 function proforma17Sheet(ctx, bands) {
@@ -3196,74 +3267,110 @@ function proforma17Sheet(ctx, bands) {
     num: { font: "ref", border: "box", align: "center", valign: "center", fmt: "int" },
     money: { font: "ref", border: "box", align: "right", valign: "center", fmt: USD },
     blank: { font: "ref", border: "box", valign: "center" },
-    tot: { font: "refb", border: "box", align: "right", valign: "center", fmt: USD },
-    totLbl: { font: "refb", border: "box", align: "right", valign: "center" },
+    tot: { font: "refb", border: "rt", align: "right", valign: "center", fmt: USD },
+    totLbl: { font: "refb", border: "t", align: "center", valign: "center" },
     plain: { font: "ref", border: false, valign: "center" },
     foot: { font: "ref", border: false, align: "center", valign: "center", wrap: true },
+    /* The runs their form rules as one unbroken box rather than a row of
+       cells. Only the edges the box itself owns are drawn, so no rule falls
+       between the columns it crosses. */
+    boxTL: { font: "refb", border: "lt", align: "center", valign: "center" },
+    boxT: { font: "refb", border: "t", align: "center", valign: "center" },
+    boxTR: { font: "ref", border: "rt", valign: "center" },
+    boxML: { font: "ref", border: "l", align: "center", valign: "center" },
+    boxM: { font: "ref", border: false, align: "center", valign: "center" },
+    boxMR: { font: "ref", border: "r", valign: "center" },
+    boxBL: { font: "ref", border: "lb", valign: "center" },
+    boxB: { font: "ref", border: "b", valign: "center" },
+    boxBR: { font: "ref", border: "rb", valign: "center" },
+    frLbl: { font: "refb", border: "lt", align: "center", valign: "center" },
+    frVal: { font: "ref", border: "rt", valign: "center" },
+    frLblB: { font: "refb", border: "lb", align: "center", valign: "center" },
+    frValB: { font: "ref", border: "rb", valign: "center" },
   };
-  const G = formGrid(7);
+  const G = formGrid(8);
   const { row, gap } = G;
 
-  row([[4, { v: "", s: P.plain }], [3, { v: "PURCHASE ORDER", s: P.ttl }]]);
-  row([[3, { v: b.name || "", s: P.brand }], [1, { v: "NO.", s: P.lbl }], [3, { v: b.orderNo || "", s: P.val }]], 21);
-  row([[3, { v: b.tagline || (b.brand ? `T/A ${b.brand}` : ""), s: P.sub }],
+  // The mark stands in this row, so it is given the height to hold it.
+  row([[5, { v: "", s: P.plain }], [2, { v: "PURCHASE ORDER", s: P.ttl }], [1, { v: "", s: P.plain }]],
+    b.logo ? 46 : undefined);
+  row([[4, { v: b.name || "", s: P.brand }], [1, { v: "NO.", s: P.lbl }], [3, { v: b.orderNo || "", s: P.val }]], 21);
+  row([[4, { v: b.tagline || (b.brand ? `T/A ${b.brand}` : ""), s: P.sub }],
     [1, { v: "DATE", s: P.lbl }], [3, { v: ddmm(ctx.inv.date), s: P.val }]]);
   gap();
 
-  row([[3, { v: "TO:", s: P.lbl }], [4, { v: "DELIVER TO:", s: P.lbl }]]);
-  row([[3, { v: [E.name, E.addr].filter(Boolean).join("\n"), s: P.box }],
-    [4, { v: [`${b.name || ""}${b.brand ? ` T/A ${b.brand}` : ""}`, b.addr || b.shipTo || ""].filter(Boolean).join("\n"), s: P.box }]], 42);
-  row([[3, { v: "A/C CODE", s: P.head }], [4, { v: "TEL NUMBER", s: P.head }]]);
-  row([[3, { v: b.acCode || "", s: P.boxC }], [4, { v: `+91-${E.tel}`, s: P.boxC }]]);
+  row([[1, { v: "", s: P.plain }], [3, { v: "TO:", s: P.lbl }],
+    [1, { v: "", s: P.plain }], [3, { v: "DELIVER TO:", s: P.lbl }]]);
+  row([[1, { v: "", s: P.plain }], [3, { v: [E.name, E.addr].filter(Boolean).join("\n"), s: P.box }],
+    [1, { v: "", s: P.plain }],
+    [3, { v: [`${b.name || ""}${b.brand ? ` T/A ${b.brand}` : ""}`, b.addr || b.shipTo || ""].filter(Boolean).join("\n"), s: P.box }]], 42);
+  gap();
+
+  // The account-code strip: one box, three rows deep, no rule down the middle.
+  row([[3, { v: "A/C CODE", s: P.boxTL }], [3, { v: "TEL NUMBER", s: P.boxT }], [2, { v: "", s: P.boxTR }]]);
+  row([[3, { v: b.acCode || "", s: P.boxML }], [3, { v: `+91-${E.tel}`, s: P.boxM }], [2, { v: "", s: P.boxMR }]]);
+  row([[3, { v: "", s: P.boxBL }], [3, { v: "", s: P.boxB }], [2, { v: "", s: P.boxBR }]]);
   gap();
 
   const first = G.at() + 1;
   let lines = 0;
+  /* The eighths a band's own columns take — the length is worth two of them,
+     and a band without one gives the size all three. */
+  const shapeOf = (band) => (band.lengths ? [1, 1, 2, 1, 1, 1, 1] : [1, 3, 1, 1, 1, 1]);
   bands.forEach((band) => {
-    row([[7, { v: band.head, s: P.band }]]);
-    const H = (v) => ({ v, s: P.head });
-    row(band.lengths
-      ? [[1, H("CODE")], [1, H("SIZE (MM / IN)")], [1, H("LEN (MM)")], [1, H("PIECES")], [1, H("RATE")], [1, H(band.per)], [1, H("TOTAL VALUE")]]
-      : [[1, H("CODE")], [2, H("SIZE (MM)")], [1, H("PIECES")], [1, H("RATE")], [1, H(band.per)], [1, H("TOTAL VALUE")]]);
+    row([[8, { v: band.head, s: P.band }]]);
+    const H = band.boxes
+      ? ["CODE", "SIZE (MM)", "PIECES", "Unit Price.", "Per Piece", "Total Value."]
+      : band.lengths
+        ? ["CODE", "SIZE (MM / IN)", "LEN (MM)", "PIECES", "RATE", band.per, "TOTAL VALUE"]
+        : ["CODE", "SIZE (MM)", "PIECES", "RATE", band.per, "TOTAL VALUE"];
+    const shape = shapeOf(band);
+    row(H.map((v, i) => [shape[i], { v, s: P.head }]));
     band.rows.forEach((r) => {
       const line = G.at() + 1;
       const per100 = fobModeOf(r.it) !== "piece";
       const cells = [
         [1, { v: r.it.code || "", s: P.code }],
-        band.lengths ? [1, { v: r.it.size || "", s: P.code }] : [2, { v: r.it.size || "", s: P.code }],
+        [shape[1], { v: r.it.size || "", s: P.code }],
       ];
-      if (band.lengths) cells.push([1, { v: r.it.length || "", s: P.code }]);
+      if (band.lengths) cells.push([shape[2], { v: r.it.length || "", s: P.code }]);
+      /* Whatever the band's shape, the pieces land on E and the rate on F —
+         the size takes up the slack — so one formula serves both. */
       cells.push(
         [1, { v: r.pieces, t: "n", s: P.num }],
         [1, { v: proformaRate(r), t: "n", s: P.money }],
         [1, { v: perLabel(r.it), s: P.per }],
-        [1, { f: `D${line}*E${line}${per100 ? "/100" : ""}`, s: P.money }],
+        [1, { f: `E${line}*F${line}${per100 ? "/100" : ""}`, s: P.money }],
       );
       row(cells);
       lines += 1;
     });
   });
-  // The rest of the frame, ruled and empty, as their form prints it.
-  for (let i = lines; i < PROFORMA_ROWS; i++) row([[7, { v: "", s: P.blank }]]);
+  // The rest of the frame, ruled and empty, keeping the last band's columns.
+  const fillShape = bands.length ? shapeOf(bands[bands.length - 1]) : [8];
+  for (let i = lines; i < PROFORMA_ROWS; i++) row(fillShape.map((n) => [n, { v: "", s: P.blank }]));
   const last = G.at();
-  row([[5, { v: "", s: P.plain }], [1, { v: "Total", s: P.totLbl }],
-    [1, { f: first <= last ? `SUM(G${first}:G${last})` : "0", s: P.tot }]]);
+  row([[5, { v: "", s: { border: "lt" } }], [2, { v: "Total", s: P.totLbl }],
+    [1, { f: first <= last ? `SUM(H${first}:H${last})` : "0", s: P.tot }]]);
+  row([[5, { v: "", s: { border: "lb" } }], [2, { v: "", s: P.boxB }], [1, { v: "", s: P.boxBR }]]);
   gap();
 
-  row([[1, { v: "FREIGHT", s: P.head }], [3, { v: "TO COLLECT / PAYABLE AT DESTINATION", s: P.boxC }],
-    [3, { v: `FOR ${b.name || ""}${b.brand ? ` T/A ${b.brand}` : ""}`, s: P.foot }]]);
-  row([[1, { v: "DELIVERY", s: P.head }], [3, { v: deliveryMonth(ctx), s: P.boxC }], [3, { v: "", s: P.plain }]]);
+  row([[1, { v: "FREIGHT", s: P.frLbl }], [3, { v: "TO COLLECT / PAYABLE AT DESTINATION", s: P.frVal }],
+    [4, { v: forLine(b), s: P.foot }]]);
+  row([[1, { v: "DELIVERY", s: P.frLblB }], [3, { v: deliveryMonth(ctx), s: P.frValB }],
+    [4, { v: "", s: P.plain }]]);
   gap();
-  proformaFooter(b).forEach((l) => row([[7, { v: l, s: P.foot }]]));
+  proformaFooter(b).forEach((l) => row([[8, { v: l, s: P.foot }]]));
 
   return fitSheet({
     name: "Proforma",
     rows: G.rows,
     merges: G.merges,
     heights: G.heights,
-    widths: [13, 17, 11, 11, 11, 15, 15],
+    widths: Array(8).fill(11.5),
     defaultRowHeight: 14.25,
     colStyle: { font: "ref", border: false, valign: "center" },
+    image: buyerLogoImage(b),
     page: {
       paper: 9, orientation: "portrait", fit: true, fitH: 0,
       margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 },
@@ -3272,7 +3379,16 @@ function proforma17Sheet(ctx, bands) {
 }
 
 /* A blank line in the form, matching the worksheet's own gap rows. */
-const SPACE = '<tr class="nb"><td class="nb" colspan="7" style="height:9px"></td></tr>';
+const SPACE = '<tr class="nb"><td class="nb" colspan="8" style="height:9px"></td></tr>';
+
+/* Several runs of their form are one ruled box with the text set at fixed
+   points inside it rather than a row of cells — the account-code strip, the
+   total line, the freight block. Each is one cell of the eight-column grid
+   holding a table of its own that draws no rules, so the box stays unbroken
+   while the text still lands on the eighths. `parts` are [width%, class, html]. */
+const bpoBox = (rows) => `<table class="in">${rows.map((cells) => `<tr>${cells
+  .map(([w, cls, v]) => `<td style="width:${w}%"${cls ? ` class="${cls}"` : ""}>${v == null ? "" : v}</td>`)
+  .join("")}</tr>`).join("")}</table>`;
 
 B["17"] = (ctx) => {
   const E = ctx.EXPORTER;
@@ -3282,54 +3398,87 @@ B["17"] = (ctx) => {
   const addr = (lines) => lines.filter(Boolean).map(esc).join("<br>");
   const lines = bands.reduce((n, band) => n + band.rows.length, 0);
 
+  /* The eighths a band's own columns take. The length is worth two of them;
+     a band without one gives the size all three. */
+  const shapeOf = (band) => (band.lengths ? [1, 1, 2, 1, 1, 1, 1] : [1, 3, 1, 1, 1, 1]);
+  const span = (n) => (n > 1 ? ` colspan="${n}"` : "");
+
   const section = (band) => {
-    const H = band.lengths
-      ? ["CODE", "SIZE (MM / IN)", "LEN (MM)", "PIECES", "RATE", band.per, "TOTAL VALUE"]
-      : ["CODE", ["SIZE (MM)", 2], "PIECES", "RATE", band.per, "TOTAL VALUE"];
-    const head = `<tr>${H.map((h) => (Array.isArray(h)
-      ? `<th colspan="${h[1]}">${esc(h[0])}</th>` : `<th>${esc(h)}</th>`)).join("")}</tr>`;
+    /* The cartons are headed in their own words on their form — "Unit Price."
+       and "Total Value." where the goods above say RATE and TOTAL VALUE. */
+    const H = band.boxes
+      ? ["CODE", "SIZE (MM)", "PIECES", "Unit Price.", "Per Piece", "Total Value."]
+      : band.lengths
+        ? ["CODE", "SIZE (MM / IN)", "LEN (MM)", "PIECES", "RATE", band.per, "TOTAL VALUE"]
+        : ["CODE", "SIZE (MM)", "PIECES", "RATE", band.per, "TOTAL VALUE"];
+    const shape = shapeOf(band);
+    const head = `<tr>${H.map((h, i) => `<th${span(shape[i])}>${esc(h)}</th>`).join("")}</tr>`;
+    /* Their goods are ruled down the columns but not across: a line separates
+       the heading from the first item and nothing separates the items from one
+       another, so a band reads as one block. Hence `ln` — see the print CSS. */
     const body = band.rows.map((r) => {
       const rate = proformaRate(r);
-      return `<tr><td class="c">${esc(r.it.code)}</td>
-        <td class="c"${band.lengths ? "" : ' colspan="2"'}>${esc(r.it.size)}</td>
-        ${band.lengths ? `<td class="c">${esc(r.it.length)}</td>` : ""}
+      return `<tr class="ln"><td class="c">${esc(r.it.code)}</td>
+        <td class="c"${span(shape[1])}>${esc(r.it.size)}</td>
+        ${band.lengths ? `<td class="c"${span(shape[2])}>${esc(r.it.length)}</td>` : ""}
         <td class="c" data-t="int" data-v="${r.pieces}">${r.pieces.toLocaleString("en-IN")}</td>
         <td class="r" data-t="usd" data-v="${rate}">${usd(rate)}</td>
         <td class="c">${esc(perLabel(r.it))}</td>
         <td class="r" data-t="usd" data-v="${r.fobTotal}">${usd(r.fobTotal)}</td></tr>`;
     }).join("");
-    return `<tr class="po"><td colspan="7">${esc(band.head)}</td></tr>${head}${body}`;
+    return `<tr class="po"><td colspan="8">${esc(band.head)}</td></tr>${head}${body}`;
   };
 
+  /* The frame runs on past the goods to the foot of the page, and the empty
+     rows keep the rules of the band above them, as their form leaves them. */
+  const fillShape = bands.length ? shapeOf(bands[bands.length - 1]) : [8];
+  const filler = `<tr class="ln">${fillShape.map((n) => `<td${span(n)}>&nbsp;</td>`).join("")}</tr>`;
+
   /* The masthead, the addresses and the account code repeat at the top of
-     every printed page, as they do on page 2 of their own form. */
+     every printed page, as they do on page 2 of their own form.
+
+     Their sheet rules everything on eight equal columns: the mark and their
+     name over the first four, the order number and date on the fifth and what
+     follows, the two address boxes on the second-to-fourth and sixth-to-last
+     with a column of air between them. */
   const html = `<table class="wb bpo">
-      <colgroup><col style="width:14%"><col style="width:18%"><col style="width:11%"><col style="width:11%">
-        <col style="width:11%"><col style="width:15%"><col style="width:20%"></colgroup>
+      <colgroup>${Array(8).fill('<col style="width:12.5%">').join("")}</colgroup>
       <thead>
-        <tr class="nb"><td class="nb" colspan="4"></td><td class="nb b r" colspan="3">PURCHASE ORDER</td></tr>
-        <tr class="nb"><td class="nb big c" colspan="3">${esc(b.name || "")}</td>
-          <td class="nb">NO.</td><td class="nb b" colspan="3">${esc(b.orderNo || "")}</td></tr>
-        <tr class="nb"><td class="nb c" colspan="3">${esc(b.tagline || (b.brand ? `T/A ${b.brand}` : ""))}</td>
-          <td class="nb">DATE</td><td class="nb b" colspan="3">${ddmm(ctx.inv.date)}</td></tr>
+        <tr class="nb"><td class="nb c" colspan="4">${b.logo ? `<img class="bpo-logo" src="${esc(b.logo)}" alt="">` : ""}</td>
+          <td class="nb"></td><td class="nb b c ttl" colspan="2">PURCHASE ORDER</td><td class="nb"></td></tr>
+        <tr class="nb"><td class="nb big c" colspan="4">${esc(b.name || "")}</td>
+          <td class="nb">NO.</td><td class="nb b val" colspan="3">${esc(b.orderNo || "")}</td></tr>
+        <tr class="nb"><td class="nb c tag" colspan="4">${esc(b.tagline || (b.brand ? `T/A ${b.brand}` : ""))}</td>
+          <td class="nb">DATE</td><td class="nb b val" colspan="3">${ddmm(ctx.inv.date)}</td></tr>
         ${SPACE}
-        <tr class="nb"><td class="nb" colspan="3">TO:</td><td class="nb" colspan="4">DELIVER TO:</td></tr>
-        <tr><td class="party" colspan="3">${addr([E.name, E.addr])}</td>
-          <td class="party" colspan="4">${addr([`${b.name || ""}${b.brand ? ` T/A ${b.brand}` : ""}`, b.addr || b.shipTo])}</td></tr>
-        <tr><th colspan="3">A/C CODE</th><th colspan="4">TEL NUMBER</th></tr>
-        <tr><td class="c" colspan="3">${esc(b.acCode || "")}</td><td class="c" colspan="4">+91-${esc(E.tel)}</td></tr>
+        <tr class="nb"><td class="nb"></td><td class="nb" colspan="3">TO:</td>
+          <td class="nb"></td><td class="nb" colspan="3">DELIVER TO:</td></tr>
+        <tr><td class="nb"></td><td class="party" colspan="3">${addr([E.name, E.addr])}</td>
+          <td class="nb"></td>
+          <td class="party" colspan="3">${addr([`${b.name || ""}${b.brand ? ` T/A ${b.brand}` : ""}`, b.addr || b.shipTo])}</td></tr>
+        ${SPACE}
+        <tr><td class="bx" colspan="8">${bpoBox([
+          [[37.5, "c", "A/C CODE"], [37.5, "c", "TEL NUMBER"], [25, null, null]],
+          [[37.5, "c", esc(b.acCode || "")], [37.5, "c", `+91-${esc(E.tel)}`], [25, null, null]],
+          [[37.5, null, "&nbsp;"], [37.5, null, null], [25, null, null]],
+        ])}</td></tr>
         ${SPACE}
       </thead>
       <tbody>
         ${bands.map(section).join("")}
-        ${Array(Math.max(0, PROFORMA_ROWS - lines)).fill('<tr><td colspan="7">&nbsp;</td></tr>').join("")}
-        <tr><td class="nb" colspan="5"></td><td class="b r">Total</td><td class="r b">${usd(total)}</td></tr>
+        ${Array(Math.max(0, PROFORMA_ROWS - lines)).fill(filler).join("")}
+        <tr><td class="bx" colspan="8">${bpoBox([
+          [[62.5, null, null], [25, "c", "Total"], [12.5, "r b", usd(total)]],
+          [[62.5, null, "&nbsp;"], [25, null, null], [12.5, null, null]],
+        ])}</td></tr>
         ${SPACE}
-        <tr><th>FREIGHT</th><td class="c" colspan="3">TO COLLECT / PAYABLE AT DESTINATION</td>
-          <td class="c" colspan="3" rowspan="2">FOR ${esc(b.name || "")}${b.brand ? ` T/A ${esc(b.brand)}` : ""}</td></tr>
-        <tr><th>DELIVERY</th><td class="c" colspan="3">${esc(deliveryMonth(ctx))}</td></tr>
+        <tr><td class="bx" colspan="4">${bpoBox([
+          [[25, "c b", "FREIGHT"], [75, null, "TO COLLECT / PAYABLE AT DESTINATION"]],
+          [[25, "c b", "DELIVERY"], [75, null, esc(deliveryMonth(ctx))]],
+        ])}</td>
+          <td class="nb c" colspan="4">${esc(forLine(b))}</td></tr>
         ${SPACE}
-        ${proformaFooter(b).map((l) => `<tr class="nb"><td class="nb c" colspan="7">${esc(l)}</td></tr>`).join("")}
+        ${proformaFooter(b).map((l) => `<tr class="nb"><td class="nb c foot" colspan="8">${esc(l)}</td></tr>`).join("")}
       </tbody>
     </table>`;
   return { name: "Proforma_Invoice_17", html, sheet: proforma17Sheet(ctx, bands), page: "portrait" };
@@ -3916,8 +4065,38 @@ export const PREVIEW_CSS = `
   /* 17 · Proforma is the buyer's own purchase order form: their name across the
      top, the two address boxes under it, and the goods banded by range. */
   .docprev table.bpo .big{font-size:16px;font-weight:700;color:#000;}
-  .docprev table.bpo .party{text-align:left;vertical-align:top;white-space:normal;}
+  /* Both parties are set bold and in capitals on their form — it is the one
+     thing on the page a warehouse reads across the room — whatever case the
+     master itself keeps the name and address in. */
+  /* Their paper is set tighter than the rest of the library — a small body
+     under their name at full size. The preview keeps the same proportions as
+     the print, a shade larger so it stays readable on screen. */
+  /* The width has to be a definite length, not 100%. The preview paper sizes
+     itself to max-content (see .docprev-paper — a wide sheet makes the paper as
+     wide as it needs to be and the shell scrolls to it), so a percentage here
+     has no definite basis to resolve against and computes to auto; and under a
+     fixed table layout the cells never get to size the columns from their own
+     content. All eight collapsed, and every cell narrower than the full span
+     printed blank. 760px is the width .wb.fit gives a portrait sheet. */
+  .docprev table.bpo{table-layout:fixed;width:760px;}
+  .docprev table.bpo td,.docprev table.bpo th{font-size:10px;padding:0 5px;line-height:1.3;}
+  .docprev table.bpo .big{font-size:20px;font-weight:700;color:#000;}
+  .docprev table.bpo .tag{font-size:14px;}
+  .docprev table.bpo .ttl{font-size:11.5px;}
+  .docprev table.bpo .val{font-size:12px;}
+  .docprev table.bpo .foot{font-size:9.5px;}
+  .docprev table.bpo .party{text-align:left;vertical-align:top;white-space:normal;font-weight:700;text-transform:uppercase;padding:4px 6px;}
   .docprev table.bpo td.nb,.docprev table.bpo th.nb{border:none;}
+  /* The mark above their name, uploaded on the buyer master — held to the
+     name's own width below it so the two sit centred on one another. */
+  .docprev table.bpo .bpo-logo{height:62px;width:auto;display:block;margin:0 auto 1px;}
+  /* Ruled down the columns but not across, as their goods are. */
+  .docprev table.bpo tr.ln td{border-top:none;border-bottom:none;}
+  /* A run of the form that is one unbroken box: the cell gives up its padding
+     to the table inside it, and that table draws no rules of its own. */
+  .docprev table.bpo td.bx{padding:0;}
+  .docprev table.bpo table.in{width:100%;table-layout:fixed;border-collapse:collapse;margin:0;}
+  .docprev table.bpo table.in td{border:none;padding:1px 6px;font-size:10px;}
 
   /* 6 · Suppliers' PO is a letter, not a table: the exporter's name in Centaur
      maroon, the form's labels in blue, the title in red, and the whole page

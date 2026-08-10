@@ -37,10 +37,11 @@ export const docBuyer = (b) => (b ? {
      prints around the goods. Blank until Setup fills it in. */
   tagline: b.tagline || "", acCode: b.ac_code || "", abn: b.abn || "", acn: b.acn || "",
   tel: b.tel || "", fax: b.fax || "", web: b.web || "", email: b.email || "", poBox: b.po_box || "",
+  logo: b.logo || "",
 } : {
   name: "—", brand: "—", country: "—", curr: "USD", shipTo: "", addr: "",
   orderNo: "", ourReference: "",
-  tagline: "", acCode: "", abn: "", acn: "", tel: "", fax: "", web: "", email: "", poBox: "",
+  tagline: "", acCode: "", abn: "", acn: "", tel: "", fax: "", web: "", email: "", poBox: "", logo: "",
 });
 
 export const docSupplier = (s) => ({
