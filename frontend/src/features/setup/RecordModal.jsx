@@ -5,10 +5,14 @@ import { Modal, Btn, Field, Input, Select } from "../../components/ui/index.jsx"
 /* Generic create/edit form driven by a field schema:
 
      { key, label, hint,
-       type: "text" | "number" | "select" | "bool" | "multiselect" | "textarea",
+       type: "text" | "number" | "select" | "bool" | "multiselect" | "textarea" | "image",
        options: [{ value, label }],   // select / multiselect
        span,                          // columns this field occupies
        allowEmpty: false }            // select must keep a value
+
+   "image" reads the chosen file into a data: URL client-side — there is no
+   upload endpoint, and a buyer's letterhead mark is small enough (a few KB)
+   that storing the data: URL as the field's value is simplest.
 
    Sections are supported too — an entry of the shape { section: "Packing" }
    starts a new labelled band, which is what makes a 28-field item editable
@@ -77,6 +81,24 @@ export default function RecordModal({ title, schema, value, onSave, onClose, sav
       return (
         <textarea className="input input-sm" rows={2} style={{ resize: "vertical", fontFamily: "inherit" }}
           value={f[s.key] ?? ""} onChange={(e) => set(s.key, e.target.value)} />
+      );
+    }
+    if (s.type === "image") {
+      const src = f[s.key];
+      const pick = (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = "";
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => set(s.key, reader.result);
+        reader.readAsDataURL(file);
+      };
+      return (
+        <div className="row" style={{ gap: 8, alignItems: "center" }}>
+          {src && <img src={src} alt="" style={{ height: 36, maxWidth: 90, objectFit: "contain" }} />}
+          <input type="file" accept="image/*" onChange={pick} style={{ fontSize: 11.5 }} />
+          {src && <Btn variant="ghost" size="sm" type="button" onClick={() => set(s.key, "")}>Remove</Btn>}
+        </div>
       );
     }
     return (

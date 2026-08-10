@@ -28,6 +28,15 @@ const CONFIG = {
   // Only inline images. An external URL here would leak which document was
   // opened, and when, to whoever hosts it.
   ALLOWED_URI_REGEXP: /^data:image\//i,
+  /* DOMPurify runs that regexp over the value of every attribute it does not
+     already hold to be URI-safe — not only over the ones that carry a URL. A
+     rule this narrow therefore threw away `colspan` and its neighbours, since
+     "3" is not a data:image URI, and every form and letter in the library came
+     out on screen with its merged cells collapsed into single columns while
+     the printed copy (which never passes through here) was correct. Naming
+     them as URI-safe exempts them from the URL test and nothing else: `src` is
+     deliberately not in this list, so images stay data: only. */
+  ADD_URI_SAFE_ATTR: ["colspan", "rowspan", "width", "height", "align", "valign"],
   FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "form", "input", "link", "base"],
   FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "href", "formaction", "xlink:href"],
   ALLOW_DATA_ATTR: false,

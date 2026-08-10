@@ -75,12 +75,28 @@ const BUYER_SCHEMA = [
     key: "our_reference", label: "Our reference", span: 2,
     hint: "Our own file reference for this buyer — prints under the shipping marks on the supplier purchase order.",
   },
+  /* The buyer's own letterhead. Document 17 reproduces their purchase order
+     form, so these are their details, not ours — leave them blank for a buyer
+     whose form we do not print. */
+  {
+    key: "logo", label: "Logo", type: "image", span: 2,
+    hint: "The mark above their name on their letterhead, as it prints at the top of document 17.",
+  },
+  { key: "tagline", label: "Tagline", span: 2, hint: "The line under their name on their letterhead — e.g. Plumbing & Irrigation." },
+  { key: "ac_code", label: "A/C code", hint: "The account code they file us under, as it prints on their purchase order." },
+  { key: "abn", label: "ABN" }, { key: "acn", label: "ACN" },
+  { key: "tel", label: "Telephone" }, { key: "fax", label: "Fax" },
+  { key: "po_box", label: "PO box", span: 2, hint: "The postal address on the foot of their form, beside the street address." },
+  { key: "web", label: "Website" }, { key: "email", label: "E-mail", span: 2 },
 ];
 
 // The add forms start from the same blanks the edit modals save back to, so a
 // field can never exist in one and be missing from the other.
 const BLANK_SUPPLIER = { code: "", name: "", place: "", gstin: "", addr: "", pin: "", state: "", your_reference: "" };
-const BLANK_BUYER = { name: "", brand: "", country: "", curr: "USD", ship_to: "", addr: "", order_no: "", our_reference: "" };
+const BLANK_BUYER = {
+  name: "", brand: "", country: "", curr: "USD", ship_to: "", addr: "", order_no: "", our_reference: "",
+  tagline: "", ac_code: "", abn: "", acn: "", tel: "", fax: "", web: "", email: "", po_box: "", logo: "",
+};
 const BLANK_TRANSPORT = { name: "", transport_id: "", supplier_ids: [] };
 
 export default function SetupPage() {
@@ -172,9 +188,12 @@ export default function SetupPage() {
           {buyers.length ? buyers.map((b, i) => (
             <div key={b.id} style={{ padding: "14px 16px", borderTop: i ? "1px solid var(--border)" : "none" }}>
               <div className="row" style={{ justifyContent: "space-between" }}>
-                <div>
-                  <div style={{ color: "var(--ink)", fontWeight: 650, fontSize: 14 }}>{b.name}</div>
-                  <div style={{ fontSize: 11.5, color: "var(--faint)" }}>Trading as {b.brand || "—"}</div>
+                <div className="row" style={{ gap: 10, alignItems: "center" }}>
+                  {b.logo && <img src={b.logo} alt="" style={{ height: 28, maxWidth: 60, objectFit: "contain" }} />}
+                  <div>
+                    <div style={{ color: "var(--ink)", fontWeight: 650, fontSize: 14 }}>{b.name}</div>
+                    <div style={{ fontSize: 11.5, color: "var(--faint)" }}>Trading as {b.brand || "—"}</div>
+                  </div>
                 </div>
                 <div className="row" style={{ gap: 8 }}>
                   <EditBtn onClick={() => setEditing({ type: "buyer", value: b })} />
@@ -183,7 +202,9 @@ export default function SetupPage() {
                 </div>
               </div>
               <div className="grid-3" style={{ marginTop: 12, gap: 12 }}>
-                {[["Country", b.country], ["Currency", b.curr], ["Ship to", b.ship_to], ["Address", b.addr], ["Order no.", b.order_no], ["Our reference", b.our_reference]].map(([k, v]) => (
+                {[["Country", b.country], ["Currency", b.curr], ["Ship to", b.ship_to], ["Address", b.addr],
+                  ["Order no.", b.order_no], ["Our reference", b.our_reference], ["Tagline", b.tagline],
+                  ["A/C code", b.ac_code], ["Telephone", b.tel], ["E-mail", b.email]].map(([k, v]) => (
                   <div key={k}><div style={{ fontSize: 10.5, color: "var(--faint)" }}>{k}</div><div style={{ fontSize: 12.5, color: "var(--ink-2)", fontWeight: 500 }}>{v || "—"}</div></div>
                 ))}
               </div>

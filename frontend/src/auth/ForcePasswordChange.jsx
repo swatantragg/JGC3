@@ -109,7 +109,7 @@ export default function ForcePasswordChange() {
             </Btn>
           </div>
         </div>
-        <div className="login-foot">Maintained and developed by <b>Avita Technologies</b> · V-5.0.1</div>
+        <div className="login-foot">Maintained and developed by <b>Avita Technologies</b> · V-5.1.1</div>
       </div>
     </div>
   );

@@ -157,6 +157,8 @@ const FONTS = [
   // buyer sheets do — their two workbooks were built years apart.
   { key: "refgd", xml: '<font><b/><sz val="10"/><color rgb="FF008000"/><name val="Arial"/><family val="2"/></font>' },
   { key: "refb11", xml: '<font><b/><sz val="11"/><name val="Arial"/><family val="2"/></font>' },
+  // The buyer's own name across the top of their purchase order (17).
+  { key: "refb14", xml: '<font><b/><sz val="14"/><name val="Arial"/><family val="2"/></font>' },
   /* The supplier purchase order is a printed letter, not a table: their
      letterhead is Centaur in maroon, the form's labels are blue, and a few
      words on it are underlined. */
@@ -167,6 +169,25 @@ const FONTS = [
   { key: "refbu", xml: '<font><b/><u/><sz val="10"/><name val="Arial"/><family val="2"/></font>' },
   { key: "refun", xml: '<font><u/><sz val="10"/><name val="Arial"/><family val="2"/></font>' },
   { key: "refur", xml: '<font><u/><sz val="10"/><color rgb="FFFF0000"/><name val="Arial"/><family val="2"/></font>' },
+  /* The e-way bill is the portal's entry form: the options it offers are set
+     in italic and the boxes the operator still has to fill carry the site's
+     own grey prompt. */
+  { key: "refi", xml: '<font><i/><sz val="10"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "refgy", xml: '<font><sz val="10"/><color rgb="FF808080"/><name val="Arial"/><family val="2"/></font>' },
+  /* The despatch instruction is a letter on the printed letterhead — Calibri
+     body, Centaur maroon masthead, and the contact strip along the foot. */
+  { key: "letb", xml: '<font><b/><sz val="10.5"/><color theme="1"/><name val="Calibri"/></font>' },
+  /* Calibri 11 — the workbooks the client built in Excel's own default face
+     rather than in the older Arial books (12 · Shipment boxes & volume). */
+  { key: "cal", xml: '<font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' },
+  { key: "calb", xml: '<font><b/><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' },
+  /* Times New Roman — the customs declarations are typed forms, and that is
+     the face they are typed in (13 · Export value declaration). */
+  { key: "tnr", xml: '<font><sz val="12"/><color theme="1"/><name val="Times New Roman"/><family val="1"/></font>' },
+  { key: "tnru", xml: '<font><u/><sz val="12"/><color theme="1"/><name val="Times New Roman"/><family val="1"/></font>' },
+  { key: "brands", xml: '<font><sz val="11"/><color rgb="FF8B0000"/><name val="Centaur"/><family val="1"/></font>' },
+  { key: "letmn", xml: '<font><sz val="9"/><color rgb="FF8B0000"/><name val="Calibri"/></font>' },
+  { key: "letmnb", xml: '<font><b/><sz val="9"/><color rgb="FF8B0000"/><name val="Calibri"/></font>' },
 ];
 const FILLS = [
   { key: "none", xml: '<fill><patternFill patternType="none"/></fill>' },
@@ -175,13 +196,18 @@ const FILLS = [
   { key: "key", xml: '<fill><patternFill patternType="solid"><fgColor rgb="FFF2F5F8"/><bgColor indexed="64"/></patternFill></fill>' },
   { key: "sec", xml: '<fill><patternFill patternType="solid"><fgColor rgb="FFE6EDF4"/><bgColor indexed="64"/></patternFill></fill>' },
   { key: "tot", xml: '<fill><patternFill patternType="solid"><fgColor rgb="FFFBE6C2"/><bgColor indexed="64"/></patternFill></fill>' },
+  // White at 25% shade — what the client's own sheets band their headings,
+  // labels and totals with.
+  { key: "grey", xml: '<fill><patternFill patternType="solid"><fgColor rgb="FFBFBFBF"/><bgColor indexed="64"/></patternFill></fill>' },
 ];
 /* Black hairline edges, as Excel's own grid draws them — `box` is all four,
-   the rest are the partial frames the client's sheets use on a banner row. */
-const edge = '<color indexed="64"/>';
-const side = (on, name) => (on ? `<${name} style="thin">${edge}</${name}>` : `<${name}/>`);
-const frame = (l, r, t, b) =>
-  `<border>${side(l, "left")}${side(r, "right")}${side(t, "top")}${side(b, "bottom")}<diagonal/></border>`;
+   the rest are the partial frames the client's sheets use on a banner row.
+   An edge may name its own colour, which is how the letterhead rules print in
+   the house red rather than in black. */
+const edge = (rgb) => (rgb ? `<color rgb="${rgb}"/>` : '<color indexed="64"/>');
+const side = (on, name, rgb) => (on ? `<${name} style="thin">${edge(rgb)}</${name}>` : `<${name}/>`);
+const frame = (edges, rgb) =>
+  `<border>${["left", "right", "top", "bottom"].map((n) => side(edges.includes(n[0]), n, rgb)).join("")}<diagonal/></border>`;
 const BORDERS = [
   { key: "none", xml: "<border><left/><right/><top/><bottom/><diagonal/></border>" },
   {
@@ -195,9 +221,17 @@ const fillIx = (k) => Math.max(0, FILLS.findIndex((f) => f.key === k));
 
 /* `border` is false for none, undefined for the app's own thin grey grid, or
    the edges to rule as a string of l/r/t/b — "lrtb" (aliased "box") for a full
-   cell, "tb" for a banner, "l" for the left edge of a printed form. Every
+   cell, "tb" for a banner, "l" for the left edge of a printed form. A colour
+   may follow the edges — "b#C00000" is the letterhead's red rule. Every
    combination a sheet asks for is registered as it is met. */
-const borderKey = (b) => (b === "box" ? "lrtb" : String(b).toLowerCase().replace(/[^lrtb]/g, ""));
+function borderSpec(b) {
+  const [raw, rgb] = String(b === "box" ? "lrtb" : b).split("#");
+  const hex = (rgb || "").replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
+  return {
+    edges: raw.toLowerCase().replace(/[^lrtb]/g, ""),
+    rgb: hex ? (hex.length === 6 ? `FF${hex}` : hex.slice(0, 8)) : "",
+  };
+}
 function borderRegistry() {
   const list = BORDERS.map((x) => x.xml);
   const seen = new Map(BORDERS.map((x, i) => [x.key, i]));
@@ -205,12 +239,12 @@ function borderRegistry() {
     index(b) {
       if (b === false) return 0;
       if (typeof b !== "string") return 1;
-      const key = borderKey(b);
-      if (!key) return 0;
+      const { edges, rgb } = borderSpec(b);
+      if (!edges) return 0;
+      const key = rgb ? `${edges}#${rgb}` : edges;
       if (seen.has(key)) return seen.get(key);
-      const xml = frame(key.includes("l"), key.includes("r"), key.includes("t"), key.includes("b"));
       seen.set(key, list.length);
-      list.push(xml);
+      list.push(frame(edges, rgb));
       return list.length - 1;
     },
     xml: () => list,

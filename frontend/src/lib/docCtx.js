@@ -33,9 +33,15 @@ export const docBuyer = (b) => (b ? {
   id: b.id, name: b.name, brand: b.brand, country: b.country, curr: b.curr,
   shipTo: b.ship_to, addr: b.addr, orderNo: b.order_no,
   ourReference: b.our_reference || "",
+  /* The buyer's own letterhead — what their purchase order (document 17)
+     prints around the goods. Blank until Setup fills it in. */
+  tagline: b.tagline || "", acCode: b.ac_code || "", abn: b.abn || "", acn: b.acn || "",
+  tel: b.tel || "", fax: b.fax || "", web: b.web || "", email: b.email || "", poBox: b.po_box || "",
+  logo: b.logo || "",
 } : {
   name: "—", brand: "—", country: "—", curr: "USD", shipTo: "", addr: "",
   orderNo: "", ourReference: "",
+  tagline: "", acCode: "", abn: "", acn: "", tel: "", fax: "", web: "", email: "", poBox: "", logo: "",
 });
 
 export const docSupplier = (s) => ({

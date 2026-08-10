@@ -9,7 +9,7 @@ No seed / dummy rows are created — every record is entered through the API.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, String, Integer, Float, ForeignKey, JSON, DateTime
+from sqlalchemy import Boolean, Column, String, Text, Integer, Float, ForeignKey, JSON, DateTime
 from sqlalchemy.orm import relationship
 
 from .database import Base
@@ -148,6 +148,22 @@ class Buyer(Base):
     # Our own file reference for this buyer — prints under the shipping marks
     # on the supplier purchase order and carries into the Excel exports.
     our_reference = Column(String, default="")
+    # The buyer's own letterhead, as it appears on their purchase order — the
+    # form document 17 reproduces. `ac_code` is the account code they file us
+    # under; the rest is the contact strip along the foot of their paper.
+    tagline = Column(String, default="")
+    ac_code = Column(String, default="")
+    abn = Column(String, default="")
+    acn = Column(String, default="")
+    tel = Column(String, default="")
+    fax = Column(String, default="")
+    web = Column(String, default="")
+    email = Column(String, default="")
+    po_box = Column(String, default="")
+    # The mark above their name on that same letterhead — a data: URL (Setup's
+    # upload reads the file straight into one) or a path under public/. Kept as
+    # Text since a data: URL runs well past String's practical length.
+    logo = Column(Text, default="")
 
 
 class Item(Base):
