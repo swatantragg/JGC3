@@ -170,6 +170,13 @@ const FONTS = [
   { key: "ref9b", xml: '<font><b/><sz val="9"/><name val="Arial"/><family val="2"/></font>' },
   { key: "ref9bu", xml: '<font><b/><u/><sz val="9"/><name val="Arial"/><family val="2"/></font>' },
   { key: "brandk", xml: '<font><b/><sz val="18"/><name val="Centaur"/><family val="1"/></font>' },
+  /* The packing book (19) is typed in colour where the invoice book (18) is
+     not: its title and the answers customs reads off it are red, its labels
+     blue. Their file stores these as Excel's indexed palette — 10, 12 and 8 —
+     which is the same ink as the rgb below. */
+  { key: "ref9r", xml: '<font><b/><sz val="9"/><color rgb="FFFF0000"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "ref9bb", xml: '<font><b/><sz val="9"/><color rgb="FF0000FF"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "ref9bl", xml: '<font><sz val="9"/><color rgb="FF0000FF"/><name val="Arial"/><family val="2"/></font>' },
   /* The supplier purchase order is a printed letter, not a table: their
      letterhead is Centaur in maroon, the form's labels are blue, and a few
      words on it are underlined. */
@@ -452,25 +459,39 @@ export function buildXLSX(workbook) {
   const sheetXmls = sheets.map((s) => sheetXml(s, styleOf));
 
   /* Pictures. A sheet carrying one gets a drawing part of its own, the image
-     goes into xl/media, and the worksheet gets a rels file pointing at it. */
-  const pics = sheets.map((s, i) => (s.image?.data ? { sheet: i, img: s.image, n: 0 } : null)).filter(Boolean);
+     goes into xl/media, and the worksheet gets a rels file pointing at it.
+
+     The bytes are stored once however many sheets show them: the letterhead
+     mark on a three-sheet book is one media part pointed at three times, which
+     is how the client's own files hold it — storing it per sheet would treble
+     the size of the download for nothing. */
+  const media = [];
+  const mediaFor = (img) => {
+    let m = media.find((x) => x.data === img.data && x.ext === (img.ext || "png"));
+    if (!m) { m = { data: img.data, ext: img.ext || "png", n: media.length + 1 }; media.push(m); }
+    return m;
+  };
+  const pics = sheets.map((s, i) => (s.image?.data
+    ? { sheet: i, img: s.image, media: mediaFor(s.image) } : null)).filter(Boolean);
   pics.forEach((p, k) => { p.n = k + 1; });
-  const picFiles = pics.flatMap((p) => [
-    { name: `xl/media/image${p.n}.${p.img.ext || "png"}`, data: p.img.data },
-    { name: `xl/drawings/drawing${p.n}.xml`, data: utf8(drawingXml(p.img)) },
-    {
-      name: `xl/drawings/_rels/drawing${p.n}.xml.rels`,
-      data: utf8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${p.n}.${p.img.ext || "png"}"/></Relationships>`),
-    },
-    {
-      name: `xl/worksheets/_rels/sheet${p.sheet + 1}.xml.rels`,
-      data: utf8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+  const picFiles = [
+    ...media.map((m) => ({ name: `xl/media/image${m.n}.${m.ext}`, data: m.data })),
+    ...pics.flatMap((p) => [
+      { name: `xl/drawings/drawing${p.n}.xml`, data: utf8(drawingXml(p.img)) },
+      {
+        name: `xl/drawings/_rels/drawing${p.n}.xml.rels`,
+        data: utf8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${p.media.n}.${p.media.ext}"/></Relationships>`),
+      },
+      {
+        name: `xl/worksheets/_rels/sheet${p.sheet + 1}.xml.rels`,
+        data: utf8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdDr" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${p.n}.xml"/></Relationships>`),
-    },
-  ]);
+      },
+    ]),
+  ];
   const picTypes = pics.length
-    ? [...new Set(pics.map((p) => p.img.ext || "png"))].map((e) => `<Default Extension="${e}" ContentType="image/${e === "jpg" ? "jpeg" : e}"/>`).join("")
+    ? [...new Set(media.map((m) => m.ext))].map((e) => `<Default Extension="${e}" ContentType="image/${e === "jpg" ? "jpeg" : e}"/>`).join("")
       + pics.map((p) => `<Override PartName="/xl/drawings/drawing${p.n}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`).join("")
     : "";
 

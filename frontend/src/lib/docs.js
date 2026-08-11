@@ -3635,15 +3635,16 @@ const ciP2Body = (p2) => Math.max(CI_P2_BODY, p2.length);
 /* Where a given HSN's goods sit, as the few contiguous runs of rows a SUM can
    name — a code can be split over two bands and both pages, which is why the
    breakup's formulas are built rather than written. */
-function hsnRuns(lines, top, hsn) {
+function lineRuns(lines, top, ok) {
   const runs = [];
   lines.forEach((l, i) => {
-    if (l.kind !== "item" || l.band.hsn !== hsn) return;
+    if (l.kind !== "item" || !ok(l)) return;
     const at = top + i, last = runs[runs.length - 1];
     if (last && at === last[1] + 1) last[1] = at; else runs.push([at, at]);
   });
   return runs;
 }
+const hsnRuns = (lines, top, hsn) => lineRuns(lines, top, (l) => l.band.hsn === hsn);
 const rangeRefs = (runs, col, sheet) =>
   runs.map(([a, b]) => `${sheet ? `${sheet}!` : ""}${col}${a}:${col}${b}`).join(",");
 
@@ -3684,22 +3685,34 @@ const CI_DESCRIBE = {
   ppm: "PLASTIC (PP) MOULDED FITTINGS", grn: "PLASTIC (PA) MOULDED FITTINGS",
   box: "CORRUGATED BOXES",
 };
-function goodsWrapped(bands, width, lines) {
-  const seen = [];
-  bands.forEach((b) => { const t = CI_DESCRIBE[b.key]; if (t && !seen.includes(t)) seen.push(t); });
+/* A line of prose broken to the width of the box it is typed into, and given
+   back as the fixed number of lines that box has — a short description leaves
+   the rest of them blank rather than shortening the box. */
+function wrapTo(text, width, lines) {
   const out = [];
-  seen.join(", ").split(" ").forEach((w) => {
+  String(text || "").split(/\s+/).filter(Boolean).forEach((w) => {
     const at = out.length - 1;
     if (at >= 0 && `${out[at]} ${w}`.length <= width) out[at] += ` ${w}`;
     else out.push(w);
   });
+  /* Nothing is ever dropped. What will not fit in the lines the box has runs
+     on along the last of them — the cell is set to shrink, so it is squeezed
+     into the box rather than lost off the end of it. */
+  if (out.length > lines) out.splice(lines - 1, out.length, out.slice(lines - 1).join(" "));
   return Array.from({ length: lines }, (_, i) => out[i] || "");
 }
+function goodsWrapped(bands, width, lines) {
+  const seen = [];
+  bands.forEach((b) => { const t = CI_DESCRIBE[b.key]; if (t && !seen.includes(t)) seen.push(t); });
+  return wrapTo(seen.join(", "), width, lines);
+}
 
-/* A code that is all digits is a customs tariff number and their sheet holds
-   it as one, so it is written back as a number rather than as text. */
-const codeCell = (code, s) => (/^\d+$/.test(String(code || "").trim())
-  ? { v: Number(code), t: "n", s } : { v: String(code || ""), s });
+/* An entry that is all digits is a figure on their sheets rather than a label —
+   a customs tariff number, a metric size, a length in millimetres — and is
+   written back as one. Anything else (a part code, an inch size like 1/2") is
+   text, as it has to be. */
+const numOrText = (v, s) => (/^\d+$/.test(String(v || "").trim())
+  ? { v: Number(v), t: "n", s } : { v: String(v || ""), s });
 
 const ciMarks = (ctx, rows) => {
   const s = ctx.inv.ship || {};
@@ -3707,6 +3720,18 @@ const ciMarks = (ctx, rows) => {
   const boxes = sum(rows, "boxes");
   const prefix = String(s.marks || "").replace(/[\d\-–\s]+/g, " ").trim() || "GDW";
   return { prefix, start, end: start + Math.max(0, boxes - 1) };
+};
+
+/* The letterhead mark on the customs books (18 and 19). Both files anchor it in
+   the same place — just inside the top left corner of the form, three quarters
+   of an inch square, with the exporter's name set right against it, which is
+   why that whole block is typed right-aligned. Sizes are EMU, 914400 to the
+   inch. Null while the image is still loading, and the form simply prints
+   without it, as it did before. */
+const CI_LOGO = { col: 0, colOff: 66675, row: 1, rowOff: 76200, cx: 733425, cy: 733425 };
+const formLogo = (place = {}) => {
+  const img = logoImage();
+  return img ? { ...img, ...CI_LOGO, ...place } : null;
 };
 
 function customsInvoiceSheets(ctx) {
@@ -3881,7 +3906,7 @@ function customsInvoiceSheets(ctx) {
     const { band, r } = line;
     const rate = band.per100 ? r.fobPc * 100 : r.fobPc;
     const gst = gstRate(r.it.hsn);
-    const cells = [[1, { v: "", s: G.colA }], [1, codeCell(r.it.code, G.code)],
+    const cells = [[1, { v: "", s: G.colA }], [1, numOrText(r.it.code, G.code)],
       [band.wide ? 2 : 1, { v: r.it.size || "", s: G.ctr }]];
     if (band.len) cells.push([1, { v: r.it.length || "", s: G.ctr }]);
     else if (!band.wide) cells.push([1, { v: "", s: G.ctr }]);
@@ -4073,7 +4098,7 @@ function customsInvoiceSheets(ctx) {
       [1, abox("KGS", A, { align: "center" })], [1, abox("US$", A, { align: "center" })]]);
     band.rows.forEach((r) => {
       const at = ga.at() + 1;
-      ga.row([[1, codeCell(r.it.code, { ...A, border: "box" })], [1, { v: "", s: { ...A, border: "box" } }],
+      ga.row([[1, numOrText(r.it.code, { ...A, border: "box" })], [1, { v: "", s: { ...A, border: "box" } }],
         [1, abox(r.pieces, A, { fmt: "#,##0", align: "center" })],
         [1, { v: band.per100 ? r.fobPc * 100 : r.fobPc, t: "n", s: { ...A, border: "box", fmt: CI_USD } }],
         [1, { f: `C${at}*D${at}${band.per100 ? "/100" : ""}`, s: { ...A, border: "box", fmt: CI_USD } }],
@@ -4095,11 +4120,14 @@ function customsInvoiceSheets(ctx) {
     [1, { f: aSum("F"), s: { ...AB, border: "box", fmt: "#,##0.000" } }],
     [1, { v: "", s: { ...A, border: "box" } }]]);
 
+  /* The letterhead mark, on each of the three sheets as their file has it. The
+     annexure is a wider sheet and carries it over its own title instead. */
   return [
-    fitSheet({ name: "Page1", rows: g1.rows, merges: g1.merges, heights: g1.heights, ...SHEET }, { widen: false }),
-    fitSheet({ name: "Page2", rows: g2.rows, merges: g2.merges, heights: g2.heights, ...SHEET }, { widen: false }),
+    fitSheet({ name: "Page1", rows: g1.rows, merges: g1.merges, heights: g1.heights, image: formLogo(), ...SHEET }, { widen: false }),
+    fitSheet({ name: "Page2", rows: g2.rows, merges: g2.merges, heights: g2.heights, image: formLogo(), ...SHEET }, { widen: false }),
     fitSheet({
       name: "Annx", rows: ga.rows, merges: ga.merges, heights: ga.heights,
+      image: formLogo({ col: 5, colOff: 371475 }),
       widths: [12.6640625, 30.83203125, 13.83203125, 13.33203125, 14.33203125, 13.33203125, 11.5],
       defaultColWidth: 13.1640625, defaultRowHeight: 15, colStyle: A,
       page: {
@@ -4134,16 +4162,25 @@ function customsInvoiceHtml(ctx) {
   const lb = (v, span = 1) => td(esc(v), "k", span);
   const vl = (v, span = 1) => td(esc(v), "", span);
 
+  /* The letterhead: the mark alongside the name, the trading line under it and
+     the address below that — one block down the left of the form, as the sheet
+     anchors it across rows 2 to 7, with the boxes on the right keeping their
+     own rows beside it. */
+  const letterhead = `<td class="lhead lf" rowspan="6" colspan="5">
+    <img class="pllogo" src="${LOGO_SRC}" alt="">
+    <div class="brand">${esc(E.name)}</div>
+    ${[E.sub, addr[0], addr[1], [E.tel && `Tel: ${E.tel}`, E.email && `E-Mail: ${E.email}`].filter(Boolean).join(" ")]
+    .map((l) => `<div class="addr">${esc(l || "")}</div>`).join("")}</td>`;
+
   const head = () => `
     <tr class="nb"><td class="nb mer">MERCHANT</td>${td("INVOICE", "nb ttl bb", 10)}</tr>
-    <tr><td class="brand lt" rowspan="2" colspan="5">${esc(E.name)}</td>
+    <tr>${letterhead}
       ${td(esc("Invoice No. "), "k lt")}${td(esc(invRef), "rt", 4)}${td(esc("Exporter's Ref."), "k rt")}</tr>
     <tr>${td("Date:", "k lf")}${td("", "rt0", 4)}${td(esc(E.iec ? `IEC ${E.iec}` : ""), "rt0")}</tr>
-    <tr>${td(esc(E.sub || ""), "lf", 5)}${td(esc("Buyers Order No: "), "k lf", 2)}${td(esc(orderRef), "rt0", 4)}</tr>
-    <tr>${td(esc(addr[0] || ""), "lf", 5)}${td("", "lf", 2)}${td("", "rt0", 4)}</tr>
-    <tr>${td(esc(addr[1] || ""), "lf", 5)}${td("Other Reference(s):", "k lf", 2)}${td(esc(s.otherRef || ""), "rt0", 4)}</tr>
-    <tr>${td(esc([E.tel && `Tel: ${E.tel}`, E.email && `E-Mail: ${E.email}`].filter(Boolean).join(" ")), "lf bb", 5)}
-      ${td("", "lf", 2)}${td("", "rt0", 4)}</tr>
+    <tr>${td(esc("Buyers Order No: "), "k lf", 2)}${td(esc(orderRef), "rt0", 4)}</tr>
+    <tr>${td("", "lf", 2)}${td("", "rt0", 4)}</tr>
+    <tr>${td("Other Reference(s):", "k lf", 2)}${td(esc(s.otherRef || ""), "rt0", 4)}</tr>
+    <tr>${td("", "lf", 2)}${td("", "rt0", 4)}</tr>
     <tr>${td("On Account &amp; Risks of:", "k lt", 2)}${td("", "lt0", 3)}${td("IRN No", "k lt")}${td(esc(irn.slice(0, 38)), "rt", 5)}</tr>
     <tr>${td(esc(b.name ? `Messrs ${b.name},` : ""), "lf", 5)}${td("", "lf")}${td(esc(irn.slice(38)), "rt0", 5)}</tr>
     <tr>${td(esc(b.brand ? `T/A ${b.brand}` : ""), "lf", 5)}${td("Ack No", "k lf")}${td(esc(s.ackNo || ""), "rt0", 5)}</tr>
@@ -4308,6 +4345,573 @@ B["18"] = (ctx) => ({
   sheets: customsInvoiceSheets(ctx),
   page: "portrait",
 });
+/* Doc 19 · Packing list — against 19-Packing-List.xlsx, the list that travels
+   with the customs invoice and tells the port what is in each package.
+
+   Their file is two sheets, one A4 each at 86%, nine columns wide and ruled as
+   one continuous frame: solid down the columns, hairline between the goods.
+   The head of it is the customs invoice's head over again — the same boxes in
+   the same order — because the two are typed out of the one book.
+
+   The goods are banded by what they are, and a band is headed with the columns
+   it actually needs: the pipes carry a length and travel in packages, the
+   moulded fittings have no length and travel in cartons, and the cartons
+   themselves go in bundles — which is why the same quantity column is headed
+   three different ways down the one form. Page 1 carries its running weight
+   down as "BALANCE C/F…." and page 2 brings it back as "BAL B/F…", typed on
+   the same line as the band it carries on with rather than on one of its own;
+   the total and the break-up of weights by material sit at the foot of page 2.
+
+   Everything on it stays live. Only the pieces and the packing are typed: the
+   package count is their own `pieces / qty per package`, and the two weights
+   are that package count against the master's weight per package — so a
+   corrected quantity re-totals its line, both pages and the break-up with it.
+   The head of page 2 is a reference back to page 1, cell for cell, as their
+   own sheet has it; the two pages cannot then drift apart. */
+
+/* Their weights are typed to three places and carry no separators at all. */
+const PL_WT = "0.000";
+
+/* The bands their list prints, in its order — the same five families the
+   customs invoice (18) bands by, with the package each family travels in.
+   The noun changes down the form and the quantity column is headed after it. */
+const PL_BANDS = [
+  ["mxm", "PLASTIC (PP) EXTRUDED PIPES : BOTH SIDE THREADED PIPES", "PKGS", "Qty/Pkg-Pcs"],
+  ["mxf", "PLASTIC (PP) EXTRUDED PIPES : M / F THREADED PIPES", "PKGS", "Qty/Pkg-Pcs"],
+  ["ppm", "PLASTIC (PP) MOULDED FITTINGS", "CARTONS", "Qty/Ctn-Pcs"],
+  ["grn", "PLASTIC (PA) MOULDED FITTINGS", "CARTONS", "Qty/Ctn-Pcs"],
+  ["box", "CORRUGATED BOXES", "BUNDLES", "Qty/BDL-Pcs"],
+];
+
+/* The break-up at the foot of page 2 totals by material rather than by band:
+   the two threads of extruded pipe are one line of it, as their sheet has it.
+   All four lines are printed whether or not the shipment carries them, because
+   the form is a fixed block and a nil line is the honest answer. */
+const PL_WEIGHTS = [
+  ["PLASTIC (PP) EXTRUDED PIPES", ["mxm", "mxf"]],
+  ["PLASTIC (PP) MOULDED FITTINGS", ["ppm"]],
+  ["PLASTIC (PA) MOULDED FITTINGS", ["grn"]],
+  ["CORRUGATED BOXES", ["box"]],
+];
+
+/* The form's own frame. Page 1 holds this many lines of goods between the head
+   of the list and the weight it carries forward; page 2 opens on the line that
+   brings it back and holds this many under it. A band's heading and its column
+   header each take one of them, as they do on their sheet. */
+const PL_TOP = 25;                     // first row of the goods frame, both pages
+const PL_P1_BODY = 45;
+const PL_P2_TOP = 26;                  // page 2's first goods line — 25 is the B/F
+const PL_P2_BODY = 42;
+/* A consignment longer than the two pages hold runs page 2 on and pushes its
+   totals down rather than losing the lines off the end. */
+const plP2Body = (p2) => Math.max(PL_P2_BODY, p2.length);
+
+function packingBands(ctx) {
+  const by = new Map();
+  L(ctx).forEach((r) => {
+    const k = familyOf(r.it);
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(r);
+  });
+  return PL_BANDS.filter(([k]) => by.has(k)).map(([key, head, pkg, per]) => {
+    const rows = by.get(key);
+    // The pipes carry a length in its own column; a family that has none gives
+    // the size that column as well, which is what the cartons need — theirs is
+    // three dimensions.
+    const len = rows.some((r) => String(r.it.length || "").trim());
+    return { key, rows, head, pkg, per, len, size: len ? "SIZE (MM/IN)" : "SIZE (MM)" };
+  });
+}
+/* What a band's column header says. Two bands that say the same thing do not
+   need it ruled twice over a page break. */
+const plShape = (band) => `${band.len}|${band.pkg}|${band.per}`;
+
+/* One line of the frame per band heading, per column header and per item, in
+   the order the form prints them, split over the two pages. */
+function packingLayout(bands) {
+  const all = [];
+  bands.forEach((band) => {
+    all.push({ kind: "head", band });
+    all.push({ kind: "cols", band });
+    band.rows.forEach((r) => all.push({ kind: "item", band, r }));
+  });
+  let p1 = all.slice(0, PL_P1_BODY);
+  let p2 = all.slice(PL_P1_BODY);
+  if (!p2.length) return { p1, carry: null, p2 };
+  const carry = p2[0].band;
+  /* A heading left at the foot of page 1 with nothing under it heads nothing:
+     it goes over the break with its band and the line it sat on is left blank,
+     as their sheet leaves it. Either way page 2 types that heading on the line
+     the balance is brought forward on rather than spending another on it. */
+  if (p2[0].kind === "cols") p1 = p1.slice(0, -1);
+  else if (p2[0].kind === "head") p2 = p2.slice(1);
+  /* The columns are ruled again only where their shape changed over the break —
+     the reader has just seen them at the foot of page 1. */
+  const held = [...p1].reverse().find((l) => l.kind === "cols");
+  if (p2[0]?.kind === "cols" && held && plShape(held.band) === plShape(carry)) p2 = p2.slice(1);
+  return { p1, carry, p2 };
+}
+
+/* What is inside the packages, worded as their packing list words it — the two
+   moulded families named together, "(PP) & (PA) MOULDED FITTINGS", so the whole
+   description still fits the two lines the form types it on. The customs
+   invoice (18) spells them out separately; this is the same goods, their
+   shorter phrase for them. */
+function packingGoods(bands) {
+  const has = (k) => bands.some((x) => x.key === k);
+  const moulded = [has("ppm") && "(PP)", has("grn") && "(PA)"].filter(Boolean).join(" & ");
+  const parts = [
+    (has("mxm") || has("mxf")) && "PLASTIC (PP) EXTRUDED PIPES",
+    moulded && `PLASTIC ${moulded} MOULDED FITTINGS`,
+    has("box") && "CORRUGATED BOXES",
+  ].filter(Boolean);
+  // Their prose joins the list with commas and the last of it with "&".
+  return parts.length < 2 ? parts.join("") : `${parts.slice(0, -1).join(", ")} & ${parts.at(-1)}`;
+}
+
+/* The consignment as the form describes it in prose — what it is made up of
+   and what is inside it, broken over the two lines their form types it on. */
+const packingDescribe = (ctx, bands, rows) => wrapTo(
+  `${ctx.inv.ship?.pkgs || `${sum(rows, "boxes")} PACKAGES`} CONTAINING ${packingGoods(bands)}`, 70, 2,
+);
+
+function packingListSheets(ctx) {
+  const E = ctx.EXPORTER, b = ctx.buyer, s = ctx.inv.ship || {};
+  const rows = L(ctx);
+  const bands = packingBands(ctx);
+  const { p1, carry, p2 } = packingLayout(bands);
+  const marks = ciMarks(ctx, rows);
+  const desc = packingDescribe(ctx, bands, rows);
+
+  /* Their whole form is Arial 9 — only the address block above it is the 10pt
+     of the letterhead — and every cell shrinks rather than wraps, so a long
+     entry stays on its one ruled line. */
+  const F = { font: "ref9", border: false, valign: "center", shrink: true };
+  /* Unlike the invoice book, this one is typed in colour, and the colour means
+     something: the form's own printed labels are blue, the answers customs
+     reads straight off the head of it — origin, destination, port of loading —
+     are red, and so is the title. What the operator types in against a label
+     (the invoice number, the vessel, the container) stays black, as does the
+     whole of the goods table. The letterhead is the house maroon over the blue
+     the address is set in. */
+  const C = {
+    txt: F,                                          // black — everything typed in
+    lbl: { ...F, font: "ref9bb" },                   // blue — the form's own labels
+    key: { ...F, font: "ref9b" },                    // black bold — the marks boxes
+    ans: { ...F, font: "ref9r" },                    // red — what customs reads off it
+    ttl: { ...F, font: "ref9r", align: "center" },
+    brand: { ...F, font: "brand", align: "right" },  // maroon Centaur, the letterhead
+    sub: { ...F, font: "refmn", align: "right" },    // maroon, the line under it
+    addr: { ...F, font: "refbl", align: "right" },   // blue, the address and the phone
+    sign: { ...F, font: "ref9bl", align: "right" },  // blue, the line it is signed for
+    ctr: { ...F, align: "center" },
+    rgt: { ...F, align: "right" },
+  };
+  /* The frame: solid down the columns, and whatever each row rules across. */
+  const rule = (t, b2, extra = {}) =>
+    ({ ...F, border: { l: "thin", r: "thin", t, b: b2 }, ...extra });
+  const G = {
+    band: rule("thin", "thin"),                       // a band heading, and its columns
+    bandL: rule("thin", "thin", { align: "left" }),
+    cols: rule("thin", "thin", { align: "center" }),
+    open: rule("", ""),                               // the columns only — a blank line
+    sr: rule("hair", "hair"),
+    ctr: rule("hair", "hair", { align: "center" }),
+    wt: rule("hair", "hair", { align: "center", fmt: PL_WT }),
+    tot: { ...F, border: "box", align: "center", fmt: PL_WT },
+  };
+  const blank = (n, s2 = C.txt) => Array.from({ length: n }, () => [1, { v: "", s: s2 }]);
+
+  /* ---- the head of the list, rows 1-24 ----------------------------------- */
+  const invRef = `${ctx.inv.invoiceNo || ""}${ctx.inv.date ? ` DT ${ddmm(ctx.inv.date)}` : ""}`;
+  const orderRef = b.orderNo
+    ? `${b.orderNo}${ctx.inv.date ? ` DT ${ddmm(ctx.inv.date)}` : ""}` : poHeaderList(ctx);
+  const blLine = s.blNo ? `BL : ${s.blNo}${s.blDate ? `  DT. ${ddmm(s.blDate)}` : ""}` : "";
+  const addr = addrLines(E), bAddr = addrLines({ addr: b.addr });
+
+  function headBlock(grid) {
+    const { row } = grid;
+    row([[9, { v: "PACKING LIST", s: { ...C.ttl, border: "box" } }]]);
+    row([[4, { v: E.name, s: { ...C.brand, border: "lt" } }, 1],
+      [2, { v: "Invoice No. ", s: { ...C.lbl, border: "lt" } }],
+      [3, { v: invRef, s: { ...C.txt, border: "rt" } }]], 12.75);
+    // The name box runs down into this row, so the columns it covers are left
+    // as single cells here rather than merged a second time.
+    row([[1, { v: "", s: { ...C.txt, border: "l" } }], ...blank(2),
+      [1, { v: "", s: { ...C.txt, border: "r" } }],
+      [2, { v: "", s: { ...C.txt, border: "lb" } }], [3, { v: "", s: { ...C.txt, border: "rb" } }]], 12.75);
+    row([[4, { v: E.sub || "", s: { ...C.sub, border: "lr" } }],
+      [2, { v: "Buyers Order No: ", s: { ...C.lbl, border: "lt" } }],
+      [3, { v: orderRef, s: { ...C.txt, border: "lrt" } }]], 12.75);
+    row([[4, { v: addr[0] || "", s: { ...C.addr, border: "lr" } }],
+      [2, { v: "", s: { ...C.txt, border: "lb" } }], [3, { v: "", s: { ...C.txt, border: "lrb" } }]], 12.75);
+    row([[4, { v: addr[1] || "", s: { ...C.addr, border: "lr" } }],
+      [2, { v: "Other Reference(s):", s: { ...C.lbl, border: "lt" } }],
+      [3, { v: s.otherRef || "", s: { ...C.txt, border: "lrt" } }]], 12.75);
+    row([[4, { v: [E.tel && `Tel: ${E.tel}`, E.email && `E-Mail: ${E.email}`].filter(Boolean).join(" "), s: { ...C.addr, border: "lrb" } }],
+      [2, { v: "", s: { ...C.txt, border: "lb" } }], [3, { v: "", s: { ...C.txt, border: "lrb" } }]], 12.75);
+    row([[3, { v: "On Account & risks of", s: { ...C.lbl, border: "lt" } }],
+      [1, { v: "", s: { ...C.txt, border: "rt" } }],
+      [5, { v: blLine, s: { ...C.lbl, border: "lrt" } }]]);
+    row([[4, { v: b.name ? `Messrs. ${b.name},` : "", s: { ...C.txt, border: "lr" } }],
+      [5, { v: "", s: { ...C.txt, border: "lr" } }]]);
+    row([[4, { v: b.brand ? `T/A ${b.brand},` : "", s: { ...C.txt, border: "lr" } }],
+      [5, { v: s.vessel ? `Shipped per: ${s.vessel}` : "", s: { ...C.txt, border: "lr" } }]]);
+    row([[4, { v: bAddr[0] || "", s: { ...C.txt, border: "lr" } }],
+      [5, { v: "", s: { ...C.txt, border: "lr" } }]]);
+    row([[4, { v: [bAddr[1], b.country && `(${b.country})`].filter(Boolean).join(" "), s: { ...C.txt, border: "lr" } }],
+      [5, { v: "", s: { ...C.txt, border: "lrb" } }]]);
+    row([[4, { v: "", s: { ...C.txt, border: "lr" } }],
+      [3, { v: "Country of Origin", s: { ...C.lbl, border: "lrt", align: "center" } }],
+      [2, { v: "Country of Final Destination", s: { ...C.lbl, border: "lrt", align: "center" } }]]);
+    row([[4, { v: "", s: { ...C.txt, border: "lr" } }],
+      [3, { v: E.origin || "INDIA", s: { ...C.ans, border: "lrb", align: "center" } }],
+      [2, { v: (s.finalDest || b.country || "").toUpperCase(), s: { ...C.ans, border: "lrb", align: "center" } }]]);
+    row([[4, { v: "", s: { ...C.txt, border: "lr" } }],
+      [2, { v: "Shipping Marks ", s: { ...C.lbl, border: "l" } }],
+      [3, { v: "CONTAINER NO : ", s: { ...C.key, border: "lrt" } }]]);
+    row([[3, { v: "Pre-Carraige by:", s: { ...C.lbl, border: "lt" } }],
+      [1, { v: "Place of Receipt by Pre-Carraige", s: { ...C.lbl, border: "lrt" } }],
+      [2, { v: marks.prefix, s: { ...C.key, border: "l" } }],
+      [3, { v: s.container || "", s: { ...C.key, border: "lr" } }]]);
+    /* The marks their form types under the prefix: the range this consignment
+       takes out of the running series, over the serial it ends on. */
+    row([[3, { v: s.preCarriage || "", s: { ...C.txt, border: "lb" } }],
+      [1, { v: s.receiptPlace || "", s: { ...C.txt, border: "lrb" } }],
+      [2, { v: `${marks.start} - ${marks.end} / ${marks.end}`, s: { ...C.txt, border: "l" } }],
+      [3, { v: "", s: { ...C.key, border: "lrb" } }]]);
+    row([[3, { v: "Shipped per:", s: { ...C.lbl, border: "lrt" } }],
+      [1, { v: "Port of Loading:", s: { ...C.lbl, border: "lrt" } }],
+      [2, { v: "", s: { ...C.txt, border: "lr" } }],
+      [3, { v: "SEAL NO : ", s: { ...C.key, border: "lr" } }]]);
+    row([[3, { v: s.vessel || "", s: { ...C.txt, border: "lrb" } }],
+      [1, { v: s.pol || "", s: { ...C.ans, border: "lrb", align: "center" } }],
+      [2, { v: "", s: { ...C.txt, border: "lr" } }],
+      [3, { v: s.seal || "", s: { ...C.key, border: "lr" } }]]);
+    row([[3, { v: "Port of Discharge:", s: { ...C.lbl, border: "lrt" } }],
+      [1, { v: "Final Destination:", s: { ...C.lbl, border: "lrt" } }],
+      [2, { v: "", s: { ...C.txt, border: "lr" } }], [3, { v: "", s: { ...C.txt, border: "lr" } }]]);
+    row([[3, { v: (s.pod || b.shipTo || "").toUpperCase(), s: { ...C.txt, border: "lrb", align: "center" } }],
+      [1, { v: (s.finalDest || s.pod || b.shipTo || "").toUpperCase(), s: { ...C.txt, border: "lrb", align: "center" } }],
+      [2, { v: "", s: { ...C.txt, border: "lrb" } }], [3, { v: "", s: { ...C.txt, border: "lrb" } }]]);
+  }
+
+  /* Rows 22-24 head the goods, and carry the description of the consignment
+     beside them. Page 2 refers back rather than repeating it. */
+  function goodsHead(grid, mirror) {
+    const { row } = grid;
+    const D = (i) => (mirror
+      ? { f: `Page1!B${23 + i}`, s: { ...C.txt, border: "lr", align: "left" } }
+      : { v: desc[i], s: { ...C.txt, border: "lr", align: "left" } });
+    row([[1, { v: "Sr.Nos.", s: { ...C.key, border: "l" } }],
+      [5, { v: "No. & Kind of Pkgs                       Description of Goods", s: { ...C.key, border: "lrt", align: "left" } }],
+      [1, { v: "Quantity", s: { ...C.key, border: "lrt" } }],
+      [2, { v: "WEIGHT", s: { ...C.key, border: "rt", align: "center" } }]]);
+    row([[1, { v: "", s: { ...C.txt, border: "l" } }], [5, D(0)],
+      [1, { v: "", s: { ...C.txt, border: "lr" } }],
+      [1, { v: "NETT", s: { ...C.key, border: "box", align: "center" } }],
+      [1, { v: "GROSS", s: { ...C.key, border: "box", align: "center" } }]]);
+    row([[1, { v: "", s: { ...C.txt, border: "l" } }], [5, D(1)],
+      [1, { v: "", s: { ...C.txt, border: "l" } }],
+      [1, { v: "KGS", s: { ...C.key, border: "lrb", align: "center" } }],
+      [1, { v: "KGS", s: { ...C.key, border: "lrb", align: "center" } }]]);
+  }
+
+  /* One line of the goods frame, whichever page it lands on. */
+  function bodyLine(grid, line, at) {
+    const { row } = grid;
+    if (!line) { row(blank(9, G.open)); return; }
+    if (line.kind === "head") {
+      row([[1, { v: "", s: G.band }], [5, { v: line.band.head, s: G.bandL }],
+        ...blank(3, G.band)]);
+      return;
+    }
+    if (line.kind === "cols") {
+      const B2 = line.band;
+      const cells = [[1, { v: "SR NOS", s: G.band }], [1, { v: "CODE", s: G.cols }],
+        [B2.len ? 1 : 2, { v: B2.size, s: G.cols }]];
+      if (B2.len) cells.push([1, { v: "LEN (MM)", s: G.cols }]);
+      cells.push([1, { v: B2.per, s: G.band }], [1, { v: B2.pkg, s: G.cols }],
+        [1, { v: "PIECES", s: G.cols }], ...blank(2, G.band));
+      row(cells);
+      return;
+    }
+    const { band, r } = line;
+    const cells = [[1, { v: r.range, s: G.sr }], [1, numOrText(r.it.code, G.ctr)],
+      [band.len ? 1 : 2, numOrText(r.it.size, G.ctr)]];
+    if (band.len) cells.push([1, numOrText(r.it.length, G.ctr)]);
+    cells.push(
+      [1, { v: r.packing, t: "n", s: G.ctr }],
+      /* Their own formula: the packages a line takes are its pieces over what
+         one package holds, rounded up — a part-filled package is still one.
+         Where the master does not say how many go in a package, the count
+         actually packed stands, so the weights below never quietly go to nil
+         on a half-filled master. */
+      [1, { f: `IF(E${at}=0,${r.boxes},ROUNDUP(G${at}/E${at},0))`, s: G.ctr }],
+      [1, { v: r.pieces, t: "n", s: G.ctr }],
+      [1, { f: `F${at}*${Number(r.it.netPerBox) || 0}`, s: G.wt }],
+      [1, { f: `F${at}*${Number(r.it.grossPerBox) || 0}`, s: G.wt }],
+    );
+    row(cells);
+  }
+
+  /* The line the list is carried forward or totalled on. */
+  function totalLine(grid, label, last) {
+    grid.row([...blank(3, { ...C.txt, border: "lb" }),
+      [1, { v: label, s: { ...C.key, border: "rb", align: "right" } }],
+      ...blank(3, { ...C.txt, border: "lrb" }),
+      [1, { f: `SUM(H${PL_TOP}:H${last})`, s: G.tot }],
+      [1, { f: `SUM(I${PL_TOP}:I${last})`, s: G.tot }]]);
+  }
+
+  /* The space the list is signed in, at the foot of page 1 — the name it is
+     signed for, four rows clear for the stamp, then who signs it. */
+  function signBlock(grid, forText) {
+    const { row } = grid;
+    const left = (edge) => [[1, { v: "", s: { ...C.txt, border: `l${edge}` } }],
+      ...blank(3, { ...C.txt, border: edge }), [1, { v: "", s: { ...C.txt, border: `r${edge}` } }]];
+    row([...left(""), [4, { v: forText, s: { ...C.sign, border: "lrt" } }]], 12.75);
+    row([...left(""), [4, { v: "", s: { ...C.txt, border: "lr" } }, 2]], 12.75);
+    for (let i = 0; i < 2; i++) {
+      row([...left(""), [1, { v: "", s: { ...C.txt, border: "l" } }], ...blank(2),
+        [1, { v: "", s: { ...C.txt, border: "r" } }]], 12.75);
+    }
+    row([...left("b"), [2, { v: "", s: { ...C.txt, border: "lb" } }],
+      [2, { v: "PROPRIETOR", s: { ...C.txt, border: "rb", align: "right" } }]], 12.75);
+  }
+
+  const SHEET = {
+    widths: [11.83203125, 9.33203125, 9.33203125, 36.5, 12.6640625, 9.33203125,
+      9.1640625, 12.33203125, 12.33203125],
+    defaultColWidth: 9.33203125,
+    defaultRowHeight: 12,
+    colStyle: F,
+    page: {
+      paper: 9, orientation: "portrait", scale: 86,
+      margins: { left: 0.393701, right: 0.393701, top: 0.393701, bottom: 0.393701, header: 0, footer: 0 },
+    },
+  };
+
+  /* ---- Page 1 ------------------------------------------------------------ */
+  const g1 = formGrid(9);
+  headBlock(g1);
+  goodsHead(g1, false);
+  for (let i = 0; i < PL_P1_BODY; i++) bodyLine(g1, p1[i], PL_TOP + i);
+  const cfRow = PL_TOP + PL_P1_BODY;                     // the carried-forward line
+  totalLine(g1, "BALANCE C/F….", cfRow - 1);
+  const forRow = g1.at() + 1;
+  signBlock(g1, `FOR ${E.name}`.toUpperCase());
+  const propRow = g1.at();
+
+  /* ---- Page 2 — its head is Page 1's, cell for cell ---------------------- */
+  const g2 = formGrid(9);
+  g2.row([[7, { v: "PACKING LIST", s: { ...C.ttl, border: "ltb" } }],
+    [2, { v: "Page 2", s: { ...C.ans, border: "rtb", align: "right" } }]]);
+  const mirror = (r) => (g1.rows[r - 1] || []).map((c, i) => (c && (c.f || (c.v !== "" && c.v != null))
+    ? { s: c.s, f: `Page1!${colLetter(i + 1)}${r}` } : c));
+  for (let r = 2; r <= 21; r++) {
+    g2.rows.push(mirror(r));
+    g2.heights[r - 1] = g1.heights[r - 1];
+  }
+  // Rows 2-21's merges are Page 1's, and row 2's name box runs down into row 3.
+  g1.merges.filter((m) => {
+    const at = Number(/^[A-I](\d+):/.exec(m)?.[1]);
+    return at >= 2 && at <= 21;
+  }).forEach((m) => g2.merges.push(m));
+  goodsHead(g2, true);
+
+  /* The balance brought forward, with the band it carries on with typed on the
+     same line — page 2 has one line fewer of goods for it. */
+  g2.row([[1, { v: "", s: rule("", "thin") }],
+    [4, { v: carry ? carry.head : "", s: rule("", "thin", { align: "left" }) }],
+    [2, { v: "BAL B/F…", s: { ...rule("", "thin", { align: "right" }), font: "ref9b" } }],
+    [1, { f: `Page1!H${cfRow}`, s: { ...G.wt, border: { l: "thin", r: "thin" } } }],
+    [1, { f: `Page1!I${cfRow}`, s: { ...G.wt, border: { l: "thin", r: "thin" } } }]], 12.75);
+  const p2Body = plP2Body(p2);
+  for (let i = 0; i < p2Body; i++) bodyLine(g2, p2[i], PL_P2_TOP + i);
+  const totRow = PL_P2_TOP + p2Body;
+  totalLine(g2, "TOTAL WEIGHTS……….", totRow - 1);
+
+  /* ---- the break-up of weights, totalled by material ---------------------- */
+  const box = (v, st = C.txt, extra = {}) => ({ v, s: { ...st, border: "box", ...extra } });
+  g2.row([[3, box("BREAK-UP OF WEIGHTS")], [1, box("NET WT", C.txt, { align: "center" })],
+    [1, box("GROSS WT", C.txt, { align: "center" })],
+    [4, { f: `Page1!F${forRow}`, s: { ...C.txt, border: "lrt", align: "right" } }]], 12.75);
+
+  const first = g2.at() + 1;
+  PL_WEIGHTS.forEach(([label, keys], i) => {
+    const has = (l) => keys.includes(l.band.key);
+    const agg = (col) => {
+      const refs = [rangeRefs(lineRuns(p1, PL_TOP, has), col, "Page1"),
+        rangeRefs(lineRuns(p2, PL_P2_TOP, has), col, "")].filter(Boolean).join(",");
+      return refs ? `SUM(${refs})` : "0";
+    };
+    const edge = { l: "thin", r: "thin", t: i ? "hair" : "thin", b: "hair" };
+    const wt = (col) => ({ f: agg(col), s: { ...F, border: edge, align: "center", fmt: PL_WT } });
+    /* The space the list is signed in stands beside the break-up, as one box
+       down the four lines of it. */
+    const right = i === 0
+      ? [[4, { v: "", s: { ...C.txt, border: "lr" } }, PL_WEIGHTS.length - 1]]
+      : [[1, { v: "", s: { ...C.txt, border: "l" } }], ...blank(2),
+        [1, { v: "", s: { ...C.txt, border: "r" } }]];
+    g2.row([[3, { v: label, s: { ...F, border: edge } }], [1, wt("H")], [1, wt("I")], ...right], 12.75);
+  });
+  const last = g2.at();
+  const dbl = { ...F, border: { l: "thin", r: "thin", t: "thin", b: "double" }, align: "center", fmt: PL_WT };
+  g2.row([[3, box("TOTAL WEIGHTS")],
+    [1, { f: `SUM(D${first}:D${last})`, s: dbl }], [1, { f: `SUM(E${first}:E${last})`, s: dbl }],
+    [2, { v: "", s: { ...C.txt, border: "lb" } }],
+    [2, { f: `Page1!H${propRow}`, s: { ...C.txt, border: "rb", align: "right" } }]], 12.75);
+
+  // The letterhead mark, on both sheets as their file has it.
+  return [
+    fitSheet({ name: "Page1", rows: g1.rows, merges: g1.merges, heights: g1.heights, image: formLogo({ colOff: 57150, rowOff: 85726, cy: 704850 }), ...SHEET }, { widen: false }),
+    fitSheet({ name: "Page2", rows: g2.rows, merges: g2.merges, heights: g2.heights, image: formLogo({ colOff: 57150, rowOff: 85726 }), ...SHEET }, { widen: false }),
+  ];
+}
+
+/* The same form on screen and on paper. The worksheet above rules the frame
+   with cell borders; here the nine columns are one table per page, ruled by
+   the same rules, so the preview, the PDF and the .xlsx are the one document. */
+function packingListHtml(ctx) {
+  const E = ctx.EXPORTER, b = ctx.buyer, s = ctx.inv.ship || {};
+  const rows = L(ctx);
+  const bands = packingBands(ctx);
+  const { p1, carry, p2 } = packingLayout(bands);
+  const marks = ciMarks(ctx, rows);
+  const desc = packingDescribe(ctx, bands, rows);
+  const addr = addrLines(E), bAddr = addrLines({ addr: b.addr });
+  const invRef = `${ctx.inv.invoiceNo || ""}${ctx.inv.date ? ` DT ${ddmm(ctx.inv.date)}` : ""}`;
+  const orderRef = b.orderNo
+    ? `${b.orderNo}${ctx.inv.date ? ` DT ${ddmm(ctx.inv.date)}` : ""}` : poHeaderList(ctx);
+  const blLine = s.blNo ? `BL : ${s.blNo}${s.blDate ? `  DT. ${ddmm(s.blDate)}` : ""}` : "";
+
+  const td = (v, cls = "", span = 1) =>
+    `<td${span > 1 ? ` colspan="${span}"` : ""}${cls ? ` class="${cls}"` : ""}>${v == null || v === "" ? "&nbsp;" : v}</td>`;
+  const vl = (v, cls = "", span = 1) => td(esc(v), cls, span);
+  const nm = (v, d, cls = "") => `<td class="${cls}" data-t="num" data-v="${v}">${wbFixed(v, d)}</td>`;
+
+  /* The letterhead: the mark alongside the name, the trading line under it and
+     the address below that — one block down the left of the form, as the sheet
+     anchors it across rows 2 to 7, with the boxes on the right keeping their
+     own rows beside it. */
+  const letterhead = `<td class="lhead lf rt0" rowspan="6" colspan="4">
+    <img class="pllogo" src="${LOGO_SRC}" alt="">
+    <div class="brand">${esc(E.name)}</div>
+    <div class="sub">${esc(E.sub || "")}</div>
+    ${[addr[0], addr[1], [E.tel && `Tel: ${E.tel}`, E.email && `E-Mail: ${E.email}`].filter(Boolean).join(" ")]
+    .map((l) => `<div class="addr">${esc(l || "")}</div>`).join("")}</td>`;
+
+  const head = (page2) => `
+    <tr>${page2 ? `${vl("PACKING LIST", "ttl lt bb", 7)}${vl("Page 2", "rd rt bb r", 2)}`
+    : vl("PACKING LIST", "ttl lt rt0 bb", 9)}</tr>
+    <tr>${letterhead}${vl("Invoice No. ", "k lb lt", 2)}${vl(invRef, "rt", 3)}</tr>
+    <tr>${td("", "lf bb", 2)}${td("", "rt0 bb", 3)}</tr>
+    <tr>${vl("Buyers Order No: ", "k lb lt", 2)}${vl(orderRef, "lrt", 3)}</tr>
+    <tr>${td("", "lf bb", 2)}${td("", "lrb", 3)}</tr>
+    <tr>${vl("Other Reference(s):", "k lb lt", 2)}${vl(s.otherRef || "", "lrt", 3)}</tr>
+    <tr>${td("", "lf bb", 2)}${td("", "lrb", 3)}</tr>
+    <tr>${vl("On Account & risks of", "k lb lt", 3)}${td("", "rt")}${vl(blLine, "k lb lrt", 5)}</tr>
+    <tr>${vl(b.name ? `Messrs. ${b.name},` : "", "lf rt0", 4)}${td("", "lf rt0", 5)}</tr>
+    <tr>${vl(b.brand ? `T/A ${b.brand},` : "", "lf rt0", 4)}${vl(s.vessel ? `Shipped per: ${s.vessel}` : "", "lf rt0", 5)}</tr>
+    <tr>${vl(bAddr[0] || "", "lf rt0", 4)}${td("", "lf rt0", 5)}</tr>
+    <tr>${vl([bAddr[1], b.country && `(${b.country})`].filter(Boolean).join(" "), "lf rt0", 4)}${td("", "lrb", 5)}</tr>
+    <tr>${td("", "lf rt0", 4)}${vl("Country of Origin", "k lb lrt c", 3)}${vl("Country of Final Destination", "k lb lrt c", 2)}</tr>
+    <tr>${td("", "lf rt0", 4)}${vl(E.origin || "INDIA", "k rd lrb c", 3)}
+      ${vl((s.finalDest || b.country || "").toUpperCase(), "k rd lrb c", 2)}</tr>
+    <tr>${td("", "lf rt0", 4)}${vl("Shipping Marks ", "k lb lf", 2)}${vl("CONTAINER NO : ", "k lrt", 3)}</tr>
+    <tr>${vl("Pre-Carraige by:", "k lb lt", 3)}${vl("Place of Receipt by Pre-Carraige", "k lb lrt")}
+      ${vl(marks.prefix, "k lf", 2)}${vl(s.container || "", "k lf rt0", 3)}</tr>
+    <tr>${vl(s.preCarriage || "", "lf bb", 3)}${vl(s.receiptPlace || "", "lrb")}
+      ${vl(`${marks.start} - ${marks.end} / ${marks.end}`, "lf", 2)}${td("", "k lrb", 3)}</tr>
+    <tr>${vl("Shipped per:", "k lb lrt", 3)}${vl("Port of Loading:", "k lb lrt")}${td("", "lf rt0", 2)}
+      ${vl("SEAL NO : ", "k lf rt0", 3)}</tr>
+    <tr>${vl(s.vessel || "", "lrb", 3)}${vl(s.pol || "", "k rd lrb c")}${td("", "lf rt0", 2)}
+      ${vl(s.seal || "", "k lf rt0", 3)}</tr>
+    <tr>${vl("Port of Discharge:", "k lb lrt", 3)}${vl("Final Destination:", "k lb lrt")}${td("", "lf rt0", 2)}
+      ${td("", "lf rt0", 3)}</tr>
+    <tr>${vl((s.pod || b.shipTo || "").toUpperCase(), "lrb c", 3)}
+      ${vl((s.finalDest || s.pod || b.shipTo || "").toUpperCase(), "lrb c")}${td("", "lrb", 2)}${td("", "lrb", 3)}</tr>
+    <tr>${vl("Sr.Nos.", "k lf")}${vl("No. & Kind of Pkgs   Description of Goods", "k lrt l", 5)}
+      ${vl("Quantity", "k lrt c")}${vl("WEIGHT", "k rt c", 2)}</tr>
+    <tr>${td("", "lf")}${vl(desc[0], "lf rt0 l", 5)}${td("", "lf rt0")}
+      ${vl("NETT", "k bx c")}${vl("GROSS", "k bx c")}</tr>
+    <tr>${td("", "lf")}${vl(desc[1], "lf rt0 l", 5)}${td("", "lf")}
+      ${vl("KGS", "k lrb c")}${vl("KGS", "k lrb c")}</tr>`;
+
+  const line = (l) => {
+    if (!l) return `<tr class="fl">${Array(9).fill(td("")).join("")}</tr>`;
+    if (l.kind === "head") return `<tr class="gd">${td("")}${vl(l.band.head, "l", 5)}${Array(3).fill(td("")).join("")}</tr>`;
+    if (l.kind === "cols") {
+      const B2 = l.band;
+      const cells = [vl("SR NOS"), vl("CODE", "c"), vl(B2.size, "c", B2.len ? 1 : 2)];
+      if (B2.len) cells.push(vl("LEN (MM)", "c"));
+      cells.push(vl(B2.per), vl(B2.pkg, "c"), vl("PIECES", "c"), td(""), td(""));
+      // Their column header is wider than the column it sits in and the sheet
+      // shrinks it to fit; `hc` is that same squeeze on paper.
+      return `<tr class="gd hc">${cells.join("")}</tr>`;
+    }
+    const { band, r } = l;
+    const cells = [vl(r.range), vl(r.it.code, "c"), vl(r.it.size, "c", band.len ? 1 : 2)];
+    if (band.len) cells.push(vl(r.it.length, "c"));
+    cells.push(
+      `<td class="c" data-t="int" data-v="${r.packing}">${r.packing}</td>`,
+      `<td class="c" data-t="int" data-v="${r.boxes}">${r.boxes}</td>`,
+      `<td class="c" data-t="int" data-v="${r.pieces}">${r.pieces}</td>`,
+      nm(r.netTotal, 3, "c"), nm(r.grossTotal, 3, "c"),
+    );
+    return `<tr class="ln">${cells.join("")}</tr>`;
+  };
+
+  const totalRow = (label, list) => `<tr class="tt">${td("", "lf bb", 3)}${vl(label, "k rt0 bb r")}
+    ${td("", "lrb", 3)}${nm(sum(list, "netTotal"), 3, "bx c")}${nm(sum(list, "grossTotal"), 3, "bx c")}</tr>`;
+
+  const p1Rows = p1.filter((l) => l.kind === "item").map((l) => l.r);
+  const colg = `<colgroup>${[11.83, 9.33, 9.33, 36.5, 12.66, 9.33, 9.16, 12.33, 12.33]
+    .map((w) => `<col style="width:${(w / 112.6) * 100}%">`).join("")}</colgroup>`;
+
+  const sign = (forText) => `
+    <tr>${td("", "lf")}${td("", "", 3)}${td("", "rt0")}${vl(forText, "sg lrt r", 4)}</tr>
+    <tr>${td("", "lf")}${td("", "", 3)}${td("", "rt0")}${td("", "lf rt0", 4)}</tr>
+    <tr>${td("", "lf")}${td("", "", 3)}${td("", "rt0")}${td("", "lf rt0", 4)}</tr>
+    <tr>${td("", "lf")}${td("", "", 3)}${td("", "rt0")}${td("", "lf rt0", 4)}</tr>
+    <tr>${td("", "lf bb")}${td("", "bb", 3)}${td("", "rt0 bb")}${td("", "lf bb", 2)}
+      ${vl("PROPRIETOR", "rt0 bb r", 2)}</tr>`;
+
+  const page1 = `<table class="wb ci pl">${colg}<tbody>${head(false)}
+    ${Array.from({ length: PL_P1_BODY }, (_, i) => line(p1[i])).join("")}
+    ${totalRow("BALANCE C/F….", p1Rows)}
+    ${sign(`FOR ${E.name}`.toUpperCase())}</tbody></table>`;
+
+  const bf = `<tr class="gd">${td("")}${vl(carry ? carry.head : "", "l", 4)}
+    ${vl("BAL B/F…", "k r", 2)}${nm(sum(p1Rows, "netTotal"), 3, "c")}${nm(sum(p1Rows, "grossTotal"), 3, "c")}</tr>`;
+
+  const breakup = PL_WEIGHTS.map(([label, keys]) => {
+    const mine = rows.filter((r) => keys.includes(familyOf(r.it)));
+    return `<tr>${vl(label, "lf rt0", 3)}${nm(sum(mine, "netTotal"), 3, "lf rt0 c")}
+      ${nm(sum(mine, "grossTotal"), 3, "lf rt0 c")}${td("", "lf rt0", 4)}</tr>`;
+  }).join("");
+
+  const page2 = `<table class="wb ci pl">${colg}<tbody>${head(true)}
+    ${bf}
+    ${Array.from({ length: plP2Body(p2) }, (_, i) => line(p2[i])).join("")}
+    ${totalRow("TOTAL WEIGHTS……….", rows)}
+    <tr>${vl("BREAK-UP OF WEIGHTS", "bx", 3)}${vl("NET WT", "bx c")}${vl("GROSS WT", "bx c")}
+      ${vl(`FOR ${E.name}`.toUpperCase(), "sg lrt r", 4)}</tr>
+    ${breakup}
+    <tr>${vl("TOTAL WEIGHTS", "bx", 3)}${nm(sum(rows, "netTotal"), 3, "bx dbl c")}
+      ${nm(sum(rows, "grossTotal"), 3, "bx dbl c")}${td("", "lf bb", 2)}${vl("PROPRIETOR", "rt0 bb r", 2)}</tr>
+    </tbody></table>`;
+
+  return `${page1}<div class="pgbrk"></div>${page2}`;
+}
+
+B["19"] = (ctx) => ({
+  name: "Packing_List_19",
+  html: packingListHtml(ctx),
+  sheets: packingListSheets(ctx),
+  page: "portrait",
+});
 function packingListDoc(ctx, title, no, boxLabel = "Boxes") {
   const rows = L(ctx), s = ctx.inv.ship || {};
   const cols = [
@@ -4329,7 +4933,6 @@ function packingListDoc(ctx, title, no, boxLabel = "Boxes") {
     <tr><td class="k">Marks</td><td>${esc(s.marks || "—")}</td><td class="k">Packages</td><td>${esc(s.pkgs || "—")}</td></tr></table>`;
   return `${masthead(ctx, title)}${shipRow}${tableOf(cols, rows, foot)}`;
 }
-B["19"] = (ctx) => ({ name: "Packing_List_19", html: packingListDoc(ctx, "19 · PACKING LIST", "19", "Packages") });
 B["20"] = (ctx) => {
   const rows = L(ctx);
   const cols = [

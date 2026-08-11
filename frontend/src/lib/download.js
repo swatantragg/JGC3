@@ -210,12 +210,51 @@ const PRINT_CSS = `
   table.ci .ttl { font-weight: 700; }
   table.ci .nb { border: none !important; }
   table.ci .brand { font-family: Centaur, Georgia, serif; font-size: 13pt; font-weight: 700; text-align: right; }
+  /* The letterhead block: the mark set against the left margin with the name
+     and the address ranged right of it, which is how their sheet anchors the
+     picture over the corner of the form. The cell wraps, unlike the rest of
+     this table, because it is five typed lines rather than one ruled row. */
+  table.ci .lhead { vertical-align: top; padding: 1px 3px 1px 1px; white-space: normal; overflow: visible; }
+  table.ci .lhead .pllogo { float: left; width: 44px; height: auto; margin: 1px 3px 0 0; }
+  table.ci .lhead .brand { display: block; line-height: 1.05; }
+  table.ci .lhead .sub, table.ci .lhead .addr {
+    display: block; text-align: right; font-size: 7pt; line-height: 1.25; margin: 0; color: inherit; }
   table.ci tr.gd td, table.ci tr.ln td { border-left: 1px solid #000 !important; border-right: 1px solid #000 !important; }
   table.ci tr.ln td { border-top: 1px solid #d9d9d9 !important; border-bottom: 1px solid #d9d9d9 !important; }
   table.ci tr.gd td:first-child, table.ci tr.ln td:first-child { border-top: none !important; border-bottom: none !important; }
   table.ci tr.gd .bnd, table.ci tr.gd .h { border: 1px solid #000 !important; }
   table.ci tr.tt td { border-left: 1px solid #000 !important; border-right: 1px solid #000 !important; border-bottom: 1px solid #000 !important; }
   table.ci tr.tt .dbl { border-top: 1px solid #000 !important; border-bottom: 3px double #000 !important; }
+
+  /* 19 · Packing list — the customs invoice's frame again, but ruled the whole
+     way across: its marks column is part of the goods table here rather than
+     the open margin the invoice leaves beside it, so the hairlines run under
+     that column too. Set at 7.5pt, their 9pt Arial at the 86% their file
+     prints at, and its address block at the 10pt of their letterhead. */
+  table.ci.pl td { font-size: 7.5pt; }
+  table.ci.pl .big { font-size: 8.5pt; }
+  table.ci.pl tr.gd td, table.ci.pl tr.ln td, table.ci.pl tr.fl td {
+    border-left: 1px solid #000 !important; border-right: 1px solid #000 !important; }
+  table.ci.pl tr.gd td, table.ci.pl tr.gd td:first-child {
+    border-top: 1px solid #000 !important; border-bottom: 1px solid #000 !important; }
+  table.ci.pl tr.ln td, table.ci.pl tr.ln td:first-child {
+    border-top: 1px solid #d9d9d9 !important; border-bottom: 1px solid #d9d9d9 !important; }
+  table.ci.pl .dbl { border-bottom: 3px double #000 !important; }
+  /* A band's column header is wider than the column it heads — their sheet
+     shrinks it to fit rather than widening the form, so it is set smaller here
+     for the same reason. */
+  table.ci.pl tr.hc td { font-size: 6.2pt; }
+  /* The packing book is typed in colour where the invoice book is not, and the
+     colour carries meaning: the form's own labels are blue, the answers customs
+     reads off the head of it are red, and so is the title. What is typed in
+     against a label stays black, as does the whole goods table. These override
+     the black this table otherwise forces on every cell. */
+  table.ci.pl .lb { color: #0000ff !important; }
+  table.ci.pl .rd, table.ci.pl .ttl { color: #ff0000 !important; }
+  table.ci.pl .sg { color: #0000ff !important; font-weight: 400; }
+  table.ci.pl .lhead .brand { color: #800000 !important; }
+  table.ci.pl .lhead .sub { color: #800000 !important; }
+  table.ci.pl .lhead .addr { color: #3366ff !important; }
 
   /* 6 · Suppliers' PO — the letter, printed as their Page1 prints. */
   table.wb.letter { border: 1px solid #000; table-layout: fixed; width: 100%; }
