@@ -153,6 +153,15 @@ const PRINT_CSS = `
   table.bpo .ttl { font-size: 8pt; }
   table.bpo .val { font-size: 8.5pt; }
   table.bpo .foot { font-size: 6.5pt; }
+  /* The freight terms and the line the order is signed for stand side by side.
+     Both are set to the top of the run — the rest of the sheet centres in its
+     row — so the name sits level with the top of the freight box and the space
+     under it comes out clear, to be stamped and signed once it is printed. */
+  table.bpo tr.sig td { vertical-align: top; }
+  table.bpo .sign { font-size: 7pt; padding-top: 1px; }
+  /* The contact strip is small print set close — four lines that read as one
+     block, not four rows of the grid above them. */
+  table.bpo tr.ft td { padding: 0 4px; line-height: 1.5; }
   table.bpo .party { text-align: left; vertical-align: top; white-space: normal; font-weight: 700; text-transform: uppercase; padding: 3px 5px; }
   table.bpo td.nb, table.bpo th.nb { border: none !important; }
   table.bpo .bpo-logo { height: 44pt; width: auto; display: block; margin: 0 auto 1px; }
@@ -167,6 +176,46 @@ const PRINT_CSS = `
   table.bpo td.bx { padding: 0; }
   table.bpo table.in { width: 100%; table-layout: fixed; border-collapse: collapse; margin: 0; }
   table.bpo table.in td { border: none !important; padding: 1px 5px; font-size: 7pt; }
+
+  /* 18 · Custom invoice — the customs copy, ruled as one frame rather than a
+     grid: solid down the columns, hairline between the goods, open wherever
+     the form is only typing. Its cells therefore start with no rule and each
+     names the edges it draws. Set at 6.5pt, which is their own 9pt Arial at
+     the 72% their file prints at. */
+  /* Unlike the rest of the library, this one is a whole page in itself — its
+     margins are the form's own — so it takes the printable area rather than
+     sitting inside the page padding the other documents are laid out in. */
+  .jg-doc:has(table.ci) { padding: 4mm; }
+  table.ci { table-layout: fixed; width: 100%; }
+  /* Their form is typed on plain paper, so the app's own key/value banding and
+     navy are cleared rather than inherited. The padding is a hair either side:
+     the columns are the widths of their sheet and the text has to sit in them. */
+  table.ci td { border: none !important; font-size: 6.5pt; line-height: 1.25; padding: 0 1.5px;
+    white-space: nowrap; overflow: hidden; vertical-align: middle;
+    background: none !important; color: #000 !important; }
+  table.ci .lt { border-left: 1px solid #000 !important; border-top: 1px solid #000 !important; }
+  table.ci .rt { border-right: 1px solid #000 !important; border-top: 1px solid #000 !important; }
+  table.ci .lf { border-left: 1px solid #000 !important; }
+  table.ci .rt0 { border-right: 1px solid #000 !important; }
+  table.ci .lrt { border-left: 1px solid #000 !important; border-right: 1px solid #000 !important; border-top: 1px solid #000 !important; }
+  table.ci .lrb { border-left: 1px solid #000 !important; border-right: 1px solid #000 !important; border-bottom: 1px solid #000 !important; }
+  table.ci .lt0 { border-top: 1px solid #000 !important; }
+  table.ci .bb { border-bottom: 1px solid #000 !important; }
+  table.ci .bx, table.ci .h, table.ci .bnd { border: 1px solid #000 !important; }
+  table.ci .k, table.ci .b, table.ci .h, table.ci .bnd { font-weight: 700; }
+  table.ci .h, table.ci .c, table.ci .ttl { text-align: center; }
+  table.ci .l { text-align: left; }
+  table.ci .r { text-align: right; }
+  table.ci .mer { font-weight: 700; text-decoration: underline; }
+  table.ci .ttl { font-weight: 700; }
+  table.ci .nb { border: none !important; }
+  table.ci .brand { font-family: Centaur, Georgia, serif; font-size: 13pt; font-weight: 700; text-align: right; }
+  table.ci tr.gd td, table.ci tr.ln td { border-left: 1px solid #000 !important; border-right: 1px solid #000 !important; }
+  table.ci tr.ln td { border-top: 1px solid #d9d9d9 !important; border-bottom: 1px solid #d9d9d9 !important; }
+  table.ci tr.gd td:first-child, table.ci tr.ln td:first-child { border-top: none !important; border-bottom: none !important; }
+  table.ci tr.gd .bnd, table.ci tr.gd .h { border: 1px solid #000 !important; }
+  table.ci tr.tt td { border-left: 1px solid #000 !important; border-right: 1px solid #000 !important; border-bottom: 1px solid #000 !important; }
+  table.ci tr.tt .dbl { border-top: 1px solid #000 !important; border-bottom: 3px double #000 !important; }
 
   /* 6 · Suppliers' PO — the letter, printed as their Page1 prints. */
   table.wb.letter { border: 1px solid #000; table-layout: fixed; width: 100%; }

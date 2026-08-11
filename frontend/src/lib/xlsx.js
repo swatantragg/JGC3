@@ -159,6 +159,17 @@ const FONTS = [
   { key: "refb11", xml: '<font><b/><sz val="11"/><name val="Arial"/><family val="2"/></font>' },
   // The buyer's own name across the top of their purchase order (17).
   { key: "refb14", xml: '<font><b/><sz val="14"/><name val="Arial"/><family val="2"/></font>' },
+  // The contact strip along the foot of that same order — small print on their
+  // paper, and small here, so the four lines sit close together.
+  { key: "ref8", xml: '<font><sz val="8"/><name val="Arial"/><family val="2"/></font>' },
+  /* Arial 9 — the customs invoice (18) is typed a point smaller than the
+     packing books, so two pages of goods fit the page the way their own file
+     does. Its masthead is the same Centaur 18 as the letterhead but in black,
+     which is how that workbook was set. */
+  { key: "ref9", xml: '<font><sz val="9"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "ref9b", xml: '<font><b/><sz val="9"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "ref9bu", xml: '<font><b/><u/><sz val="9"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "brandk", xml: '<font><b/><sz val="18"/><name val="Centaur"/><family val="1"/></font>' },
   /* The supplier purchase order is a printed letter, not a table: their
      letterhead is Centaur in maroon, the form's labels are blue, and a few
      words on it are underlined. */
@@ -204,10 +215,16 @@ const FILLS = [
    the rest are the partial frames the client's sheets use on a banner row.
    An edge may name its own colour, which is how the letterhead rules print in
    the house red rather than in black. */
+const EDGES = ["left", "right", "top", "bottom"];
 const edge = (rgb) => (rgb ? `<color rgb="${rgb}"/>` : '<color indexed="64"/>');
-const side = (on, name, rgb) => (on ? `<${name} style="thin">${edge(rgb)}</${name}>` : `<${name}/>`);
-const frame = (edges, rgb) =>
-  `<border>${["left", "right", "top", "bottom"].map((n) => side(edges.includes(n[0]), n, rgb)).join("")}<diagonal/></border>`;
+/* `sides` names the Excel line style to rule each edge with, or "" to leave it
+   open — most sheets want "thin" all round, but a workbook that rules its
+   columns solid and its rows faintly (18 · Custom invoice) needs the two to
+   differ on the same cell. */
+const frame = (sides, rgb) =>
+  `<border>${EDGES.map((n) => (sides[n]
+    ? `<${n} style="${sides[n]}">${edge(rgb)}</${n}>`
+    : `<${n}/>`)).join("")}<diagonal/></border>`;
 const BORDERS = [
   { key: "none", xml: "<border><left/><right/><top/><bottom/><diagonal/></border>" },
   {
@@ -223,14 +240,32 @@ const fillIx = (k) => Math.max(0, FILLS.findIndex((f) => f.key === k));
    the edges to rule as a string of l/r/t/b — "lrtb" (aliased "box") for a full
    cell, "tb" for a banner, "l" for the left edge of a printed form. A colour
    may follow the edges — "b#C00000" is the letterhead's red rule. Every
-   combination a sheet asks for is registered as it is met. */
+   combination a sheet asks for is registered as it is met.
+
+   Where a sheet needs its edges ruled in different weights, `border` is instead
+   an object naming the line style per edge, with the same optional colour:
+   { l: "thin", r: "thin", t: "hair", b: "hair" }. */
+const hex8 = (s) => {
+  const h = String(s || "").replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
+  return h ? (h.length === 6 ? `FF${h}` : h.slice(0, 8)) : "";
+};
 function borderSpec(b) {
   const [raw, rgb] = String(b === "box" ? "lrtb" : b).split("#");
-  const hex = (rgb || "").replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
-  return {
-    edges: raw.toLowerCase().replace(/[^lrtb]/g, ""),
-    rgb: hex ? (hex.length === 6 ? `FF${hex}` : hex.slice(0, 8)) : "",
-  };
+  return { edges: raw.toLowerCase().replace(/[^lrtb]/g, ""), rgb: hex8(rgb) };
+}
+/* Either form, as the { left, right, top, bottom } the writer rules from. */
+function borderSides(b) {
+  if (b && typeof b === "object") {
+    const pick = (v) => (v === true ? "thin" : v || "");
+    return {
+      sides: { left: pick(b.l), right: pick(b.r), top: pick(b.t), bottom: pick(b.b) },
+      rgb: hex8(b.rgb),
+    };
+  }
+  const { edges, rgb } = borderSpec(b);
+  const sides = {};
+  EDGES.forEach((n) => { sides[n] = edges.includes(n[0]) ? "thin" : ""; });
+  return { sides, rgb };
 }
 function borderRegistry() {
   const list = BORDERS.map((x) => x.xml);
@@ -238,13 +273,13 @@ function borderRegistry() {
   return {
     index(b) {
       if (b === false) return 0;
-      if (typeof b !== "string") return 1;
-      const { edges, rgb } = borderSpec(b);
-      if (!edges) return 0;
-      const key = rgb ? `${edges}#${rgb}` : edges;
+      if (b == null || (typeof b !== "string" && typeof b !== "object")) return 1;
+      const { sides, rgb } = borderSides(b);
+      if (!EDGES.some((n) => sides[n])) return 0;
+      const key = JSON.stringify([sides, rgb]);
       if (seen.has(key)) return seen.get(key);
       seen.set(key, list.length);
-      list.push(frame(edges, rgb));
+      list.push(frame(sides, rgb));
       return list.length - 1;
     },
     xml: () => list,
@@ -279,6 +314,9 @@ function styleXfs(specs) {
       s.align ? `horizontal="${s.align}"` : "",
       `vertical="${s.valign || "top"}"`,
       s.wrap ? 'wrapText="1"' : "",
+      // The client's older forms set every cell to shrink rather than wrap, so
+      // an over-long entry stays on its one ruled line instead of growing it.
+      s.shrink ? 'shrinkToFit="1"' : "",
     ].filter(Boolean).join(" ");
     return `<xf ${parts}><alignment ${al}/></xf>`;
   });
@@ -357,13 +395,16 @@ function sheetXml(sheet, styleOf) {
   const setup = page
     ? `<pageSetup paperSize="${page.paper || 9}" scale="${page.scale || 100}"${fitH} orientation="${page.orientation || "portrait"}"/>`
     : "";
+  // A form narrower than the paper is centred across it rather than left to
+  // sit against the left margin — what the client's invoice books do.
+  const opts = page && page.centered ? '<printOptions horizontalCentered="1"/>' : "";
 
   // A sheet with a picture on it points at its own drawing part.
   const drawing = sheet.image ? '<drawing r:id="rIdDr"/>' : "";
   const rNs = sheet.image ? ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"' : "";
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"${rNs}>${pr}<sheetViews>${pane}</sheetViews>${fmtPr}${cols}<sheetData>${body}</sheetData>${mergeXml}${margins}${setup}${drawing}</worksheet>`;
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"${rNs}>${pr}<sheetViews>${pane}</sheetViews>${fmtPr}${cols}<sheetData>${body}</sheetData>${mergeXml}${opts}${margins}${setup}${drawing}</worksheet>`;
 }
 
 /* A picture anchored to a cell — the letterhead mark on the supplier order.
