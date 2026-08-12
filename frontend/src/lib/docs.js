@@ -3753,27 +3753,36 @@ function customsInvoiceSheets(ctx) {
     brand: { ...F, font: "brandk", align: "right" },
     ctr: { ...F, align: "center" },
     rgt: { ...F, align: "right" },
+    /* The boxes down the left of the head are typed centred in them — the
+       label over the answer, both in the middle of the box — where the boxes
+       on the right are typed against their label. */
+    lblC: { ...F, font: "ref9b", align: "center" },
   };
   /* The frame: solid down the columns, hairline across between the goods. */
   const rule = (t, b2, font = "ref9", extra = {}) =>
     ({ ...F, font, border: { l: "thin", r: "thin", t, b: b2 }, ...extra });
   const V = rule("", "");                                   // the columns only
+  /* The goods are typed in the same plain Arial as the rest of the form —
+     their sheet sets neither the band headings nor the column headers in bold,
+     and the totals it carries forward are bold only in the words, never in the
+     figures. Nothing in this table stands out but the line it is ruled on. */
   const G = {
     colA: V,
-    head: rule("thin", "thin", "ref9b", { align: "center" }),   // a band heading
-    cols: rule("thin", "thin", "ref9b", { align: "center" }),   // its column header
+    head: rule("thin", "thin", "ref9"),                       // a band heading
+    cols: rule("thin", "thin", "ref9", { align: "center" }),  // its column header
     code: rule("hair", "hair", "ref9", { align: "center" }),
     ctr: rule("hair", "hair", "ref9", { align: "center" }),
-    num: rule("hair", "hair", "ref9", { align: "center", fmt: "#,##0" }),
+    num: rule("hair", "hair", "ref9", { align: "center" }),   // a plain count, as their sheet leaves it
     usd: rule("hair", "hair", "ref9", { align: "center", fmt: CI_USD }),
     usdL: rule("hair", "hair", "ref9", { fmt: CI_USD }),
+    inrC: rule("hair", "hair", "ref9", { align: "center", fmt: RUPEE }),
     inr: rule("hair", "hair", "ref9", { fmt: RUPEE }),
     pct: rule("hair", "hair", "ref9", { align: "center", fmt: CI_PCT }),
     fill: V,
     totL: rule("", "thin", "ref9b", { align: "center" }),
     totV: rule("", "thin", "ref9"),
-    sumU: { ...F, font: "ref9b", border: { l: "thin", r: "thin", t: "thin", b: "double" }, fmt: CI_USDT },
-    sumR: { ...F, font: "ref9b", border: { l: "thin", r: "thin", t: "thin", b: "double" }, fmt: RUPEE },
+    sumU: { ...F, font: "ref9", border: { l: "thin", r: "thin", t: "thin", b: "double" }, fmt: CI_USDT },
+    sumR: { ...F, font: "ref9", border: { l: "thin", r: "thin", t: "thin", b: "double" }, fmt: RUPEE },
   };
   const blank = (n, s2 = C.txt) => Array.from({ length: n }, () => [1, { v: "", s: s2 }]);
 
@@ -3795,17 +3804,19 @@ function customsInvoiceSheets(ctx) {
       [1, { v: "Exporter's Ref.", s: { ...C.lbl, border: "rt" } }]], 12.75);
     row([...blank(1, { ...C.txt, border: "l" }), ...blank(4),
       [1, { v: "Date:", s: { ...C.lbl, border: "l" } }], [4, { v: "", s: { ...C.txt, border: "r" } }],
-      [1, { v: E.iec ? `IEC ${E.iec}` : "", s: { ...C.txt, border: "r" } }]], 12.75);
-    row([[5, { v: E.sub || "", s: { ...C.txt, border: "l" } }],
+      [1, { v: E.iec ? `IEC ${E.iec}` : "", s: { ...C.lbl, border: "r" } }]], 12.75);
+    /* The exporter's own block is ranged right under the name, against the
+       mark anchored in the corner of the form beside it. */
+    row([[5, { v: E.sub || "", s: { ...C.rgt, border: "l" } }],
       [2, { v: "Buyers Order No: ", s: { ...C.lbl, border: "l" } }],
       [4, { v: orderRef, s: { ...C.txt, border: "r" } }]]);
     const addr = addrLines(E);
-    row([[5, { v: addr[0] || "", s: { ...C.txt, border: "l" } }],
+    row([[5, { v: addr[0] || "", s: { ...C.rgt, border: "l" } }],
       [2, { v: "", s: { ...C.txt, border: "l" } }], [4, { v: "", s: { ...C.txt, border: "r" } }]]);
-    row([[5, { v: addr[1] || "", s: { ...C.txt, border: "l" } }],
+    row([[5, { v: addr[1] || "", s: { ...C.rgt, border: "l" } }],
       [2, { v: "Other Reference(s):", s: { ...C.lbl, border: "l" } }],
       [4, { v: s.otherRef || "", s: { ...C.txt, border: "r" } }]]);
-    row([[5, { v: [E.tel && `Tel: ${E.tel}`, E.email && `E-Mail: ${E.email}`].filter(Boolean).join(" "), s: { ...C.txt, border: "lb" } }],
+    row([[5, { v: [E.tel && `Tel: ${E.tel}`, E.email && `E-Mail: ${E.email}`].filter(Boolean).join(" "), s: { ...C.rgt, border: "lb" } }],
       [2, { v: "", s: { ...C.txt, border: "l" } }], [4, { v: "", s: { ...C.txt, border: "r" } }]]);
     row([[2, { v: "On Account & Risks of:", s: { ...C.lbl, border: "lt" } }],
       [3, { v: "", s: { ...C.txt, border: "t" } }],
@@ -3829,36 +3840,38 @@ function customsInvoiceSheets(ctx) {
       [3, { v: "Country of Final Destination", s: { ...C.lbl, border: "rt", align: "center" } }]]);
     row([[1, { v: "", s: { ...C.txt, border: "l" } }],
       [4, { v: desc3[1], s: { ...C.txt, align: "left" } }],
-      [3, { v: E.origin || "INDIA", s: { ...C.txt, border: "lb", align: "center" } }],
-      [3, { v: (s.finalDest || b.country || "").toUpperCase(), s: { ...C.txt, border: "rb", align: "center" } }]], 12.75);
+      [3, { v: E.origin || "INDIA", s: { ...C.lblC, border: "lb" } }],
+      [3, { v: (s.finalDest || b.country || "").toUpperCase(), s: { ...C.lblC, border: "rb" } }]], 12.75);
     row([[1, { v: "", s: { ...C.txt, border: "l" } }],
       [4, { v: desc3[2], s: { ...C.txt, align: "left" } }],
       [1, { v: "BL. NO.", s: { ...C.lbl, border: "l" } }],
       [5, { v: dated(s.blNo, s.blDate), s: { ...C.txt, border: "r" } }]], 12.75);
-    row([[2, { v: "Pre-Carraige by:", s: { ...C.lbl, border: "lt" } }],
-      [3, { v: "Place of Receipt by Pre-Carraige", s: { ...C.lbl, border: "lrt" } }],
+    row([[2, { v: "Pre-Carraige by:", s: { ...C.lblC, border: "lt" } }],
+      [3, { v: "Place of Receipt by Pre-Carraige", s: { ...C.lblC, border: "lrt" } }],
       [1, { v: "Shipped Per", s: { ...C.lbl, border: "l" } }],
       [5, { v: s.vessel || "", s: { ...C.txt, border: "r" } }]]);
-    row([[2, { v: s.preCarriage || "", s: { ...C.txt, border: "lb" } }],
-      [3, { v: s.receiptPlace || "", s: { ...C.txt, border: "lrb" } }],
+    row([[2, { v: s.preCarriage || "", s: { ...C.ctr, border: "lb" } }],
+      [3, { v: s.receiptPlace || "", s: { ...C.ctr, border: "lrb" } }],
       [1, { v: "S/B No:", s: { ...C.lbl, border: "l" } }],
       [5, { v: dated(s.sbNo, s.sbDate), s: { ...C.txt, border: "r" } }]], 12.75);
-    row([[2, { v: "Shipped per:", s: { ...C.lbl, border: "lt" } }],
-      [3, { v: "Port of Loading:", s: { ...C.lbl, border: "lrt" } }],
+    row([[2, { v: "Shipped per:", s: { ...C.lblC, border: "lt" } }],
+      [3, { v: "Port of Loading:", s: { ...C.lblC, border: "lrt" } }],
       [2, { v: "Terms of Delivery:", s: { ...C.lbl, border: "lt" } }],
       [4, { v: (s.terms || "").toUpperCase(), s: { ...C.txt, border: "rt" } }]], 12.75);
-    row([[2, { v: s.vessel || "", s: { ...C.txt, border: "lb" } }],
-      [3, { v: s.pol || "", s: { ...C.txt, border: "lrb" } }],
+    row([[2, { v: s.vessel || "", s: { ...C.ctr, border: "lb" } }],
+      // The port it loads at is the one answer in that block typed in bold.
+      [3, { v: s.pol || "", s: { ...C.lblC, border: "lrb" } }],
       [2, { v: "Terms of Payment:", s: { ...C.lbl, border: "l" } }],
       [4, { v: s.payment || "D.P.SIGHT DRAFT", s: { ...C.txt, border: "r" } }]], 12.75);
-    row([[2, { v: "Port of Discharge:", s: { ...C.lbl, border: "lt" } }],
-      [3, { v: "Port of destination", s: { ...C.lbl, border: "lrt" } }],
+    row([[2, { v: "Port of Discharge:", s: { ...C.lblC, border: "lt" } }],
+      [3, { v: "Port of destination", s: { ...C.lblC, border: "lrt" } }],
       [2, { v: "Through:", s: { ...C.lbl, border: "l" } }],
-      [4, { v: s.bank || "", s: { ...C.txt, border: "r" } }]], 12.75);
-    row([[2, { v: (s.pod || b.shipTo || "").toUpperCase(), s: { ...C.txt, border: "lb" } }],
-      [3, { v: (s.finalDest || s.pod || b.shipTo || "").toUpperCase(), s: { ...C.txt, border: "lrb" } }],
+      // The bank the documents go through is typed in bold, both its lines.
+      [4, { v: s.bank || "", s: { ...C.lbl, border: "r" } }]], 12.75);
+    row([[2, { v: (s.pod || b.shipTo || "").toUpperCase(), s: { ...C.ctr, border: "lb" } }],
+      [3, { v: (s.finalDest || s.pod || b.shipTo || "").toUpperCase(), s: { ...C.ctr, border: "lrb" } }],
       [2, { v: "", s: { ...C.txt, border: "lb" } }],
-      [4, { v: s.bankAddr || "", s: { ...C.txt, border: "rb" } }]], 12.75);
+      [4, { v: s.bankAddr || "", s: { ...C.lbl, border: "rb" } }]], 12.75);
   }
 
   /* Row 22 is the column header of the goods, and 23-25 the marks and the
@@ -3866,15 +3879,17 @@ function customsInvoiceSheets(ctx) {
   function goodsHead(grid, mirror) {
     const { row } = grid;
     const H = (v) => ({ v, s: { ...C.lbl, border: "box", align: "center" } });
-    row([[1, H("Marks & Nos.")], [3, H("No & Kinds of Pkgs   Description of Goods")],
+    // The marks column is headed against its own left edge, the rest centred.
+    row([[1, { v: "Marks & Nos.", s: { ...C.lbl, border: "box" } }],
+      [3, H("No & Kinds of Pkgs   Description of Goods")],
       [1, H("Quantity")], [1, H("Rate")], [1, H("Amount")], [1, H("Rate")],
       [1, H("Taxable Amount")], [1, H("GST Rate")], [1, H("GST Amount")]]);
     const M = (v, r) => (mirror ? { f: `Page1!${r}`, s: { ...C.txt, border: "lr" } } : { v, s: { ...C.txt, border: "lr" } });
     row([[1, M(`${marks.prefix} NOS :`, "A23")],
       [4, mirror ? { f: "Page1!B23", s: { ...C.txt, border: "lr", align: "left" } }
         : { v: `${s.pkgs || `${sum(rows, "boxes")} PACKAGES`} CONTAINING`, s: { ...C.txt, border: "lr", align: "left" } }],
-      [2, { v: "FOB MUMBAI IN US$", s: { ...C.lbl, border: "lr", align: "center" } }],
-      [2, { v: "FOB MUMBAI IN INR", s: { ...C.lbl, border: "lr", align: "center" } }],
+      [2, { v: "FOB MUMBAI IN US$", s: { ...C.ctr, border: "lr" } }],
+      [2, { v: "FOB MUMBAI IN INR", s: { ...C.ctr, border: "lr" } }],
       [2, { v: "", s: { ...C.txt, border: "lr" } }]]);
     row([[1, M(`${marks.start} - ${marks.end}`, "A24")],
       [4, mirror ? { f: "Page1!B24", s: { ...C.txt, border: "lr", align: "left" } }
@@ -3889,8 +3904,7 @@ function customsInvoiceSheets(ctx) {
     const { row } = grid;
     if (!line) { row([[1, { v: "", s: G.colA }], [10, { v: "", s: G.fill }]]); return; }
     if (line.kind === "head") {
-      row([[1, { v: "", s: G.colA }], [6, { v: line.band.head, s: { ...G.head, align: "left" } }],
-        ...blank(4, G.fill)]);
+      row([[1, { v: "", s: G.colA }], [6, { v: line.band.head, s: G.head }], ...blank(4, G.fill)]);
       return;
     }
     if (line.kind === "cols") {
@@ -3914,7 +3928,7 @@ function customsInvoiceSheets(ctx) {
       [1, { v: r.pieces, t: "n", s: G.num }],
       [1, { v: rate, t: "n", s: G.usd }],
       [1, { f: `E${at}*F${at}${band.per100 ? "/100" : ""}`, s: G.usdL }],
-      [1, { f: `I${at}/E${at}`, s: G.inr }],
+      [1, { f: `I${at}/E${at}`, s: G.inrC }],
       [1, { f: `G${at}*${ex}`, s: G.inr }],
       [1, { v: gst, t: "n", s: G.pct }],
       [1, { f: `ROUND(I${at}*J${at},)`, s: G.inr }],
@@ -3929,8 +3943,10 @@ function customsInvoiceSheets(ctx) {
     const R4 = (v, edge, fmt) => [4, { v, s: { ...C.lbl, border: edge, align: "right", ...(fmt ? { fmt } : {}) } }];
     row([L7(E.gstin ? `GSTIN : ${E.gstin}` : "", "lt"), R4(" FOR JAIKVIN GLOBAL".replace("JAIKVIN GLOBAL", E.name), "rt", CI_PLAIN)], 13.5);
     row([L7(E.pan ? `PAN No: ${E.pan}` : "", "l"), R4("", "r")], 12.75);
-    row([L7("Declaration:-", "l"), R4("", "r")], 12.75);
-    row([L7("We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.", "l"), R4("", "r")], 12.75);
+    /* The declaration itself is typed plain; what is claimed under it is not. */
+    const P7 = (v, edge) => [7, { v, s: { ...C.txt, border: edge } }];
+    row([P7("Declaration:-", "l"), R4("", "r")], 12.75);
+    row([P7("We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.", "l"), R4("", "r")], 12.75);
     row([L7("SUPPLY MEANT FOR EXPORT WITH PAYMENT OF INTEGRATED TAX", "l"), R4("", "r")], 12.75);
     row([L7("We intend to claim rewards under RoDTEP", "lb"), R4(" PROPRIETOR", "rb", CI_PLAIN)]);
   }
@@ -3959,7 +3975,7 @@ function customsInvoiceSheets(ctx) {
   const p1Last = CI_P1_TOP + CI_P1_BODY - 1;
   const p1Has = p1.some((l) => l.kind === "item");
   const cf = (col) => (p1Has ? `SUM(${col}${p1First}:${col}${p1Last})` : "0");
-  g1.row([[1, { v: "", s: G.totV }], [3, { v: "Total C/F Page :2", s: { ...G.totL, align: "left" } }],
+  g1.row([[1, { v: "", s: G.totV }], [3, { v: "Total C/F Page :2", s: G.totL }],
     [2, { v: "", s: G.totV }], [1, { f: cf("G"), s: G.sumU }], [1, { v: "", s: G.totV }],
     [1, { f: cf("I"), s: G.sumR }], [1, { v: "", s: G.totV }], [1, { f: cf("K"), s: G.sumR }]], 12.75);
   footBlock(g1);
@@ -3970,18 +3986,20 @@ function customsInvoiceSheets(ctx) {
     ? { s: c.s, f: `Page1!${colLetter(i + 1)}${r}` } : c));
   for (let r = 1; r <= 21; r++) {
     const cells = mirror(r);
-    if (r === 1) cells[10] = { v: "Page 2", s: { ...C.lbl, border: "b", align: "center" } };
+    // The title runs a column short on this page: the sheet is numbered in the
+    // corner it gives up.
+    if (r === 1) cells[10] = { v: "Page 2", s: { ...C.lbl, border: "b", align: "right" } };
     g2.rows.push(cells);
     g2.heights[r - 1] = g1.heights[r - 1];
   }
   // Rows 2-21's merges are Page 1's, and row 2's name box runs down into row 3.
   g1.merges.filter((m) => /^[A-K](\d+):/.test(m) && Number(/^[A-K](\d+):/.exec(m)[1]) <= 21)
-    .forEach((m) => g2.merges.push(m));
+    .forEach((m) => g2.merges.push(m === "B1:K1" ? "B1:J1" : m));
   goodsHead(g2, true);
   g2.row([[1, { f: "Page1!A25", s: { ...C.txt, border: "lr" } }],
     [4, { f: "Page1!B25", s: { ...C.txt, border: "lr", align: "left" } }],
-    [1, { v: "BAL B/F…", s: { ...C.lbl, border: "lr" } }],
-    [1, { f: "Page1!G82", s: { ...C.txt, border: "lr", fmt: CI_USD } }],
+    [1, { v: "BAL B/F…", s: { ...C.ctr, border: "lr" } }],
+    [1, { f: "Page1!G82", s: { ...C.txt, border: "lr", fmt: USD } }],
     [1, { v: "", s: { ...C.txt, border: "lr" } }],
     [1, { f: "Page1!I82", s: { ...C.txt, border: "lr", fmt: RUPEE } }],
     [1, { v: "", s: { ...C.txt, border: "lr" } }],
@@ -3994,12 +4012,15 @@ function customsInvoiceSheets(ctx) {
   const netWt = Number(s.netWt) || sum(rows, "netTotal");
   const grossWt = Number(s.grossWt) || sum(rows, "grossTotal");
   const fobUsd = sum(rows, "fobTotal");
+  /* Every line of it is typed centred in the margin — the weights to three
+     places and with no separators, as their sheet formats them. */
+  const wt3 = { ...C.ctr, fmt: "0.000" };
   const margin = {
-    5: ["Container No.", C.lbl], 6: [s.container || "", C.txt],
-    15: ["Seal No.", C.lbl], 16: [s.seal || "", C.txt],
-    24: ["Nett Wt.", C.lbl], 25: [netWt, C.txt], 26: ["KGS", C.txt],
-    33: ["Gross Wt", C.lbl], 34: [grossWt, C.txt], 35: ["KGS", C.txt],
-    41: ["Freight", C.lbl], 42: ["Payable at", C.txt], 43: ["Destination", C.txt],
+    5: ["Container No.", C.lblC], 6: [s.container || "", C.ctr],
+    15: ["Seal No.", C.lblC], 16: [s.seal || "", C.ctr],
+    24: ["Nett Wt.", C.lblC], 25: [netWt, wt3], 26: ["KGS", C.ctr],
+    33: ["Gross Wt", C.lblC], 34: [grossWt, wt3], 35: ["KGS", C.ctr],
+    41: ["Freight", C.lblC], 42: ["Payable at", C.lblC], 43: ["Destination", C.lblC],
   };
   /* Keyed by how far down the frame each stands rather than by an absolute
      row, so they keep their place however deep the goods run. */
@@ -4014,10 +4035,10 @@ function customsInvoiceSheets(ctx) {
   /* The FOB value box hangs off the totals rather than off a fixed row: the
      label, the dollars under it, and the rupees on the totals line itself. */
   const totRow = p2Last + 1;
-  setA(totRow - 2, { v: "FOB VALUE" }, C.lbl);
-  setA(totRow - 1, { v: undefined, f: `G${totRow}` }, { ...C.txt, fmt: CI_USD });
+  setA(totRow - 2, { v: "FOB VALUE" }, C.lblC);
+  setA(totRow - 1, { v: undefined, f: `G${totRow}` }, { ...C.lblC, fmt: USD });
   const tot = (col) => `SUM(${col}${p2First}:${col}${p2Last})`;
-  g2.row([[1, { f: "I75", s: { ...C.txt, border: "lr", fmt: RUPEE } }],
+  g2.row([[1, { f: `I${totRow}`, s: { ...C.lblC, border: "lr", fmt: RUPEE } }],
     [3, { v: "Total FOB Mumbai Value :", s: { ...G.totL, align: "left" } }],
     [2, { v: "", s: G.totV }], [1, { f: tot("G"), s: G.sumU }], [1, { v: "", s: G.totV }],
     [1, { f: tot("I"), s: G.sumR }], [1, { v: "", s: G.totV }], [1, { f: tot("K"), s: G.sumR }]], 12.75);
@@ -4027,7 +4048,7 @@ function customsInvoiceSheets(ctx) {
   const bh = (v) => box(v, { ...C.lbl, align: "center" });
   /* The breakup starts a column in from the frame, as their sheet sets it: the
      marks column runs on blank beside it. */
-  g2.row([[1, { v: "", s: { ...C.txt, border: "lb" } }], [2, bh("BREAKUP OF GST")], [1, bh("UOM")],
+  g2.row([[1, { v: "", s: { ...C.txt, border: "lb" } }], [2, box("BREAKUP OF GST", C.lbl)], [1, bh("UOM")],
     [1, bh("VALUE (US$)")], [2, bh("TAXABLE VALUE (INR)")], [1, bh("CGST")], [1, bh("SGST")],
     [1, bh("IGST")], [1, bh("TOTAL GST")]], 12.75);
 
@@ -4048,62 +4069,92 @@ function customsInvoiceSheets(ctx) {
       const refs = [rangeRefs(r1, col, "Page1"), rangeRefs(r2, col, "")].filter(Boolean).join(",");
       return refs ? `SUM(${refs})` : "0";
     };
+    /* A code's line is typed plain against its own bold heading — only the
+       words on this block are set in bold, never the figures. */
     g2.row([[1, { v: "", s: C.txt }], [2, box(`HSN CODE : ${hsn}`, C.lbl)],
-      [1, { f: agg("E"), s: { ...C.txt, border: "box", align: "center", fmt: "#,##0" } }],
-      [1, { f: agg("G"), s: { ...C.txt, border: "box", fmt: CI_USD } }],
+      [1, { f: agg("E"), s: { ...C.txt, border: "box", align: "center", fmt: "0" } }],
+      [1, { f: agg("G"), s: { ...C.txt, border: "box", fmt: CI_USDT } }],
       [2, { f: agg("I"), s: { ...C.txt, border: "box", fmt: RUPEE } }],
       [1, box(0, C.txt, RUPEE)], [1, box(0, C.txt, RUPEE)],
       [1, { f: agg("K"), s: { ...C.txt, border: "box", fmt: RUPEE } }],
-      [1, { f: `SUM(H${at}:J${at})`, s: { ...C.lbl, border: "box", fmt: RUPEE } }]], 13.5);
+      [1, { f: `SUM(H${at}:J${at})`, s: { ...C.txt, border: "box", fmt: RUPEE } }]], 13.5);
   });
   const last = g2.at();
   const down = (col) => (codes.length ? `SUM(${col}${first}:${col}${last})` : "0");
+  // The line the breakup adds up on is closed off under it, as the totals are.
+  const dbl = { l: "thin", r: "thin", t: "thin", b: "double" };
+  const totB = (f, extra = {}) => ({ f, s: { ...C.txt, border: dbl, ...extra } });
   g2.row([[1, { v: "", s: C.txt }], [2, box("TOTAL", C.lbl)],
-    [1, { f: down("D"), s: { ...C.lbl, border: "box", align: "center", fmt: "#,##0" } }],
-    [1, { f: down("E"), s: { ...C.lbl, border: "box", fmt: CI_USD } }],
-    [2, { f: down("F"), s: { ...C.lbl, border: "box", fmt: RUPEE } }],
-    [1, { f: down("H"), s: { ...C.lbl, border: "box", fmt: RUPEE } }],
-    [1, { f: down("I"), s: { ...C.lbl, border: "box", fmt: RUPEE } }],
-    [1, { f: down("J"), s: { ...C.lbl, border: "box", fmt: RUPEE } }],
-    [1, { f: down("K"), s: { ...C.lbl, border: "box", fmt: RUPEE } }]], 13.5);
+    [1, totB(down("D"), { align: "center", fmt: "0" })],
+    [1, totB(down("E"), { fmt: CI_USDT })],
+    [2, totB(down("F"), { fmt: RUPEE })],
+    [1, totB(down("H"), { fmt: RUPEE })],
+    [1, totB(down("I"), { fmt: RUPEE })],
+    [1, totB(down("J"), { fmt: RUPEE })],
+    [1, totB(down("K"), { fmt: RUPEE })]], 13.5);
 
   const taxTot = fobUsd * ex;
   g2.row([[1, { v: "", s: { ...C.txt, border: "lb" } }],
-    [10, { v: amountWords(fobUsd, "US DOLLARS", "CENTS", false), s: { ...C.lbl, border: "rb" } }]], 12.75);
+    [10, { v: amountWords(fobUsd, "US DOLLARS", "CENTS", false), s: { ...C.txt, border: "rb" } }]], 12.75);
   g2.row([[1, { v: "", s: { ...C.txt, border: "l" } }],
-    [10, { v: amountWords(taxTot, "INDIAN RUPEES", "PAISE", true), s: { ...C.lbl, border: "r" } }]], 12.75);
+    [10, { v: amountWords(taxTot, "INDIAN RUPEES", "PAISE", true), s: { ...C.txt, border: "r" } }]], 12.75);
   footBlock(g2);
 
-  /* ---- Annx — the annexure customs asks for ----------------------------- */
-  const A = { font: "ref9", border: false, valign: "center" };
-  const AB = { ...A, font: "ref9b" };
+  /* ---- Annx — the annexure customs asks for -----------------------------
+     Not typed on the invoice form at all: a plain Calibri sheet with the
+     printed letterhead pasted across the top of it, and the goods under it
+     ruled the same way — solid down the columns, hairline between the lines. */
+  const A = { font: "cal", border: false, valign: "center" };
+  const AB = { ...A, font: "calb" };
   const abox = (v, st = A, extra = {}) => ({ v, s: { ...st, border: "box", ...extra } });
+  const aRule = (b2, st = A, extra = {}) => ({ ...st, border: { l: "thin", r: "thin", t: "", b: b2 }, ...extra });
   const ga = formGrid(7);
+
+  /* The letterhead: the name in red Centaur over the address in blue, its
+     numbers in red, ranged right in a box of its own — and the mark in the box
+     beside it, which is where their sheet anchors the picture. */
+  const eAddr = addrLines(E);
+  const lhText = (v, edge, font = "cal") => ({ v, s: { ...A, font, border: edge, align: "right" } });
+  const lhRuns = (runs, edge) => ({ rt: runs, s: { ...A, border: edge, align: "right" } });
+  const inked = (label, value) => (value ? [{ t: label, font: "calbl" }, { t: `${value} `, font: "calr" }] : []);
+  const markBox = (edge) => [2, { v: "", s: { ...A, border: edge } }];
+  ga.row([[5, lhText(E.name, "lrt", "brandr")], markBox("lrt")], 24);
+  ga.row([[5, lhText(E.sub || "", "lr")], markBox("lr")]);
+  ga.row([[5, lhText(eAddr[0] || "", "lr", "calbl")], markBox("lr")]);
+  ga.row([[5, lhRuns([{ t: `${eAddr[1] || ""} `, font: "calbl" },
+    ...inked("Tel: ", E.tel), ...inked("E-Mail: ", E.email)], "lr")], markBox("lr")]);
+  ga.row([[5, lhRuns([...inked("GSTIN: ", E.gstin), ...inked("PAN No : ", E.pan)], "lr")], markBox("lr")]);
+  ga.row([[5, lhText("", "lrb")], markBox("lrb")]);
   ga.row([[7, { v: "", s: A }]]);
-  for (let i = 0; i < 6; i++) ga.row([[1, { v: "", s: A }]]);
-  ga.row([[7, { v: "ANNEXTURE TO INVOICE", s: { ...AB, align: "center" } }]]);
+
+  ga.row([[7, { v: "ANNEXTURE TO INVOICE", s: { ...A, align: "center" } }]]);
   ga.row([[1, { v: "", s: A }]]);
-  ga.row([[1, abox("Inv No & Dt", AB)], [1, abox(invRef)], [1, abox("NO OF PKGS", AB)],
-    [1, abox(sum(rows, "boxes"), A, { fmt: "#,##0", align: "center" })],
-    [1, abox("Shipment to", AB)], [2, abox((s.pod || b.shipTo || "").toUpperCase())]]);
+  // Only the answers are ruled on this line; the labels beside them are not.
+  const aUnder = { ...A, border: "b" };
+  ga.row([[1, { v: "Inv No & Dt", s: A }], [1, { v: invRef, s: aUnder }], [1, { v: "NO OF PKGS", s: A }],
+    [1, { v: sum(rows, "boxes"), t: "n", s: { ...aUnder, align: "center" } }],
+    [1, { v: "Shipment to", s: A }], [2, { v: (s.pod || b.shipTo || "").toUpperCase(), s: aUnder }]]);
 
   bands.forEach((band) => {
     ga.row([[1, { v: "", s: A }]]);
     const per = band.per100 ? "FOB / 100 PCS US$" : "FOB / PC US$";
-    ga.row([[2, abox("ITEM CODE", AB, { align: "center" })], [1, abox("QUANTITY", AB, { align: "center" })],
+    ga.row([[2, abox("ITEM CODE", AB)], [1, abox("QUANTITY", AB, { align: "center" })],
       [2, abox(per, AB, { align: "center" })], [1, abox("NET WT", AB, { align: "center" })],
-      [1, abox("RATE / KG", AB, { align: "center" })]]);
-    ga.row([[2, abox(band.label, AB)], [1, abox("PCS", A, { align: "center" })],
-      [1, abox("Unit ", A, { align: "center" })], [1, abox("Total ", A, { align: "center" })],
-      [1, abox("KGS", A, { align: "center" })], [1, abox("US$", A, { align: "center" })]]);
-    band.rows.forEach((r) => {
+      [1, abox("RATE / KG", AB)]]);
+    ga.row([[2, abox(band.label, AB)], [1, abox("PCS", AB, { align: "center" })],
+      [1, abox("Unit ", AB, { align: "center" })], [1, abox("Total ", AB, { align: "center" })],
+      [1, abox("KGS", AB, { align: "center" })], [1, abox("US$", AB, { align: "center" })]]);
+    band.rows.forEach((r, i) => {
       const at = ga.at() + 1;
-      ga.row([[1, numOrText(r.it.code, { ...A, border: "box" })], [1, { v: "", s: { ...A, border: "box" } }],
-        [1, abox(r.pieces, A, { fmt: "#,##0", align: "center" })],
-        [1, { v: band.per100 ? r.fobPc * 100 : r.fobPc, t: "n", s: { ...A, border: "box", fmt: CI_USD } }],
-        [1, { f: `C${at}*D${at}${band.per100 ? "/100" : ""}`, s: { ...A, border: "box", fmt: CI_USD } }],
-        [1, { v: r.netTotal, t: "n", s: { ...A, border: "box", fmt: "#,##0.000" } }],
-        [1, { f: `IF(F${at},E${at}/F${at},0)`, s: { ...A, border: "box", fmt: "#,##0.00" } }]]);
+      // The band is closed off under its last line rather than left hanging.
+      const e = i === band.rows.length - 1 ? "thin" : "hair";
+      const code = numOrText(r.it.code, aRule(e, A, { align: "left" }));
+      ga.row([[2, code],
+        [1, { v: r.pieces, t: "n", s: aRule(e, A, { align: "center" }) }],
+        [1, { v: band.per100 ? r.fobPc * 100 : r.fobPc, t: "n", s: aRule(e, A, { fmt: USD }) }],
+        [1, { f: `C${at}*D${at}${band.per100 ? "/100" : ""}`, s: aRule(e, A, { fmt: USD }) }],
+        [1, { v: r.netTotal, t: "n", s: aRule(e, A, { fmt: "0.000" }) }],
+        [1, { f: `IF(F${at},E${at}/F${at},0)`, s: aRule(e, A, { fmt: USD }) }]]);
     });
   });
   ga.row([[1, { v: "", s: A }]]);
@@ -4116,7 +4167,7 @@ function customsInvoiceSheets(ctx) {
   }, []);
   const aSum = (col) => (aRuns.length ? `SUM(${rangeRefs(aRuns, col, "")})` : "0");
   ga.row([[1, { v: "TOTAL", s: { ...AB, border: "box" } }], ...blank(3, { ...A, border: "box" }),
-    [1, { f: aSum("E"), s: { ...AB, border: "box", fmt: CI_USD } }],
+    [1, { f: aSum("E"), s: { ...AB, border: "box", fmt: USD } }],
     [1, { f: aSum("F"), s: { ...AB, border: "box", fmt: "#,##0.000" } }],
     [1, { v: "", s: { ...A, border: "box" } }]]);
 
@@ -4159,8 +4210,16 @@ function customsInvoiceHtml(ctx) {
 
   const td = (v, cls = "", span = 1) =>
     `<td${span > 1 ? ` colspan="${span}"` : ""}${cls ? ` class="${cls}"` : ""}>${v == null || v === "" ? "&nbsp;" : v}</td>`;
-  const lb = (v, span = 1) => td(esc(v), "k", span);
   const vl = (v, span = 1) => td(esc(v), "", span);
+
+  /* On screen a figure has to read exactly as the cell it copies. The form
+     itself is typed in formats that carry no separators — "$"0.00 for the
+     money, a plain integer for the pieces — and its rupees are grouped in
+     thousands rather than in lakhs. The annexure is the one sheet of the three
+     set in Excel's own grouped dollar, and its weights to three places. */
+  const ciUsd = (n) => `$${Number(n || 0).toFixed(2)}`;
+  const ciInr = (n) => wbRupee(n);
+  const ciInt = (n) => String(Math.round(Number(n) || 0));
 
   /* The letterhead: the mark alongside the name, the trading line under it and
      the address below that — one block down the left of the form, as the sheet
@@ -4172,11 +4231,13 @@ function customsInvoiceHtml(ctx) {
     ${[E.sub, addr[0], addr[1], [E.tel && `Tel: ${E.tel}`, E.email && `E-Mail: ${E.email}`].filter(Boolean).join(" ")]
     .map((l) => `<div class="addr">${esc(l || "")}</div>`).join("")}</td>`;
 
-  const head = () => `
-    <tr class="nb"><td class="nb mer">MERCHANT</td>${td("INVOICE", "nb ttl bb", 10)}</tr>
+  const head = (second) => `
+    <tr class="nb"><td class="nb mer">MERCHANT</td>${second
+    ? `${td("INVOICE", "nb ttl bb", 9)}${td("Page 2", "nb ttl bb r")}`
+    : td("INVOICE", "nb ttl bb", 10)}</tr>
     <tr>${letterhead}
       ${td(esc("Invoice No. "), "k lt")}${td(esc(invRef), "rt", 4)}${td(esc("Exporter's Ref."), "k rt")}</tr>
-    <tr>${td("Date:", "k lf")}${td("", "rt0", 4)}${td(esc(E.iec ? `IEC ${E.iec}` : ""), "rt0")}</tr>
+    <tr>${td("Date:", "k lf")}${td("", "rt0", 4)}${td(esc(E.iec ? `IEC ${E.iec}` : ""), "k rt0")}</tr>
     <tr>${td(esc("Buyers Order No: "), "k lf", 2)}${td(esc(orderRef), "rt0", 4)}</tr>
     <tr>${td("", "lf", 2)}${td("", "rt0", 4)}</tr>
     <tr>${td("Other Reference(s):", "k lf", 2)}${td(esc(s.otherRef || ""), "rt0", 4)}</tr>
@@ -4190,24 +4251,24 @@ function customsInvoiceHtml(ctx) {
     <tr>${td("Invoice of:", "k lt")}${td(esc(desc3[0]), "lt", 4)}
       ${td("Country of Origin", "k lt c", 3)}${td("Country of Final Destination", "k rt c", 3)}</tr>
     <tr>${td("", "lf")}${td(esc(desc3[1]), "", 4)}
-      ${td(esc(E.origin || "INDIA"), "lf bb c", 3)}${td(esc((s.finalDest || b.country || "").toUpperCase()), "rt0 bb c", 3)}</tr>
+      ${td(esc(E.origin || "INDIA"), "k lf bb c", 3)}${td(esc((s.finalDest || b.country || "").toUpperCase()), "k rt0 bb c", 3)}</tr>
     <tr>${td("", "lf")}${td(esc(desc3[2]), "", 4)}${td("BL. NO.", "k lf")}${td(esc(dated(s.blNo, s.blDate)), "rt0", 5)}</tr>
-    <tr>${td("Pre-Carraige by:", "k lt", 2)}${td("Place of Receipt by Pre-Carraige", "k lrt", 3)}
+    <tr>${td("Pre-Carraige by:", "k lt c", 2)}${td("Place of Receipt by Pre-Carraige", "k lrt c", 3)}
       ${td("Shipped Per", "k lf")}${td(esc(s.vessel || ""), "rt0", 5)}</tr>
-    <tr>${td(esc(s.preCarriage || ""), "lf bb", 2)}${td(esc(s.receiptPlace || ""), "lrb", 3)}
+    <tr>${td(esc(s.preCarriage || ""), "lf bb c", 2)}${td(esc(s.receiptPlace || ""), "lrb c", 3)}
       ${td("S/B No:", "k lf")}${td(esc(dated(s.sbNo, s.sbDate)), "rt0", 5)}</tr>
-    <tr>${td("Shipped per:", "k lt", 2)}${td("Port of Loading:", "k lrt", 3)}
+    <tr>${td("Shipped per:", "k lt c", 2)}${td("Port of Loading:", "k lrt c", 3)}
       ${td("Terms of Delivery:", "k lt", 2)}${td(esc((s.terms || "").toUpperCase()), "rt", 4)}</tr>
-    <tr>${td(esc(s.vessel || ""), "lf bb", 2)}${td(esc(s.pol || ""), "lrb", 3)}
+    <tr>${td(esc(s.vessel || ""), "lf bb c", 2)}${td(esc(s.pol || ""), "k lrb c", 3)}
       ${td("Terms of Payment:", "k lf", 2)}${td(esc(s.payment || "D.P.SIGHT DRAFT"), "rt0", 4)}</tr>
-    <tr>${td("Port of Discharge:", "k lt", 2)}${td("Port of destination", "k lrt", 3)}
-      ${td("Through:", "k lf", 2)}${td(esc(s.bank || ""), "rt0", 4)}</tr>
-    <tr>${td(esc((s.pod || b.shipTo || "").toUpperCase()), "lf bb", 2)}${td(esc((s.finalDest || s.pod || b.shipTo || "").toUpperCase()), "lrb", 3)}
-      ${td("", "lf bb", 2)}${td(esc(s.bankAddr || ""), "rt0 bb", 4)}</tr>
-    <tr>${["Marks &amp; Nos."].map((h) => td(h, "h")).join("")}${td("No &amp; Kinds of Pkgs   Description of Goods", "h", 3)}
+    <tr>${td("Port of Discharge:", "k lt c", 2)}${td("Port of destination", "k lrt c", 3)}
+      ${td("Through:", "k lf", 2)}${td(esc(s.bank || ""), "k rt0", 4)}</tr>
+    <tr>${td(esc((s.pod || b.shipTo || "").toUpperCase()), "lf bb c", 2)}${td(esc((s.finalDest || s.pod || b.shipTo || "").toUpperCase()), "lrb c", 3)}
+      ${td("", "lf bb", 2)}${td(esc(s.bankAddr || ""), "k rt0 bb", 4)}</tr>
+    <tr>${td("Marks &amp; Nos.", "h l")}${td("No &amp; Kinds of Pkgs   Description of Goods", "h", 3)}
       ${["Quantity", "Rate", "Amount", "Rate", "Taxable Amount", "GST Rate", "GST Amount"].map((h) => td(h, "h")).join("")}</tr>
     <tr>${vl(`${marks.prefix} NOS :`)}${td(esc(`${s.pkgs || `${sum(rows, "boxes")} PACKAGES`} CONTAINING`), "l", 4)}
-      ${lb("FOB MUMBAI IN US$", 2)}${lb("FOB MUMBAI IN INR", 2)}${td("", "", 2)}</tr>
+      ${td("FOB MUMBAI IN US$", "c", 2)}${td("FOB MUMBAI IN INR", "c", 2)}${td("", "", 2)}</tr>
     <tr>${vl(`${marks.start} - ${marks.end}`)}${td(esc(desc2[0]), "l", 4)}${td("", "", 2)}
       ${td(esc(`EX. RATE @ Rs.${num(ex)}`), "c", 2)}${td("", "", 2)}</tr>
     <tr>${vl(String(marks.end))}${td(esc(desc2[1]), "l", 4)}${td("", "", 6)}</tr>`;
@@ -4229,25 +4290,28 @@ function customsInvoiceHtml(ctx) {
     const cells = [td(esc(r.it.code), "c"), td(esc(r.it.size), "c", band.wide ? 2 : 1)];
     if (band.len) cells.push(td(esc(r.it.length), "c"));
     else if (!band.wide) cells.push(td(""));
+    /* Where each figure sits in its column is the cell's own setting on their
+       sheet: the quantity, the rate per piece and the GST rate centred, the
+       money ranged right against the rule. */
     cells.push(
-      `<td class="c" data-t="int" data-v="${r.pieces}">${r.pieces.toLocaleString("en-IN")}</td>`,
-      `<td class="c" data-t="usd" data-v="${rate}">${usd(rate)}</td>`,
-      `<td data-t="usd" data-v="${r.fobTotal}">${usd(r.fobTotal)}</td>`,
-      `<td data-t="inr" data-v="${r.pieces ? tax / r.pieces : 0}">${inr2(r.pieces ? tax / r.pieces : 0)}</td>`,
-      `<td data-t="inr" data-v="${tax}">${inr2(tax)}</td>`,
+      `<td class="c" data-t="int" data-v="${r.pieces}">${ciInt(r.pieces)}</td>`,
+      `<td class="c" data-t="usd" data-v="${rate}">${ciUsd(rate)}</td>`,
+      `<td class="r" data-t="usd" data-v="${r.fobTotal}">${ciUsd(r.fobTotal)}</td>`,
+      `<td class="c" data-t="inr" data-v="${r.pieces ? tax / r.pieces : 0}">${ciInr(r.pieces ? tax / r.pieces : 0)}</td>`,
+      `<td class="r" data-t="inr" data-v="${tax}">${ciInr(tax)}</td>`,
       `<td class="c">${(g * 100).toFixed(0)}%</td>`,
-      `<td data-t="inr" data-v="${Math.round(tax * g)}">${inr2(Math.round(tax * g))}</td>`,
+      `<td class="r" data-t="inr" data-v="${Math.round(tax * g)}">${ciInr(Math.round(tax * g))}</td>`,
     );
     return `<tr class="ln"><td>&nbsp;</td>${cells.join("")}</tr>`;
   };
 
   const foot = () => `
-    <tr>${td(esc(E.gstin ? `GSTIN : ${E.gstin}` : ""), "lt", 7)}${td(esc(` FOR ${E.name}`), "k rt r", 4)}</tr>
-    <tr>${td(esc(E.pan ? `PAN No: ${E.pan}` : ""), "lf", 7)}${td("", "rt0", 4)}</tr>
-    <tr>${td("Declaration:-", "k lf", 7)}${td("", "rt0", 4)}</tr>
+    <tr>${td(esc(E.gstin ? `GSTIN : ${E.gstin}` : ""), "k lt", 7)}${td(esc(` FOR ${E.name}`), "k rt r", 4)}</tr>
+    <tr>${td(esc(E.pan ? `PAN No: ${E.pan}` : ""), "k lf", 7)}${td("", "rt0", 4)}</tr>
+    <tr>${td("Declaration:-", "lf", 7)}${td("", "rt0", 4)}</tr>
     <tr>${td("We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.", "lf", 7)}${td("", "rt0", 4)}</tr>
-    <tr>${td("SUPPLY MEANT FOR EXPORT WITH PAYMENT OF INTEGRATED TAX", "lf", 7)}${td("", "rt0", 4)}</tr>
-    <tr>${td("We intend to claim rewards under RoDTEP", "lf bb", 7)}${td(" PROPRIETOR", "k rt0 bb r", 4)}</tr>`;
+    <tr>${td("SUPPLY MEANT FOR EXPORT WITH PAYMENT OF INTEGRATED TAX", "k lf", 7)}${td("", "rt0", 4)}</tr>
+    <tr>${td("We intend to claim rewards under RoDTEP", "k lf bb", 7)}${td(" PROPRIETOR", "k rt0 bb r", 4)}</tr>`;
 
   const cfUsd = p1.reduce((n, l) => n + (l.kind === "item" ? l.r.fobTotal : 0), 0);
   const cfTax = cfUsd * ex;
@@ -4257,10 +4321,10 @@ function customsInvoiceHtml(ctx) {
   const colg = `<colgroup>${[12.6, 12.9, 10.8, 10.8, 10.8, 12.1, 12.1, 12.1, 15.5, 12.1, 12.1]
     .map((w) => `<col style="width:${(w / 133.9) * 100}%">`).join("")}</colgroup>`;
 
-  const page1 = `<table class="wb ci">${colg}<tbody>${head()}
+  const page1 = `<table class="wb ci">${colg}<tbody>${head(false)}
     ${Array.from({ length: CI_P1_BODY }, (_, i) => line(p1[i])).join("")}
-    <tr class="tt">${td("")}${td("Total C/F Page :2", "k l", 3)}${td("", "", 2)}
-      ${td(usd(cfUsd), "b dbl")}${td("")}${td(inr2(cfTax), "b dbl")}${td("")}${td(inr2(cfGst), "b dbl")}</tr>
+    <tr class="tt">${td("")}${td("Total C/F Page :2", "k c", 3)}${td("", "", 2)}
+      ${td(ciUsd(cfUsd), "r dbl")}${td("")}${td(ciInr(cfTax), "r dbl")}${td("")}${td(ciInr(cfGst), "r dbl")}</tr>
     ${foot()}</tbody></table>`;
 
   /* Page 2's left margin carries the container, the weights and the freight
@@ -4269,14 +4333,16 @@ function customsInvoiceHtml(ctx) {
   const grossWt = Number(s.grossWt) || sum(rows, "grossTotal");
   // Keyed by the line's place in the frame, so it lands on the same row of the
   // form as the worksheet puts it — the frame starts at row CI_P2_TOP.
+  // Every line of the margin is typed centred in it, the weights to three
+  // places and with no separators, as their sheet formats them.
   const margin = {
-    5: ["Container No.", "k"], 6: [s.container || "", ""],
-    15: ["Seal No.", "k"], 16: [s.seal || "", ""],
-    24: ["Nett Wt.", "k"], 25: [num(netWt, 3), ""], 26: ["KGS", ""],
-    33: ["Gross Wt", "k"], 34: [num(grossWt, 3), ""], 35: ["KGS", ""],
-    41: ["Freight", "k"], 42: ["Payable at", ""], 43: ["Destination", ""],
+    5: ["Container No.", "k c"], 6: [s.container || "", "c"],
+    15: ["Seal No.", "k c"], 16: [s.seal || "", "c"],
+    24: ["Nett Wt.", "k c"], 25: [wbFixed(netWt, 3), "c"], 26: ["KGS", "c"],
+    33: ["Gross Wt", "k c"], 34: [wbFixed(grossWt, 3), "c"], 35: ["KGS", "c"],
+    41: ["Freight", "k c"], 42: ["Payable at", "k c"], 43: ["Destination", "k c"],
     // The FOB value box sits at the foot of the frame, whatever its depth.
-    [ciP2Body(p2) - 2]: ["FOB VALUE", "k"], [ciP2Body(p2) - 1]: [usd(fobUsd), ""],
+    [ciP2Body(p2) - 2]: ["FOB VALUE", "k c"], [ciP2Body(p2) - 1]: [ciUsd(fobUsd), "k c"],
   };
   const body2 = Array.from({ length: ciP2Body(p2) }, (_, i) => {
     const html = line(p2[i]);
@@ -4293,47 +4359,65 @@ function customsInvoiceHtml(ctx) {
     const pcs = sum(mine, "pieces"), val = sum(mine, "fobTotal");
     const tax = val * ex, g = mine.reduce((n, r) => n + Math.round(r.fobTotal * ex * gstRate(r.it.hsn)), 0);
     return `<tr>${td("", "lf")}${td(esc(`HSN CODE : ${hsn}`), "k bx", 2)}
-      ${td(pcs.toLocaleString("en-IN"), "bx c")}${td(usd(val), "bx")}${td(inr2(tax), "bx", 2)}
-      ${td(inr2(0), "bx")}${td(inr2(0), "bx")}${td(inr2(g), "bx")}${td(inr2(g), "bx b")}</tr>`;
+      ${td(ciInt(pcs), "bx c")}${td(ciUsd(val), "bx r")}${td(ciInr(tax), "bx r", 2)}
+      ${td(ciInr(0), "bx r")}${td(ciInr(0), "bx r")}${td(ciInr(g), "bx r")}${td(ciInr(g), "bx r")}</tr>`;
   }).join("");
 
-  const page2 = `<table class="wb ci">${colg}<tbody>${head()}
-    <tr class="ln">${td("")}${td("", "l", 4)}${td("BAL B/F…", "k")}${td(usd(cfUsd))}${td("")}
-      ${td(inr2(cfTax))}${td("")}${td(inr2(cfGst))}</tr>
+  const page2 = `<table class="wb ci">${colg}<tbody>${head(true)}
+    <tr class="ln">${td("")}${td("", "l", 4)}${td("BAL B/F…", "c")}${td(usd(cfUsd), "r")}${td("")}
+      ${td(ciInr(cfTax), "r")}${td("")}${td(ciInr(cfGst), "r")}</tr>
     ${body2}
-    <tr class="tt">${td(inr2(taxTot), "")}${td("Total FOB Mumbai Value :", "k l", 3)}${td("", "", 2)}
-      ${td(usd(fobUsd), "b dbl")}${td("")}${td(inr2(taxTot), "b dbl")}${td("")}${td(inr2(gstAll), "b dbl")}</tr>
-    <tr>${td("", "lf bb")}${td("BREAKUP OF GST", "k bx c", 2)}${td("UOM", "k bx c")}${td("VALUE (US$)", "k bx c")}
+    <tr class="tt">${td(ciInr(taxTot), "k c")}${td("Total FOB Mumbai Value :", "k l", 3)}${td("", "", 2)}
+      ${td(ciUsd(fobUsd), "r dbl")}${td("")}${td(ciInr(taxTot), "r dbl")}${td("")}${td(ciInr(gstAll), "r dbl")}</tr>
+    <tr>${td("", "lf bb")}${td("BREAKUP OF GST", "k bx", 2)}${td("UOM", "k bx c")}${td("VALUE (US$)", "k bx c")}
       ${td("TAXABLE VALUE (INR)", "k bx c", 2)}${td("CGST", "k bx c")}${td("SGST", "k bx c")}
       ${td("IGST", "k bx c")}${td("TOTAL GST", "k bx c")}</tr>
     ${breakup}
-    <tr>${td("", "lf")}${td("TOTAL", "k bx", 2)}${td(sum(rows, "pieces").toLocaleString("en-IN"), "k bx c")}
-      ${td(usd(fobUsd), "k bx")}${td(inr2(taxTot), "k bx", 2)}${td(inr2(0), "k bx")}${td(inr2(0), "k bx")}
-      ${td(inr2(gstAll), "k bx")}${td(inr2(gstAll), "k bx")}</tr>
-    <tr>${td("", "lf bb")}${td(esc(amountWords(fobUsd, "US DOLLARS", "CENTS", false)), "k rt0 bb", 10)}</tr>
-    <tr>${td("", "lf")}${td(esc(amountWords(taxTot, "INDIAN RUPEES", "PAISE", true)), "k rt0", 10)}</tr>
+    <tr>${td("", "lf")}${td("TOTAL", "k bx", 2)}${td(ciInt(sum(rows, "pieces")), "bx c dbl")}
+      ${td(ciUsd(fobUsd), "bx r dbl")}${td(ciInr(taxTot), "bx r dbl", 2)}${td(ciInr(0), "bx r dbl")}${td(ciInr(0), "bx r dbl")}
+      ${td(ciInr(gstAll), "bx r dbl")}${td(ciInr(gstAll), "bx r dbl")}</tr>
+    <tr>${td("", "lf bb")}${td(esc(amountWords(fobUsd, "US DOLLARS", "CENTS", false)), "rt0 bb", 10)}</tr>
+    <tr>${td("", "lf")}${td(esc(amountWords(taxTot, "INDIAN RUPEES", "PAISE", true)), "rt0", 10)}</tr>
     ${foot()}</tbody></table>`;
+
+  /* The annexure carries the printed letterhead across the head of it — the
+     name in red, the address under it in blue with the numbers in red — and
+     the mark in a box of its own beside them, as their sheet pastes it. */
+  const inked = (label, value) => (value
+    ? `<span class="lb">${esc(label)}</span><span class="rd">${esc(value)} </span>` : "");
+  const annxHead = `<tr><td class="alh bx" colspan="5">
+      <div class="brand">${esc(E.name)}</div>
+      <div class="sub">${esc(E.sub || "")}</div>
+      <div class="addr lb">${esc(addr[0] || "")}</div>
+      <div class="addr"><span class="lb">${esc(addr[1] || "")} </span>${inked("Tel: ", E.tel)}${inked("E-Mail: ", E.email)}</div>
+      <div class="addr">${inked("GSTIN: ", E.gstin)}${inked("PAN No : ", E.pan)}</div></td>
+    <td class="amark bx" colspan="2"><img class="pllogo" src="${LOGO_SRC}" alt=""></td></tr>`;
 
   const annx = `<table class="wb ci annx">
     <colgroup>${[12.7, 30.8, 13.8, 13.3, 14.3, 13.3, 11.5]
     .map((w) => `<col style="width:${(w / 109.7) * 100}%">`).join("")}</colgroup>
-    <tr class="nb"><td class="nb ttl" colspan="7">ANNEXTURE TO INVOICE</td></tr>
-    <tr>${lb("Inv No & Dt")}${vl(invRef)}${lb("NO OF PKGS")}${td(sum(rows, "boxes"), "c")}
-      ${lb("Shipment to")}${td(esc((s.pod || b.shipTo || "").toUpperCase()), "", 2)}</tr>
+    ${annxHead}
+    <tr class="nb"><td class="nb" colspan="7">&nbsp;</td></tr>
+    <tr class="nb"><td class="nb attl" colspan="7">ANNEXTURE TO INVOICE</td></tr>
+    <tr class="nb"><td class="nb" colspan="7">&nbsp;</td></tr>
+    <tr>${td("Inv No &amp; Dt")}${td(esc(invRef), "bb")}${td("NO OF PKGS")}
+      ${td(ciInt(sum(rows, "boxes")), "bb c")}
+      ${td("Shipment to")}${td(esc((s.pod || b.shipTo || "").toUpperCase()), "bb", 2)}</tr>
     ${bands.map((band) => `
       <tr class="nb"><td class="nb" colspan="7">&nbsp;</td></tr>
-      <tr>${td("ITEM CODE", "h", 2)}${td("QUANTITY", "h")}${td(band.per100 ? "FOB / 100 PCS US$" : "FOB / PC US$", "h", 2)}
-        ${td("NET WT", "h")}${td("RATE / KG", "h")}</tr>
-      <tr>${td(esc(band.label), "k", 2)}${td("PCS", "c")}${td("Unit", "c")}${td("Total", "c")}
-        ${td("KGS", "c")}${td("US$", "c")}</tr>
+      <tr>${td("ITEM CODE", "h l", 2)}${td("QUANTITY", "h")}${td(band.per100 ? "FOB / 100 PCS US$" : "FOB / PC US$", "h", 2)}
+        ${td("NET WT", "h")}${td("RATE / KG", "h l")}</tr>
+      <tr>${td(esc(band.label), "h l bnl", 2)}${td("PCS", "h")}${td("Unit", "h")}${td("Total", "h")}
+        ${td("KGS", "h")}${td("US$", "h")}</tr>
       ${band.rows.map((r) => {
     const rate = band.per100 ? r.fobPc * 100 : r.fobPc;
-    return `<tr>${td(esc(r.it.code))}${td("")}${td(r.pieces.toLocaleString("en-IN"), "c")}
-        ${td(usd(rate), "c")}${td(usd(r.fobTotal), "c")}${td(num(r.netTotal, 3), "c")}
-        ${td(r.netTotal ? num(r.fobTotal / r.netTotal, 2) : "—", "c")}</tr>`;
+    return `<tr class="ln">${td(esc(r.it.code), "l", 2)}${td(ciInt(r.pieces), "c")}
+        ${td(usd(rate), "r")}${td(usd(r.fobTotal), "r")}${td(wbFixed(r.netTotal, 3), "r")}
+        ${td(r.netTotal ? usd(r.fobTotal / r.netTotal) : "—", "r")}</tr>`;
   }).join("")}`).join("")}
     <tr class="nb"><td class="nb" colspan="7">&nbsp;</td></tr>
-    <tr>${td("TOTAL", "k")}${td("", "", 3)}${td(usd(fobUsd), "k c")}${td(num(sum(rows, "netTotal"), 3), "k c")}${td("")}</tr>
+    <tr>${td("TOTAL", "k bx")}${td("", "bx", 3)}${td(usd(fobUsd), "k bx r")}
+      ${td(wbFixed(sum(rows, "netTotal"), 3), "k bx r")}${td("", "nb")}</tr>
   </table>`;
 
   return `${page1}<div class="pgbrk"></div>${page2}<div class="pgbrk"></div>${annx}`;
@@ -5532,29 +5616,63 @@ export const PREVIEW_CSS = `
   .docprev table.ci .lrb{border-left:1px solid #000;border-right:1px solid #000;border-bottom:1px solid #000;}
   .docprev table.ci .lt0{border-top:1px solid #000;}
   .docprev table.ci .bb{border-bottom:1px solid #000;}
-  .docprev table.ci .bx,.docprev table.ci .h,.docprev table.ci .bnd{border:1px solid #000;}
-  .docprev table.ci .k,.docprev table.ci .b,.docprev table.ci .h,.docprev table.ci .bnd{font-weight:700;}
-  .docprev table.ci .h{text-align:center;}
+  .docprev table.ci .bx,.docprev table.ci .h,.docprev table.ci .bnd,.docprev table.ci .hd{border:1px solid #000;}
+  /* Only the form's own column headings are set in bold: a band's heading and
+     the columns under it are typed in the same plain face as the goods. */
+  .docprev table.ci .k,.docprev table.ci .b,.docprev table.ci .h{font-weight:700;}
+  .docprev table.ci .bnd,.docprev table.ci .hd{font-weight:400;}
+  .docprev table.ci .h,.docprev table.ci .hd{text-align:center;}
   .docprev table.ci .c{text-align:center;}
   .docprev table.ci .l{text-align:left;}
   .docprev table.ci .r{text-align:right;}
+  .docprev table.ci .dbl{border-bottom:3px double #000;}
   .docprev table.ci .mer{font-weight:700;text-decoration:underline;}
   .docprev table.ci .ttl{font-weight:700;text-align:center;}
   .docprev table.ci .nb{border:none;}
   .docprev table.ci .brand{font-family:Centaur,Georgia,serif;font-size:18px;font-weight:700;text-align:right;
     vertical-align:middle;}
+  /* The letterhead: the mark against the left margin with the name and the
+     address ranged right of it, as the sheet anchors the picture over the
+     corner of the form. This one cell wraps where the rest of the table does
+     not — it is five typed lines, not one ruled row. */
+  .docprev table.ci .lhead{vertical-align:top;padding:1px 4px 1px 2px;white-space:normal;overflow:visible;height:auto;}
+  .docprev table.ci .lhead .pllogo{float:left;width:56px;height:auto;margin:1px 4px 0 0;}
+  .docprev table.ci .lhead .brand{display:block;line-height:1.05;}
+  .docprev table.ci .lhead .sub,.docprev table.ci .lhead .addr{
+    display:block;text-align:right;font-size:9px;line-height:1.3;margin:0;color:#000;background:none;}
   /* The goods: every line keeps the columns, and only the lines between items
      are ruled — faintly, so a band reads as one block. */
   .docprev table.ci tr.gd td,.docprev table.ci tr.ln td{border-left:1px solid #000;border-right:1px solid #000;}
   .docprev table.ci tr.ln td{border-top:1px solid #d9d9d9;border-bottom:1px solid #d9d9d9;}
   .docprev table.ci tr.gd td:first-child,.docprev table.ci tr.ln td:first-child{border-top:none;border-bottom:none;}
-  .docprev table.ci tr.gd .bnd,.docprev table.ci tr.gd .h{border:1px solid #000;}
+  .docprev table.ci tr.gd .bnd,.docprev table.ci tr.gd .h,.docprev table.ci tr.gd .hd{border:1px solid #000;}
   .docprev table.ci tr.tt td{border-left:1px solid #000;border-right:1px solid #000;border-bottom:1px solid #000;}
   /* The three figures the page carries forward are closed with a double rule,
      as an added column is on their paper. */
   .docprev table.ci tr.tt .dbl{border-top:1px solid #000;border-bottom:3px double #000;}
+  /* The annexure is the one sheet of the three not typed on the form: plain
+     Calibri, with the printed letterhead pasted across the head of it — the
+     name in red over the address in blue, its numbers in red — and the mark in
+     a box of its own beside them. */
   .docprev table.ci.annx{width:640px;}
-  .docprev table.ci.annx td{height:16px;font-size:9.5px;}
+  .docprev table.ci.annx td{height:16px;font-size:10px;font-family:Calibri,Carlito,Arial,sans-serif;padding:0 4px;}
+  .docprev table.ci.annx tr.ln td,.docprev table.ci.annx tr.ln td:first-child{
+    border-left:1px solid #000;border-right:1px solid #000;
+    border-top:1px solid #d9d9d9;border-bottom:1px solid #d9d9d9;}
+  .docprev table.ci.annx .attl{text-align:center;}
+  .docprev table.ci.annx .alh{vertical-align:top;padding:3px 5px;white-space:normal;height:auto;}
+  .docprev table.ci.annx .amark{text-align:center;vertical-align:middle;}
+  .docprev table.ci.annx .amark .pllogo{width:64px;height:auto;}
+  .docprev table.ci.annx .brand{font-family:Centaur,Georgia,serif;font-size:21px;font-weight:400;color:#f00;
+    text-align:right;line-height:1.15;letter-spacing:2px;}
+  .docprev table.ci.annx .sub,.docprev table.ci.annx .addr{
+    display:block;text-align:right;font-size:10px;line-height:1.3;margin:0;color:#000;}
+  .docprev table.ci.annx .lb{color:#00f;}
+  .docprev table.ci.annx .rd{color:#f00;}
+  /* A band's name is wider than the two columns it is typed across — their
+     sheet shrinks it to fit rather than widening the form, so it is set a
+     little smaller here for the same reason. */
+  .docprev table.ci.annx .bnl{font-size:7.8px;}
 
   /* 6 · Suppliers' PO is a letter, not a table: the exporter's name in Centaur
      maroon, the form's labels in blue, the title in red, and the whole page

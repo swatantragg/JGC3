@@ -170,6 +170,10 @@ const FONTS = [
   { key: "ref9b", xml: '<font><b/><sz val="9"/><name val="Arial"/><family val="2"/></font>' },
   { key: "ref9bu", xml: '<font><b/><u/><sz val="9"/><name val="Arial"/><family val="2"/></font>' },
   { key: "brandk", xml: '<font><b/><sz val="18"/><name val="Centaur"/><family val="1"/></font>' },
+  /* The annexure to that invoice (18 · Annx) is not typed on the form at all —
+     it is a plain Calibri sheet with the printed letterhead pasted over the top
+     of it, the name in red Centaur and the address below it in blue. */
+  { key: "brandr", xml: '<font><sz val="18"/><color rgb="FFFF0000"/><name val="Centaur"/><family val="1"/></font>' },
   /* The packing book (19) is typed in colour where the invoice book (18) is
      not: its title and the answers customs reads off it are red, its labels
      blue. Their file stores these as Excel's indexed palette — 10, 12 and 8 —
@@ -199,6 +203,9 @@ const FONTS = [
      rather than in the older Arial books (12 · Shipment boxes & volume). */
   { key: "cal", xml: '<font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' },
   { key: "calb", xml: '<font><b/><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' },
+  // The letterhead's own two inks, in that same Calibri.
+  { key: "calbl", xml: '<font><sz val="11"/><color rgb="FF0000FF"/><name val="Calibri"/><family val="2"/></font>' },
+  { key: "calr", xml: '<font><sz val="11"/><color rgb="FFFF0000"/><name val="Calibri"/><family val="2"/></font>' },
   /* Times New Roman — the customs declarations are typed forms, and that is
      the face they are typed in (13 · Export value declaration). */
   { key: "tnr", xml: '<font><sz val="12"/><color theme="1"/><name val="Times New Roman"/><family val="1"/></font>' },
@@ -335,6 +342,14 @@ function styleXfs(specs) {
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${nf}<fonts count="${FONTS.length}">${FONTS.map((f) => f.xml).join("")}</fonts><fills count="${FILLS.length}">${FILLS.map((f) => f.xml).join("")}</fills><borders count="${bd.length}">${bd.join("")}</borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${xfs.length}">${xfs.join("")}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 }
 
+/* One registered font as the run properties a rich-text run wants. The two
+   elements hold the same children but name the face differently — <name> on a
+   cell font, <rFont> on a run — so that is the one thing swapped. */
+const runProps = (key) => {
+  const f = FONTS.find((x) => x.key === key) || FONTS[0];
+  return f.xml.replace(/^<font>/, "").replace(/<\/font>$/, "").replace(/<name /, "<rFont ");
+};
+
 /* ---- turning one sheet's rows into worksheet XML ---- */
 function sheetXml(sheet, styleOf) {
   const rows = sheet.rows || [];
@@ -350,6 +365,15 @@ function sheetXml(sheet, styleOf) {
       const sAttr = s ? ` s="${s}"` : "";
 
       if (cell.f) return `<c r="${ref}"${sAttr}><f>${X(String(cell.f).replace(/^=/, ""))}</f></c>`;
+
+      /* A line typed in more than one ink — the letterhead's blue labels with
+         their answers in red — is written as runs rather than as one string,
+         each naming the registered font it is set in: [{ t, font }, …]. */
+      if (Array.isArray(cell.rt)) {
+        const runs = cell.rt.filter((r) => r && r.t !== "" && r.t != null)
+          .map((r) => `<r><rPr>${runProps(r.font)}</rPr><t xml:space="preserve">${X(String(r.t))}</t></r>`).join("");
+        return runs ? `<c r="${ref}"${sAttr} t="inlineStr"><is>${runs}</is></c>` : `<c r="${ref}"${sAttr}/>`;
+      }
 
       const v = cell.v;
       const numeric = cell.t === "n"

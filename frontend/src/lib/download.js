@@ -201,11 +201,16 @@ const PRINT_CSS = `
   table.ci .lrb { border-left: 1px solid #000 !important; border-right: 1px solid #000 !important; border-bottom: 1px solid #000 !important; }
   table.ci .lt0 { border-top: 1px solid #000 !important; }
   table.ci .bb { border-bottom: 1px solid #000 !important; }
-  table.ci .bx, table.ci .h, table.ci .bnd { border: 1px solid #000 !important; }
-  table.ci .k, table.ci .b, table.ci .h, table.ci .bnd { font-weight: 700; }
-  table.ci .h, table.ci .c, table.ci .ttl { text-align: center; }
+  table.ci .bx, table.ci .h, table.ci .bnd, table.ci .hd { border: 1px solid #000 !important; }
+  /* Only the form's own column headings are set in bold. A band's heading and
+     the columns under it are typed in the same plain face as the goods, which
+     is how their sheet has them. */
+  table.ci .k, table.ci .b, table.ci .h { font-weight: 700; }
+  table.ci .bnd, table.ci .hd { font-weight: 400; }
+  table.ci .h, table.ci .hd, table.ci .c, table.ci .ttl { text-align: center; }
   table.ci .l { text-align: left; }
   table.ci .r { text-align: right; }
+  table.ci .dbl { border-bottom: 3px double #000 !important; }
   table.ci .mer { font-weight: 700; text-decoration: underline; }
   table.ci .ttl { font-weight: 700; }
   table.ci .nb { border: none !important; }
@@ -222,9 +227,32 @@ const PRINT_CSS = `
   table.ci tr.gd td, table.ci tr.ln td { border-left: 1px solid #000 !important; border-right: 1px solid #000 !important; }
   table.ci tr.ln td { border-top: 1px solid #d9d9d9 !important; border-bottom: 1px solid #d9d9d9 !important; }
   table.ci tr.gd td:first-child, table.ci tr.ln td:first-child { border-top: none !important; border-bottom: none !important; }
-  table.ci tr.gd .bnd, table.ci tr.gd .h { border: 1px solid #000 !important; }
+  table.ci tr.gd .bnd, table.ci tr.gd .h, table.ci tr.gd .hd { border: 1px solid #000 !important; }
   table.ci tr.tt td { border-left: 1px solid #000 !important; border-right: 1px solid #000 !important; border-bottom: 1px solid #000 !important; }
   table.ci tr.tt .dbl { border-top: 1px solid #000 !important; border-bottom: 3px double #000 !important; }
+
+  /* 18 · Annx — the annexure is not typed on the form at all. It is a plain
+     Calibri sheet with the printed letterhead pasted across the head of it,
+     the name in red over the address in blue with its numbers in red, and the
+     mark in a box of its own beside them. Its goods are ruled like the form's:
+     solid down the columns, hairline between the lines. */
+  table.ci.annx td { font-family: Calibri, Carlito, Arial, sans-serif; font-size: 7.5pt; padding: 0 3px; }
+  table.ci.annx tr.ln td, table.ci.annx tr.ln td:first-child {
+    border-left: 1px solid #000 !important; border-right: 1px solid #000 !important;
+    border-top: 1px solid #d9d9d9 !important; border-bottom: 1px solid #d9d9d9 !important; }
+  table.ci.annx .attl { text-align: center; }
+  table.ci.annx .alh { vertical-align: top; padding: 2px 4px; white-space: normal; }
+  table.ci.annx .amark { text-align: center; vertical-align: middle; }
+  table.ci.annx .amark .pllogo { width: 54px; height: auto; margin: 0 auto; }
+  table.ci.annx .brand { font-family: Centaur, Georgia, serif; font-size: 15pt; font-weight: 400;
+    color: #ff0000 !important; text-align: right; line-height: 1.1; letter-spacing: 1.5px; }
+  table.ci.annx .sub, table.ci.annx .addr {
+    display: block; text-align: right; font-size: 7.5pt; line-height: 1.25; margin: 0; color: #000; }
+  table.ci.annx .lb { color: #0000ff !important; }
+  table.ci.annx .rd { color: #ff0000 !important; }
+  /* A band's name is wider than the two columns it is typed across — their
+     sheet shrinks it to fit rather than widening the form, and so does this. */
+  table.ci.annx .bnl { font-size: 6.8pt; }
 
   /* 19 · Packing list — the customs invoice's frame again, but ruled the whole
      way across: its marks column is part of the goods table here rather than
