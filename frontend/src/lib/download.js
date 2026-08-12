@@ -55,6 +55,24 @@ export function downloadGridExcel(filename, sheetName, columns, rows, opts) {
  *  column widths, so it is written as it stands rather than derived from the
  *  HTML. Its tab still takes the name the caller gave the document, so a
  *  whole-stage workbook stays numbered the way the others are. */
+/* Renaming a document's tabs moves the ground under its own formulas: the
+   packing list's second page reads its first by name, so a page prefixed into
+   "20 Page1" leaves the reference behind pointing at nothing. Every reference a
+   document makes to its own tabs is rewritten with them — quoted, because the
+   prefixed name carries a space. Only whole names followed by "!" are matched,
+   so a sheet called Page never rewrites one called Page1. */
+function renameSheets(sheets, prefix) {
+  const named = sheets.map((s) => [String(s.name), `${prefix} ${s.name}`]);
+  const ref = (name) => (/^[A-Za-z0-9_]+$/.test(name) ? `${name}!` : `'${name.replace(/'/g, "''")}'!`);
+  const fix = (f) => named.reduce((out, [from, to]) => out.split(`${from}!`).join(ref(to)), String(f));
+  return sheets.map((s, i) => ({
+    ...s,
+    name: named[i][1],
+    rows: (s.rows || []).map((row) => (row || [])
+      .map((c) => (c && typeof c === "object" && c.f ? { ...c, f: fix(c.f) } : c))),
+  }));
+}
+
 export function downloadDocsExcel(filename, docs) {
   const list = (Array.isArray(docs) ? docs : [docs]).filter((d) => d && (d.html || d.sheet || d.sheets?.length));
   if (!list.length) return;
@@ -62,10 +80,11 @@ export function downloadDocsExcel(filename, docs) {
   downloadWorkbook(filename, list.flatMap((d, i) => {
     const name = d.name || `Sheet${i + 1}`;
     // A document may be a whole workbook of its own — the supplier purchase
-    // order is a letter plus an annexure per range. Taken on its own it keeps
-    // the tab names its source file uses; gathered with others, each tab is
-    // prefixed so one supplier's annexure can't be mistaken for another's.
-    if (d.sheets?.length) return d.sheets.map((s) => ({ ...s, name: many ? `${name} ${s.name}` : s.name }));
+    // order is a letter plus an annexure per range, the packing list two pages
+    // and its item-wise details. Taken on its own it keeps the tab names its
+    // source file uses; gathered with others, each tab is prefixed so one
+    // supplier's annexure can't be mistaken for another's.
+    if (d.sheets?.length) return many ? renameSheets(d.sheets, name) : d.sheets;
     return [d.sheet ? { ...d.sheet, name } : htmlToSheet(d.html, name)];
   }));
 }
@@ -250,6 +269,27 @@ const PRINT_CSS = `
     display: block; text-align: right; font-size: 7.5pt; line-height: 1.25; margin: 0; color: #000; }
   table.ci.annx .lb { color: #0000ff !important; }
   table.ci.annx .rd { color: #ff0000 !important; }
+
+  /* 19 and 20 · the packing list is typed in colour where the invoice book is
+     not: the form's own labels are blue, the answers customs reads off the head
+     of it are red, and the line it is signed for is blue. */
+  table.ci.pl .lb, table.ci.pl .sg { color: #0000ff !important; }
+  table.ci.pl .rd, table.ci.pl .ttl { color: #ff0000 !important; }
+  table.ci.pl .hc { font-size: 5.5pt; }
+
+  /* 20 · the item-wise packing details — the four sheets behind that list.
+     Arial 10 on a black grid, the exporter's own codes in their green and the
+     buyer's part numbers plain, with each sheet named above it since paper has
+     no tabs to read the name off. */
+  .dth { font-family: Arial, Helvetica, sans-serif; font-size: 8pt; font-weight: 700;
+    letter-spacing: .06em; color: #000; margin: 0 0 3px; }
+  table.wb.dt td, table.wb.dt th { padding: 2px 3px; font-size: 7.5pt; }
+  table.wb.dt th.l { text-align: left; }
+  table.wb.dt .gd, table.wb.dt .code { text-align: left; }
+  table.wb.dt .gd { color: #008000 !important; }
+  table.wb.dt td.desc { white-space: normal; text-align: left; }
+  table.wb.dt tr.bnd td { font-weight: 700; }
+  table.wb.dt tr.tot td.o { border-bottom: none !important; }
   /* A band's name is wider than the two columns it is typed across — their
      sheet shrinks it to fit rather than widening the form, and so does this. */
   table.ci.annx .bnl { font-size: 6.8pt; }

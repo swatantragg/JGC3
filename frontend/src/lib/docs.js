@@ -4483,12 +4483,42 @@ const PL_WEIGHTS = [
    brings it back and holds this many under it. A band's heading and its column
    header each take one of them, as they do on their sheet. */
 const PL_TOP = 25;                     // first row of the goods frame, both pages
-const PL_P1_BODY = 45;
 const PL_P2_TOP = 26;                  // page 2's first goods line — 25 is the B/F
-const PL_P2_BODY = 42;
+
+/* Two of the client's books are typed on this one form: the packing list that
+   travels with the customs invoice (19) and the same list with the item-wise
+   packing details behind it (20). Same grid, same head, same frame — what
+   differs is how deep each page is ruled, how the order is stated across the
+   head of it, and what page 2 closes on. The item-wise book types the whole run
+   of purchase orders into the order box and spends its last page on the four
+   detail tabs, so it carries no break-up of weights; the list book states one
+   order and totals the weights by material at the foot.
+
+   `body` is the lines of goods a page holds, and `scale` what each page is
+   printed at — theirs is set to fit the paper, and a deeper page is set
+   smaller. Column F is a shade wider in the item-wise book. */
+const PL_FORMS = {
+  19: { p1Body: 45, p2Body: 42, scale: [86, 86], colF: [9.33203125, 9.33203125], orders: "ref", breakup: true },
+  20: { p1Body: 51, p2Body: 46, scale: [79, 81], colF: [10.1640625, 10.6640625], orders: "list", breakup: false },
+};
 /* A consignment longer than the two pages hold runs page 2 on and pushes its
    totals down rather than losing the lines off the end. */
-const plP2Body = (p2) => Math.max(PL_P2_BODY, p2.length);
+const plP2Body = (p2, form) => Math.max(form.p2Body, p2.length);
+
+/* Rows 4-7 of the head, right of the letterhead: the order the goods were
+   bought on, as [label, answer, [label edges, answer edges]].
+
+   The list book (19) names the buyer's own order with the reference under it,
+   each on its own pair of ruled lines. The item-wise book (20) has four papers
+   behind it that have to be read against the orders they came off, so it gives
+   the whole box to the run of purchase orders — labelled once, ruled as one
+   block, and broken over the four lines their file breaks it over. */
+const plOrderBox = (ctx, form, orderRef, s) => (form.orders === "list"
+  ? wrapTo(poHeaderList(ctx), 40, 4).map((line, i) => [
+    i === 0 ? "Buyers Order No: " : "", line,
+    i === 0 ? ["lt", "lrt"] : i === 3 ? ["lb", "lrb"] : ["l", "lr"]])
+  : [["Buyers Order No: ", orderRef, ["lt", "lrt"]], ["", "", ["lb", "lrb"]],
+    ["Other Reference(s):", s.otherRef || "", ["lt", "lrt"]], ["", "", ["lb", "lrb"]]]);
 
 function packingBands(ctx) {
   const by = new Map();
@@ -4512,15 +4542,15 @@ const plShape = (band) => `${band.len}|${band.pkg}|${band.per}`;
 
 /* One line of the frame per band heading, per column header and per item, in
    the order the form prints them, split over the two pages. */
-function packingLayout(bands) {
+function packingLayout(bands, form) {
   const all = [];
   bands.forEach((band) => {
     all.push({ kind: "head", band });
     all.push({ kind: "cols", band });
     band.rows.forEach((r) => all.push({ kind: "item", band, r }));
   });
-  let p1 = all.slice(0, PL_P1_BODY);
-  let p2 = all.slice(PL_P1_BODY);
+  let p1 = all.slice(0, form.p1Body);
+  let p2 = all.slice(form.p1Body);
   if (!p2.length) return { p1, carry: null, p2 };
   const carry = p2[0].band;
   /* A heading left at the foot of page 1 with nothing under it heads nothing:
@@ -4559,11 +4589,11 @@ const packingDescribe = (ctx, bands, rows) => wrapTo(
   `${ctx.inv.ship?.pkgs || `${sum(rows, "boxes")} PACKAGES`} CONTAINING ${packingGoods(bands)}`, 70, 2,
 );
 
-function packingListSheets(ctx) {
+function packingListSheets(ctx, form) {
   const E = ctx.EXPORTER, b = ctx.buyer, s = ctx.inv.ship || {};
   const rows = L(ctx);
   const bands = packingBands(ctx);
-  const { p1, carry, p2 } = packingLayout(bands);
+  const { p1, carry, p2 } = packingLayout(bands, form);
   const marks = ciMarks(ctx, rows);
   const desc = packingDescribe(ctx, bands, rows);
 
@@ -4613,6 +4643,15 @@ function packingListSheets(ctx) {
   const blLine = s.blNo ? `BL : ${s.blNo}${s.blDate ? `  DT. ${ddmm(s.blDate)}` : ""}` : "";
   const addr = addrLines(E), bAddr = addrLines({ addr: b.addr });
 
+  // Rows 4-7: the letterhead down the left of them, the order box beside it.
+  const orderBox = plOrderBox(ctx, form, orderRef, s);
+  const headLeft = [
+    [E.sub || "", C.sub, "lr"],
+    [addr[0] || "", C.addr, "lr"],
+    [addr[1] || "", C.addr, "lr"],
+    [[E.tel && `Tel: ${E.tel}`, E.email && `E-Mail: ${E.email}`].filter(Boolean).join(" "), C.addr, "lrb"],
+  ];
+
   function headBlock(grid) {
     const { row } = grid;
     row([[9, { v: "PACKING LIST", s: { ...C.ttl, border: "box" } }]]);
@@ -4624,16 +4663,14 @@ function packingListSheets(ctx) {
     row([[1, { v: "", s: { ...C.txt, border: "l" } }], ...blank(2),
       [1, { v: "", s: { ...C.txt, border: "r" } }],
       [2, { v: "", s: { ...C.txt, border: "lb" } }], [3, { v: "", s: { ...C.txt, border: "rb" } }]], 12.75);
-    row([[4, { v: E.sub || "", s: { ...C.sub, border: "lr" } }],
-      [2, { v: "Buyers Order No: ", s: { ...C.lbl, border: "lt" } }],
-      [3, { v: orderRef, s: { ...C.txt, border: "lrt" } }]], 12.75);
-    row([[4, { v: addr[0] || "", s: { ...C.addr, border: "lr" } }],
-      [2, { v: "", s: { ...C.txt, border: "lb" } }], [3, { v: "", s: { ...C.txt, border: "lrb" } }]], 12.75);
-    row([[4, { v: addr[1] || "", s: { ...C.addr, border: "lr" } }],
-      [2, { v: "Other Reference(s):", s: { ...C.lbl, border: "lt" } }],
-      [3, { v: s.otherRef || "", s: { ...C.txt, border: "lrt" } }]], 12.75);
-    row([[4, { v: [E.tel && `Tel: ${E.tel}`, E.email && `E-Mail: ${E.email}`].filter(Boolean).join(" "), s: { ...C.addr, border: "lrb" } }],
-      [2, { v: "", s: { ...C.txt, border: "lb" } }], [3, { v: "", s: { ...C.txt, border: "lrb" } }]], 12.75);
+    headLeft.forEach(([text, style, edge], i) => {
+      const [lbl, val, [lb, vb]] = orderBox[i];
+      // Only a line that carries a label is set in the form's blue; the rest of
+      // the box is the plain face the answer is typed in.
+      row([[4, { v: text, s: { ...style, border: edge } }],
+        [2, { v: lbl, s: { ...(lbl ? C.lbl : C.txt), border: lb } }],
+        [3, { v: val, s: { ...C.txt, border: vb } }]], 12.75);
+    });
     row([[3, { v: "On Account & risks of", s: { ...C.lbl, border: "lt" } }],
       [1, { v: "", s: { ...C.txt, border: "rt" } }],
       [5, { v: blLine, s: { ...C.lbl, border: "lrt" } }]]);
@@ -4764,14 +4801,30 @@ function packingListSheets(ctx) {
       [2, { v: "PROPRIETOR", s: { ...C.txt, border: "rb", align: "right" } }]], 12.75);
   }
 
+  /* The foot of page 2 where there is no break-up to put beside the signature:
+     the left of the block is one empty box six rows deep, as their item-wise
+     file rules it, with the space it is signed in against the right margin. The
+     two lines of it point back at page 1 rather than being typed again, so the
+     two pages cannot sign for different names. */
+  function signBlock2(grid, forRef, propRef) {
+    const { row } = grid;
+    const box = () => blank(5, { ...C.txt, border: "box", align: "center" });
+    row([[5, { v: "", s: { ...C.txt, border: "box" } }, 5],
+      [4, { f: forRef, s: { ...C.sign, border: "lrt", align: "right" } }]], 12.75);
+    row([...box(), [4, { v: "", s: { ...C.txt, border: "lr" } }, 3]], 12.75);
+    for (let i = 0; i < 3; i++) row(box(), 12.75);
+    row([...box(), [2, { v: "", s: { ...C.txt, border: "lb" } }],
+      [2, { f: propRef, s: { ...C.txt, border: "rb", align: "right" } }]], 12.75);
+  }
+
   const SHEET = {
-    widths: [11.83203125, 9.33203125, 9.33203125, 36.5, 12.6640625, 9.33203125,
+    widths: [11.83203125, 9.33203125, 9.33203125, 36.5, 12.6640625, form.colF[0],
       9.1640625, 12.33203125, 12.33203125],
     defaultColWidth: 9.33203125,
     defaultRowHeight: 12,
     colStyle: F,
     page: {
-      paper: 9, orientation: "portrait", scale: 86,
+      paper: 9, orientation: "portrait", scale: form.scale[0],
       margins: { left: 0.393701, right: 0.393701, top: 0.393701, bottom: 0.393701, header: 0, footer: 0 },
     },
   };
@@ -4780,8 +4833,8 @@ function packingListSheets(ctx) {
   const g1 = formGrid(9);
   headBlock(g1);
   goodsHead(g1, false);
-  for (let i = 0; i < PL_P1_BODY; i++) bodyLine(g1, p1[i], PL_TOP + i);
-  const cfRow = PL_TOP + PL_P1_BODY;                     // the carried-forward line
+  for (let i = 0; i < form.p1Body; i++) bodyLine(g1, p1[i], PL_TOP + i);
+  const cfRow = PL_TOP + form.p1Body;                    // the carried-forward line
   totalLine(g1, "BALANCE C/F….", cfRow - 1);
   const forRow = g1.at() + 1;
   signBlock(g1, `FOR ${E.name}`.toUpperCase());
@@ -4811,57 +4864,66 @@ function packingListSheets(ctx) {
     [2, { v: "BAL B/F…", s: { ...rule("", "thin", { align: "right" }), font: "ref9b" } }],
     [1, { f: `Page1!H${cfRow}`, s: { ...G.wt, border: { l: "thin", r: "thin" } } }],
     [1, { f: `Page1!I${cfRow}`, s: { ...G.wt, border: { l: "thin", r: "thin" } } }]], 12.75);
-  const p2Body = plP2Body(p2);
+  const p2Body = plP2Body(p2, form);
   for (let i = 0; i < p2Body; i++) bodyLine(g2, p2[i], PL_P2_TOP + i);
   const totRow = PL_P2_TOP + p2Body;
   totalLine(g2, "TOTAL WEIGHTS……….", totRow - 1);
 
   /* ---- the break-up of weights, totalled by material ---------------------- */
-  const box = (v, st = C.txt, extra = {}) => ({ v, s: { ...st, border: "box", ...extra } });
-  g2.row([[3, box("BREAK-UP OF WEIGHTS")], [1, box("NET WT", C.txt, { align: "center" })],
-    [1, box("GROSS WT", C.txt, { align: "center" })],
-    [4, { f: `Page1!F${forRow}`, s: { ...C.txt, border: "lrt", align: "right" } }]], 12.75);
+  if (form.breakup) {
+    const box = (v, st = C.txt, extra = {}) => ({ v, s: { ...st, border: "box", ...extra } });
+    g2.row([[3, box("BREAK-UP OF WEIGHTS")], [1, box("NET WT", C.txt, { align: "center" })],
+      [1, box("GROSS WT", C.txt, { align: "center" })],
+      [4, { f: `Page1!F${forRow}`, s: { ...C.txt, border: "lrt", align: "right" } }]], 12.75);
 
-  const first = g2.at() + 1;
-  PL_WEIGHTS.forEach(([label, keys], i) => {
-    const has = (l) => keys.includes(l.band.key);
-    const agg = (col) => {
-      const refs = [rangeRefs(lineRuns(p1, PL_TOP, has), col, "Page1"),
-        rangeRefs(lineRuns(p2, PL_P2_TOP, has), col, "")].filter(Boolean).join(",");
-      return refs ? `SUM(${refs})` : "0";
-    };
-    const edge = { l: "thin", r: "thin", t: i ? "hair" : "thin", b: "hair" };
-    const wt = (col) => ({ f: agg(col), s: { ...F, border: edge, align: "center", fmt: PL_WT } });
-    /* The space the list is signed in stands beside the break-up, as one box
-       down the four lines of it. */
-    const right = i === 0
-      ? [[4, { v: "", s: { ...C.txt, border: "lr" } }, PL_WEIGHTS.length - 1]]
-      : [[1, { v: "", s: { ...C.txt, border: "l" } }], ...blank(2),
-        [1, { v: "", s: { ...C.txt, border: "r" } }]];
-    g2.row([[3, { v: label, s: { ...F, border: edge } }], [1, wt("H")], [1, wt("I")], ...right], 12.75);
-  });
-  const last = g2.at();
-  const dbl = { ...F, border: { l: "thin", r: "thin", t: "thin", b: "double" }, align: "center", fmt: PL_WT };
-  g2.row([[3, box("TOTAL WEIGHTS")],
-    [1, { f: `SUM(D${first}:D${last})`, s: dbl }], [1, { f: `SUM(E${first}:E${last})`, s: dbl }],
-    [2, { v: "", s: { ...C.txt, border: "lb" } }],
-    [2, { f: `Page1!H${propRow}`, s: { ...C.txt, border: "rb", align: "right" } }]], 12.75);
+    const first = g2.at() + 1;
+    PL_WEIGHTS.forEach(([label, keys], i) => {
+      const has = (l) => keys.includes(l.band.key);
+      const agg = (col) => {
+        const refs = [rangeRefs(lineRuns(p1, PL_TOP, has), col, "Page1"),
+          rangeRefs(lineRuns(p2, PL_P2_TOP, has), col, "")].filter(Boolean).join(",");
+        return refs ? `SUM(${refs})` : "0";
+      };
+      const edge = { l: "thin", r: "thin", t: i ? "hair" : "thin", b: "hair" };
+      const wt = (col) => ({ f: agg(col), s: { ...F, border: edge, align: "center", fmt: PL_WT } });
+      /* The space the list is signed in stands beside the break-up, as one box
+         down the four lines of it. */
+      const right = i === 0
+        ? [[4, { v: "", s: { ...C.txt, border: "lr" } }, PL_WEIGHTS.length - 1]]
+        : [[1, { v: "", s: { ...C.txt, border: "l" } }], ...blank(2),
+          [1, { v: "", s: { ...C.txt, border: "r" } }]];
+      g2.row([[3, { v: label, s: { ...F, border: edge } }], [1, wt("H")], [1, wt("I")], ...right], 12.75);
+    });
+    const last = g2.at();
+    const dbl = { ...F, border: { l: "thin", r: "thin", t: "thin", b: "double" }, align: "center", fmt: PL_WT };
+    g2.row([[3, box("TOTAL WEIGHTS")],
+      [1, { f: `SUM(D${first}:D${last})`, s: dbl }], [1, { f: `SUM(E${first}:E${last})`, s: dbl }],
+      [2, { v: "", s: { ...C.txt, border: "lb" } }],
+      [2, { f: `Page1!H${propRow}`, s: { ...C.txt, border: "rb", align: "right" } }]], 12.75);
+  } else {
+    // The make-up of the consignment is on the four tabs behind this page, so
+    // its foot carries the signature alone.
+    signBlock2(g2, `Page1!F${forRow}`, `Page1!H${propRow}`);
+  }
 
   // The letterhead mark, on both sheets as their file has it.
+  const page2 = { ...SHEET, page: { ...SHEET.page, scale: form.scale[1] } };
+  page2.widths = [...SHEET.widths];
+  page2.widths[5] = form.colF[1];
   return [
     fitSheet({ name: "Page1", rows: g1.rows, merges: g1.merges, heights: g1.heights, image: formLogo({ colOff: 57150, rowOff: 85726, cy: 704850 }), ...SHEET }, { widen: false }),
-    fitSheet({ name: "Page2", rows: g2.rows, merges: g2.merges, heights: g2.heights, image: formLogo({ colOff: 57150, rowOff: 85726 }), ...SHEET }, { widen: false }),
+    fitSheet({ name: "Page2", rows: g2.rows, merges: g2.merges, heights: g2.heights, image: formLogo({ colOff: 57150, rowOff: 85726 }), ...page2 }, { widen: false }),
   ];
 }
 
 /* The same form on screen and on paper. The worksheet above rules the frame
    with cell borders; here the nine columns are one table per page, ruled by
    the same rules, so the preview, the PDF and the .xlsx are the one document. */
-function packingListHtml(ctx) {
+function packingListHtml(ctx, form) {
   const E = ctx.EXPORTER, b = ctx.buyer, s = ctx.inv.ship || {};
   const rows = L(ctx);
   const bands = packingBands(ctx);
-  const { p1, carry, p2 } = packingLayout(bands);
+  const { p1, carry, p2 } = packingLayout(bands, form);
   const marks = ciMarks(ctx, rows);
   const desc = packingDescribe(ctx, bands, rows);
   const addr = addrLines(E), bAddr = addrLines({ addr: b.addr });
@@ -4886,15 +4948,21 @@ function packingListHtml(ctx) {
     ${[addr[0], addr[1], [E.tel && `Tel: ${E.tel}`, E.email && `E-Mail: ${E.email}`].filter(Boolean).join(" ")]
     .map((l) => `<div class="addr">${esc(l || "")}</div>`).join("")}</td>`;
 
+  /* The order box, as the worksheet writes it — one order and the reference
+     under it, or the whole run of purchase orders across its four lines. The
+     edges are the worksheet's own, read off through the classes that rule the
+     same lines on paper, so the two can never disagree. */
+  const EDGE = { lt: "lt", lrt: "lrt", lb: "lf bb", lrb: "lrb", l: "lf", lr: "lf rt0" };
+  const orderBox = plOrderBox(ctx, form, orderRef, s)
+    .map(([lbl, val, [lb, vb]]) => `<tr>${vl(lbl, `${lbl ? "k lb " : ""}${EDGE[lb]}`, 2)}${vl(val, EDGE[vb], 3)}</tr>`)
+    .join("");
+
   const head = (page2) => `
     <tr>${page2 ? `${vl("PACKING LIST", "ttl lt bb", 7)}${vl("Page 2", "rd rt bb r", 2)}`
     : vl("PACKING LIST", "ttl lt rt0 bb", 9)}</tr>
     <tr>${letterhead}${vl("Invoice No. ", "k lb lt", 2)}${vl(invRef, "rt", 3)}</tr>
     <tr>${td("", "lf bb", 2)}${td("", "rt0 bb", 3)}</tr>
-    <tr>${vl("Buyers Order No: ", "k lb lt", 2)}${vl(orderRef, "lrt", 3)}</tr>
-    <tr>${td("", "lf bb", 2)}${td("", "lrb", 3)}</tr>
-    <tr>${vl("Other Reference(s):", "k lb lt", 2)}${vl(s.otherRef || "", "lrt", 3)}</tr>
-    <tr>${td("", "lf bb", 2)}${td("", "lrb", 3)}</tr>
+    ${orderBox}
     <tr>${vl("On Account & risks of", "k lb lt", 3)}${td("", "rt")}${vl(blLine, "k lb lrt", 5)}</tr>
     <tr>${vl(b.name ? `Messrs. ${b.name},` : "", "lf rt0", 4)}${td("", "lf rt0", 5)}</tr>
     <tr>${vl(b.brand ? `T/A ${b.brand},` : "", "lf rt0", 4)}${vl(s.vessel ? `Shipped per: ${s.vessel}` : "", "lf rt0", 5)}</tr>
@@ -4951,7 +5019,8 @@ function packingListHtml(ctx) {
     ${td("", "lrb", 3)}${nm(sum(list, "netTotal"), 3, "bx c")}${nm(sum(list, "grossTotal"), 3, "bx c")}</tr>`;
 
   const p1Rows = p1.filter((l) => l.kind === "item").map((l) => l.r);
-  const colg = `<colgroup>${[11.83, 9.33, 9.33, 36.5, 12.66, 9.33, 9.16, 12.33, 12.33]
+  // The sheet's own column widths, to the two places the page is ruled in.
+  const colg = `<colgroup>${[11.83, 9.33, 9.33, 36.5, 12.66, Math.round(form.colF[0] * 100) / 100, 9.16, 12.33, 12.33]
     .map((w) => `<col style="width:${(w / 112.6) * 100}%">`).join("")}</colgroup>`;
 
   const sign = (forText) => `
@@ -4963,7 +5032,7 @@ function packingListHtml(ctx) {
       ${vl("PROPRIETOR", "rt0 bb r", 2)}</tr>`;
 
   const page1 = `<table class="wb ci pl">${colg}<tbody>${head(false)}
-    ${Array.from({ length: PL_P1_BODY }, (_, i) => line(p1[i])).join("")}
+    ${Array.from({ length: form.p1Body }, (_, i) => line(p1[i])).join("")}
     ${totalRow("BALANCE C/F….", p1Rows)}
     ${sign(`FOR ${E.name}`.toUpperCase())}</tbody></table>`;
 
@@ -4976,24 +5045,32 @@ function packingListHtml(ctx) {
       ${nm(sum(mine, "grossTotal"), 3, "lf rt0 c")}${td("", "lf rt0", 4)}</tr>`;
   }).join("");
 
+  /* The foot of page 2: the break-up of weights beside the signature, or — in
+     the item-wise book, whose make-up is on the tabs behind it — the empty box
+     its file rules there instead. */
+  const foot = form.breakup
+    ? `<tr>${vl("BREAK-UP OF WEIGHTS", "bx", 3)}${vl("NET WT", "bx c")}${vl("GROSS WT", "bx c")}
+        ${vl(`FOR ${E.name}`.toUpperCase(), "sg lrt r", 4)}</tr>
+      ${breakup}
+      <tr>${vl("TOTAL WEIGHTS", "bx", 3)}${nm(sum(rows, "netTotal"), 3, "bx dbl c")}
+        ${nm(sum(rows, "grossTotal"), 3, "bx dbl c")}${td("", "lf bb", 2)}${vl("PROPRIETOR", "rt0 bb r", 2)}</tr>`
+    : `<tr>${td("", "bx", 5)}${vl(`FOR ${E.name}`.toUpperCase(), "sg lrt r", 4)}</tr>
+      ${Array.from({ length: 4 }, () => `<tr>${td("", "bx", 5)}${td("", "lf rt0", 4)}</tr>`).join("")}
+      <tr>${td("", "bx", 5)}${td("", "lf bb", 2)}${vl("PROPRIETOR", "rt0 bb r", 2)}</tr>`;
+
   const page2 = `<table class="wb ci pl">${colg}<tbody>${head(true)}
     ${bf}
-    ${Array.from({ length: plP2Body(p2) }, (_, i) => line(p2[i])).join("")}
+    ${Array.from({ length: plP2Body(p2, form) }, (_, i) => line(p2[i])).join("")}
     ${totalRow("TOTAL WEIGHTS……….", rows)}
-    <tr>${vl("BREAK-UP OF WEIGHTS", "bx", 3)}${vl("NET WT", "bx c")}${vl("GROSS WT", "bx c")}
-      ${vl(`FOR ${E.name}`.toUpperCase(), "sg lrt r", 4)}</tr>
-    ${breakup}
-    <tr>${vl("TOTAL WEIGHTS", "bx", 3)}${nm(sum(rows, "netTotal"), 3, "bx dbl c")}
-      ${nm(sum(rows, "grossTotal"), 3, "bx dbl c")}${td("", "lf bb", 2)}${vl("PROPRIETOR", "rt0 bb r", 2)}</tr>
-    </tbody></table>`;
+    ${foot}</tbody></table>`;
 
   return `${page1}<div class="pgbrk"></div>${page2}`;
 }
 
 B["19"] = (ctx) => ({
   name: "Packing_List_19",
-  html: packingListHtml(ctx),
-  sheets: packingListSheets(ctx),
+  html: packingListHtml(ctx, PL_FORMS[19]),
+  sheets: packingListSheets(ctx, PL_FORMS[19]),
   page: "portrait",
 });
 function packingListDoc(ctx, title, no, boxLabel = "Boxes") {
@@ -5017,22 +5094,309 @@ function packingListDoc(ctx, title, no, boxLabel = "Boxes") {
     <tr><td class="k">Marks</td><td>${esc(s.marks || "—")}</td><td class="k">Packages</td><td>${esc(s.pkgs || "—")}</td></tr></table>`;
   return `${masthead(ctx, title)}${shipRow}${tableOf(cols, rows, foot)}`;
 }
-B["20"] = (ctx) => {
+/* ---------- Doc 20 · Packing list with item-wise packing details -------------
+   Against 20-Packing List with item wise Packing Details.xlsx.
+
+   The first two sheets are the packing list itself — the same form as 19, ruled
+   deeper and headed with the whole run of purchase orders (see PL_FORMS). What
+   makes this a different document is the four sheets behind it: the make-up of
+   every line, family by family, as the factory packed it.
+
+   They are not four copies of one grid. Their file gives each family the columns
+   that family actually needs — the risers carry a length and are banded by the
+   size they belong to, the moulded fittings are a flat list, the nylon range has
+   no length at all, and the cartons are measured in three dimensions instead of
+   one size — so each tab states its own columns below and one builder rules
+   whatever it is given.
+
+   Everything on them stays live: the packages are pieces over what one package
+   holds, and both columns are totalled with SUBTOTAL, so a filtered tab
+   re-totals itself the way their sheet does.                                 */
+
+/* Their sheets set the exporter's own codes in green and the buyer's part
+   numbers in plain black — the part numbers are all digits, which is what tells
+   the two apart. */
+const houseCode = (v) => !/^\d+$/.test(String(v || "").trim());
+
+const DT = {                                     // 20 · the detail tabs' styles
+  po: { font: "refb", border: "b", valign: "center" },
+  poW: { font: "refb", border: "b", valign: "center", wrap: true },
+  head: { font: "refb", border: "box", align: "center", valign: "center" },
+  headL: { font: "refb", border: "box", align: "left", valign: "center" },
+  band: { font: "refb11", border: "box", align: "left", valign: "center" },
+  ctr: { font: "ref", border: "box", align: "center", valign: "center" },
+  ctrB: { font: "refb", border: "box", align: "center", valign: "center" },
+  // The nylon range is typed plain all the way across, codes included.
+  left: { font: "ref", border: "box", align: "left", valign: "center" },
+  desc: { font: "ref", border: "box", align: "left", valign: "center", wrap: true },
+  descB: { font: "refb", border: "box", align: "left", valign: "center", wrap: true },
+  qty: { font: "ref", border: "box", valign: "center" },
+  foot: { font: "ref", border: "t", valign: "center" },
+  tot: { font: "refb", border: "box", valign: "center" },
+};
+/* The identity columns of a line, in whichever ink the line calls for — the
+   whole block takes its colour from the item's own code, so a part number the
+   buyer numbers reads black across all of them rather than only in the column
+   the number happens to sit in. */
+const dtCode = (align) => (r) => ({
+  font: houseCode(r.it.code) ? "refgd" : "refb", border: "box", align, valign: "center",
+});
+const dtCodeL = dtCode("left"), dtCodeC = dtCode("center");
+
+/* The paper their detail tabs are printed on — landscape A4, and as tight to
+   the edge as the list itself. */
+const DT_MARGIN = { left: 0.393701, right: 0.393701, top: 0.393701, bottom: 0.393701, header: 0, footer: 0 };
+
+/* A carton is measured across three dimensions where every other item has one
+   size, and the master holds them as it writes them — "570 X 368 X 178". */
+const boxDims = (it) => {
+  const parts = String(it.size || "").split(/\s*[x×*]\s*/i).map((p) => p.trim()).filter(Boolean);
+  const all = parts.length > 1 ? parts : [...parts, String(it.length || "").trim()].filter(Boolean);
+  return [all[0] || "", all[1] || "", all[2] || ""];
+};
+
+/* The four tabs, in the order their workbook runs them. `keys` are the families
+   (see familyOf) each one gathers, `band` the heading its goods are grouped
+   under — only the risers are banded, and the rest are one list.
+
+   A column is { h, sub, span, w, get, s }: `h` is the heading it takes on the
+   first header line, `sub` the one under it, and `sub: null` runs the heading
+   down over both. `span` is how many columns a heading covers — the column it
+   covers then gives its own `sub` and nothing else. `pcs` marks the pieces
+   column, `per` what one package holds, and `pkg` the packages the two work
+   out between them. `labelCols` is how far the band's name runs along the
+   identity columns their sheet types it into. */
+const PL20_TABS = [
+  {
+    name: "Risers", keys: ["mxm", "mxf"], scale: 74, fitH: 0, labelCols: 2,
+    band: (r) => String(r.it.group || "").trim(),
+    cols: [
+      { h: "CODE", sub: "", w: 15.6640625, get: (r) => r.it.code, s: dtCodeL },
+      { h: "GD CODE", sub: "", w: 14.6640625, get: (r) => r.it.gd, s: dtCodeL },
+      { h: "GL CODE", sub: null, w: 15.6640625, get: (r) => r.it.gl, s: dtCodeC },
+      { h: "SIZE", sub: "MM / IN", w: 9, get: (r) => r.it.size, s: DT.ctr },
+      { h: "LENGTH", sub: "MM", w: 10, get: (r) => r.it.length, s: DT.ctr },
+      { h: "PACKING", span: 2, sub: "UNIT", w: 7, get: (r) => r.it.packUnit, s: DT.ctr },
+      { sub: "BOX", w: 7.1640625, get: (r) => r.packing, s: DT.ctr, per: 1 },
+      { h: "DESCRIPTION", sub: null, w: 29.33203125, get: (r) => r.it.description, s: DT.descB },
+      { h: "QUANTITY", span: 2, sub: "PCS", w: 10.6640625, pcs: 1, s: DT.qty },
+      { sub: "BOX", w: 10.6640625, pkg: 1, s: DT.qty },
+    ],
+  },
+  {
+    name: "PP Fittings", keys: ["ppm"], scale: 92, head: [19.5, 19.5],
+    margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0, footer: 0 },
+    cols: [
+      { h: "CODE", sub: "", w: 15.6640625, get: (r) => r.it.code, s: dtCodeL },
+      { h: "GL CODE", sub: "", w: 15.6640625, get: (r) => r.it.gl, s: dtCodeC },
+      { h: "SIZE", sub: "MM", w: 6, get: (r) => r.it.size, s: DT.ctrB },
+      { h: "LENGTH", sub: "MM", w: 10, get: (r) => r.it.length, s: DT.ctrB },
+      { h: "PACKING", span: 2, sub: "UNIT", w: 7, get: (r) => r.it.packUnit, s: DT.ctr },
+      { sub: "BOX", w: 7.33203125, get: (r) => r.packing, s: DT.ctr, per: 1 },
+      { h: "DESCRIPTION", sub: "", w: 38.1640625, get: (r) => r.it.description, s: DT.desc },
+      { h: "Quantity", span: 2, sub: "Pcs", w: 8.1640625, pcs: 1, s: DT.qty },
+      { sub: "Box", w: 8.5, pkg: 1, s: DT.qty },
+    ],
+  },
+  {
+    name: "Nylon Fittings", keys: ["grn"], scale: 96, head: [27, 20.1], poHeight: 30,
+    cols: [
+      { h: "GD CODE", sub: "", w: 14.6640625, get: (r) => r.it.gd, s: DT.left },
+      { h: "GL CODE", sub: "", w: 14.6640625, get: (r) => r.it.gl, s: DT.ctr },
+      { h: "SIZE", sub: "MM", w: 6.5, get: (r) => r.it.size, s: DT.ctr },
+      { h: "PACKING", span: 2, sub: "UNIT", w: 6, get: (r) => r.it.packUnit, s: DT.ctr },
+      { sub: "BOX", w: 7.1640625, get: (r) => r.packing, s: DT.ctr, per: 1 },
+      { h: "DESCRIPTION", sub: "", w: 29.33203125, get: (r) => r.it.description, s: DT.desc },
+      { h: "QUANTITY", span: 2, sub: "PCS", w: 10.6640625, pcs: 1, s: DT.qty },
+      { sub: "BOX", w: 10.6640625, pkg: 1, s: DT.qty },
+    ],
+  },
+  {
+    name: "Boxes", keys: ["box"], scale: 81, labelCols: 1,
+    margins: { left: 0.25, right: 0.25, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 },
+    /* The cartons' line under the CODE column is what the board is, not a size
+       band, and it is the same for the whole sheet. The master has no field for
+       it, so it is the form's own words unless the group names the board. */
+    spec: (rows) => {
+      const g = String(rows[0]?.it.group || "").trim();
+      return /ply|flute/i.test(g) ? g : "3 PLY BROAD FLUTE";
+    },
+    cols: [
+      { h: "CODE", sub: "", w: 23.33203125, get: (r) => r.it.code, s: DT.headL },
+      { h: "SIZE", span: 3, sub: "MM", w: 6.5, get: (r) => boxDims(r.it)[0], s: DT.ctr },
+      { sub: "MM", w: 9.6640625, get: (r) => boxDims(r.it)[1], s: DT.ctr },
+      { sub: "MM", w: 4.83203125, get: (r) => boxDims(r.it)[2], s: DT.ctr },
+      { h: "PACKING", sub: "S/W BDL", w: 11, get: (r) => r.packing, s: DT.ctr, per: 1 },
+      { h: "DESCRIPTION", sub: "", w: 29.33203125, get: (r) => r.it.description, s: DT.descB },
+      { h: "QUANTITY", span: 2, sub: "PCS", w: 10.6640625, pcs: 1, s: DT.qty },
+      { sub: "BDL", w: 10.6640625, pkg: 1, s: DT.qty },
+    ],
+  },
+];
+
+/* The orders a tab's goods were bought on, headed as their sheet heads it —
+   only the orders that family actually came off, in the order they were
+   raised. */
+function poListFor(ctx, rows) {
+  const when = new Map();
+  ctx.buyerMaster.forEach((r) => { if (!when.has(r.po)) when.set(r.po, r.date); });
+  const mine = [...new Set(rows.flatMap((r) => r.pos || []))]
+    .sort((a, b) => String(when.get(a) || "").localeCompare(String(when.get(b) || "")));
+  const list = mine.map((po) => `${po}${when.get(po) ? ` DT ${ddmm(when.get(po))}` : ""}`).join(", ");
+  return list ? `PO NO${mine.length > 1 ? "S" : ""} : ${list}` : "";
+}
+
+/* The goods a tab carries, grouped as it groups them: one run of items when the
+   tab is a flat list, a run per band when it is not. */
+function detailGroups(tab, rows) {
+  if (!tab.band) return [{ label: "", rows }];
+  const by = new Map();
+  rows.forEach((r) => {
+    const k = tab.band(r);
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(r);
+  });
+  return [...by.entries()].map(([label, list]) => ({ label, rows: list }));
+}
+
+/* One tab as a worksheet. */
+function detailSheet(ctx, tab, rows) {
+  const cols = tab.cols, n = cols.length;
+  const g = formGrid(n);
+  const groups = detailGroups(tab, rows);
+  /* The first band is typed over the units line rather than on a line of its
+     own, which is how their sheet fits it; every band after it takes one. */
+  const first = tab.band ? groups[0].label : (tab.spec ? tab.spec(rows) : "");
+
+  // The orders, across the head of the sheet.
+  g.row([[n, { v: poListFor(ctx, rows), s: tab.poHeight ? DT.poW : DT.po }]], tab.poHeight);
+
+  /* The two header lines. A heading with nothing under it runs down over both;
+     the line under it still carries a cell, as their file does, so the box is
+     ruled whether or not Excel is showing the merge. */
+  g.row(cols.filter((c) => c.h !== undefined)
+    .map((c) => [c.span || 1, { v: c.h, s: DT.head }, c.sub === null ? 1 : 0]), (tab.head || [])[0] || 12.75);
+  const lbl = tab.labelCols || 0;
+  g.row(cols.map((c, i) => [1, {
+    v: i < lbl && first ? first : (c.sub || ""),
+    s: i < lbl && first ? DT.headL : DT.head,
+  }]), (tab.head || [])[1]);
+
+  // The two columns their formula reads: the pieces on the line, over what one
+  // package of it holds.
+  const pcsCol = colLetter(cols.findIndex((c) => c.pcs) + 1);
+  const perCol = colLetter(cols.findIndex((c) => c.per) + 1);
+
+  const top = g.at() + 1;
+  groups.forEach((grp, gi) => {
+    // A band after the first is headed on a line of its own, named in the
+    // identity columns their sheet names it in.
+    if (gi && grp.label) {
+      g.row(cols.map((c, i) => [1, { v: i < lbl ? grp.label : "", s: i < lbl ? DT.band : DT.ctr }]), 15);
+    }
+    grp.rows.forEach((r) => {
+      const at = g.at() + 1;
+      g.row(cols.map((c) => {
+        const s = typeof c.s === "function" ? c.s(r) : c.s;
+        if (c.pcs) return [1, { v: r.pieces, t: "n", s }];
+        /* Their own formula: the packages a line takes are its pieces over what
+           one package holds. Where the master does not say, the count actually
+           packed stands rather than the sheet going to nil. */
+        if (c.pkg) return [1, { f: `IF($${perCol}${at}=0,${r.boxes},$${pcsCol}${at}/$${perCol}${at})`, s }];
+        return [1, numOrText(c.get(r), s)];
+      }));
+    });
+  });
+  const last = g.at();
+
+  /* The foot: the pieces and the packages totalled, and the columns that name
+     the goods ruled off under them. */
+  const pcsAt = cols.findIndex((c) => c.pcs);
+  g.row(cols.map((c, i) => {
+    if (i < pcsAt) return [1, { v: "", s: DT.foot }];
+    const col = colLetter(i + 1);
+    return [1, { f: `SUBTOTAL(9,${col}${top}:${col}${last})`, s: DT.tot }];
+  }));
+
+  return fitSheet({
+    name: tab.name,
+    rows: g.rows, merges: g.merges, heights: g.heights,
+    widths: cols.map((c) => c.w),
+    defaultColWidth: 10.6640625,
+    defaultRowHeight: 12.75,
+    colStyle: { font: "ref", border: false, valign: "center" },
+    page: {
+      paper: 9, orientation: "landscape", scale: tab.scale,
+      ...(tab.fitH != null ? { fitH: tab.fitH, fit: 1 } : {}),
+      margins: tab.margins || DT_MARGIN,
+    },
+  }, { widen: false });
+}
+
+/* The same tab on screen and on paper. */
+function detailHtml(ctx, tab, rows) {
+  const cols = tab.cols, n = cols.length;
+  const groups = detailGroups(tab, rows);
+  const first = tab.band ? groups[0].label : (tab.spec ? tab.spec(rows) : "");
+  const total = cols.reduce((a, c) => a + c.w, 0);
+  const colg = `<colgroup>${cols.map((c) => `<col style="width:${(c.w / total) * 100}%">`).join("")}</colgroup>`;
+
+  const th = (v, cls = "", span = 1, down = 1) =>
+    `<th${span > 1 ? ` colspan="${span}"` : ""}${down > 1 ? ` rowspan="${down}"` : ""}${cls ? ` class="${cls}"` : ""}>${esc(v) || "&nbsp;"}</th>`;
+  const cell = (v, cls) => `<td class="${cls}">${esc(v) === "" ? "&nbsp;" : esc(v)}</td>`;
+  const nmc = (v, cls) => `<td class="${cls}" data-t="int" data-v="${v}">${v}</td>`;
+
+  const lbl = tab.labelCols || 0;
+  const head2 = cols.filter((c) => c.h !== undefined)
+    .map((c) => th(c.h, "", c.span || 1, c.sub === null ? 2 : 1)).join("");
+  const head3 = cols.map((c, i) => (c.sub === null ? ""
+    : th(i < lbl && first ? first : (c.sub || ""), i < lbl && first ? "l" : ""))).join("");
+
+  const body = groups.map((grp, gi) => {
+    const band = gi && grp.label
+      ? `<tr class="bnd">${cols.map((c, i) => cell(i < lbl ? grp.label : "", i < lbl ? "l" : "c")).join("")}</tr>`
+      : "";
+    return band + grp.rows.map((r) => `<tr>${cols.map((c) => {
+      if (c.pcs) return nmc(r.pieces, "r");
+      if (c.pkg) return nmc(r.boxes, "r");
+      const v = c.get(r);
+      const ident = typeof c.s === "function";
+      const cls = c.s === DT.desc || c.s === DT.descB ? "desc"
+        : ident ? (houseCode(r.it.code) ? "gd" : "code") : "c";
+      return `<td class="${cls}">${esc(String(v ?? "")).replace(/\n/g, "<br>") || "&nbsp;"}</td>`;
+    }).join("")}</tr>`).join("");
+  }).join("");
+
+  const pcsAt = cols.findIndex((c) => c.pcs);
+  const foot = `<tr class="tot">${cols.map((c, i) => (i < pcsAt
+    ? `<td class="o">&nbsp;</td>`
+    : nmc(sum(rows, c.pcs ? "pieces" : "boxes"), "r"))).join("")}</tr>`;
+
+  return `<table class="wb dt">${colg}<tbody>
+    <tr class="po rule"><td colspan="${n}">${esc(poListFor(ctx, rows))}</td></tr>
+    <tr>${head2}</tr><tr>${head3}</tr>
+    ${body}${foot}</tbody></table>`;
+}
+
+/* The tabs this consignment actually needs — a family it does not carry gets no
+   sheet, as an empty one would say nothing. */
+const detailTabs = (ctx) => {
   const rows = L(ctx);
-  const cols = [
-    { h: "Marks", c: 1, f: (r) => r.range }, { h: "GD Code", f: (r) => esc(r.it.gd) }, { h: "Description", f: (r) => esc(r.it.description) },
-    { h: "Size", c: 1, f: (r) => esc(r.it.size) },
-    { h: "Pack/Box", r: 1, key: "pack", t: "int", v: (r) => r.packing, f: (r) => r.packing },
-    { h: "Qty Pcs", r: 1, key: "qty", t: "int", fml: QTY_FROM_BOX, f: (r) => r.pieces.toLocaleString("en-IN") },
-    { h: "Boxes", r: 1, key: "box", t: "int", v: (r) => r.boxes, f: (r) => r.boxes },
-    { h: "Net kg", r: 1, key: "net", t: "num", fml: (r) => `{box}*${Number(r.it.netPerBox) || 0}`, f: (r) => num(r.netTotal) },
-    { h: "Gross kg", r: 1, key: "gross", t: "num", fml: (r) => `{box}*${Number(r.it.grossPerBox) || 0}`, f: (r) => num(r.grossTotal) },
-  ];
-  const foot = [{ v: "TOTAL", span: 5 }, { v: sum(rows, "pieces").toLocaleString("en-IN"), r: 1, sum: "qty", t: "int" },
-    { v: sum(rows, "boxes"), r: 1, sum: "box", t: "int" },
-    { v: num(sum(rows, "netTotal")), r: 1, sum: "net", t: "num" },
-    { v: num(sum(rows, "grossTotal")), r: 1, sum: "gross", t: "num" }];
-  return { name: "Packing_List_Itemwise_20", html: `${masthead(ctx, "20 · PACKING LIST (Item-wise Details)", { po: 1 })}${tableOf(cols, rows, foot)}` };
+  return PL20_TABS
+    .map((tab) => ({ tab, rows: rows.filter((r) => tab.keys.includes(familyOf(r.it))) }))
+    .filter((x) => x.rows.length);
+};
+
+B["20"] = (ctx) => {
+  const form = PL_FORMS[20];
+  const tabs = detailTabs(ctx);
+  return {
+    name: "Packing_List_Itemwise_20",
+    html: `${packingListHtml(ctx, form)}${tabs.map(({ tab, rows }) => `<div class="pgbrk"></div>
+      <div class="dth">${esc(tab.name.toUpperCase())}</div>${detailHtml(ctx, tab, rows)}`).join("")}`,
+    sheets: [...packingListSheets(ctx, form), ...tabs.map(({ tab, rows }) => detailSheet(ctx, tab, rows))],
+    page: "portrait",
+  };
 };
 function packagingDeclaration(ctx, title, no) {
   const s = ctx.inv.ship || {};
@@ -5552,6 +5916,31 @@ export const PREVIEW_CSS = `
   .docprev table.wb .bh{font-weight:700;text-align:center;}
   .docprev table.wb .code{font-weight:700;text-align:center;}
   .docprev table.wb .desc{white-space:normal;}
+
+  /* 20 · the item-wise packing details — the four tabs behind the packing list.
+     Arial 10 on a black grid, as their sheets are: the exporter's own codes in
+     their green, the buyer's part numbers plain, a band's name ranged left
+     across the identity columns, and the orders ruled off along the top. */
+  .docprev .dth{font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;
+    letter-spacing:.06em;color:#000;margin:0 0 4px;}
+  .docprev table.wb.dt{font-size:11px;}
+  .docprev table.wb.dt td,.docprev table.wb.dt th{padding:2px 5px;height:22px;vertical-align:middle;}
+  .docprev table.wb.dt th{white-space:normal;}
+  .docprev table.wb.dt th.l{text-align:left;}
+  .docprev table.wb.dt .gd,.docprev table.wb.dt .code{text-align:left;}
+  .docprev table.wb.dt .gd{color:#008000;}
+  .docprev table.wb.dt td.desc{white-space:normal;text-align:left;}
+  .docprev table.wb.dt tr.bnd td{font-weight:700;font-size:12px;}
+  .docprev table.wb.dt tr.tot td.o{border-bottom:none;}
+
+  /* The two customs books (19, 20) are typed in colour, and it means something:
+     the form's own labels are blue, the answers customs reads straight off the
+     head of it are red, and the line it is signed for is blue. Their cells
+     shrink rather than wrap, so a long entry stays on its one ruled line. */
+  .docprev table.ci.pl .lb{color:#00f;}
+  .docprev table.ci.pl .rd,.docprev table.ci.pl .ttl{color:#f00;}
+  .docprev table.ci.pl .sg{color:#00f;}
+  .docprev table.ci.pl .hc{font-size:8px;}
   /* 17 · Proforma is the buyer's own purchase order form: their name across the
      top, the two address boxes under it, and the goods banded by range. */
   .docprev table.bpo .big{font-size:16px;font-weight:700;color:#000;}
