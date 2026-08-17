@@ -193,9 +193,25 @@ export default function ShipmentWizard({ inv, onClose }) {
             <Field label="Port of discharge"><Input value={ship.pod || ""} onChange={(e) => setSh("pod", e.target.value)} placeholder="FREMANTLE" /></Field>
             <Field label="Terms (FOB etc.)"><Input value={ship.terms || ""} onChange={(e) => setSh("terms", e.target.value)} placeholder="FOB MUMBAI" /></Field>
             <Field label="Through (bank)"><Input value={ship.bank || ""} onChange={(e) => setSh("bank", e.target.value)} placeholder="HDFC BANK LTD, GHATKOPAR (E) BRANCH" /></Field>
+            <Field label="Bank address"><Input value={ship.bankAddr || ""} onChange={(e) => setSh("bankAddr", e.target.value)} placeholder="GHATKOPAR (E), MUMBAI 400 077 (INDIA)" /></Field>
+            <Field label="Terms of payment"><Input value={ship.payment || ""} onChange={(e) => setSh("payment", e.target.value)} placeholder="D.P.SIGHT DRAFT" /></Field>
             <Field label="Exchange rate ₹/$" hint="The rate the customs invoice and the bank documents are converted at.">
               <Input className="rate" type="number" step="0.01" value={ship.exRate || ""} onChange={(e) => setSh("exRate", e.target.value)} />
             </Field>
+          </div>
+
+          {/* What the e-invoice portal hands back, and the two carriage boxes
+              the customs invoice (18) prints. Blank is normal — the form leaves
+              them empty, as it does on a shipment that has not been registered
+              yet. */}
+          <Step n="3" title="e-Invoice & carriage" hint="Printed on the customs invoice. Leave blank until the portal returns them." />
+          <div className="grid-2">
+            <Field label="IRN No"><Input value={ship.irn || ""} onChange={(e) => setSh("irn", e.target.value)} /></Field>
+            <Field label="Other reference(s)"><Input value={ship.otherRef || ""} onChange={(e) => setSh("otherRef", e.target.value)} /></Field>
+            <Field label="Ack No"><Input value={ship.ackNo || ""} onChange={(e) => setSh("ackNo", e.target.value)} /></Field>
+            <Field label="Ack date"><Input value={ship.ackDt || ""} onChange={(e) => setSh("ackDt", e.target.value)} placeholder="04-05-2026  3:51:00 PM" /></Field>
+            <Field label="Pre-carriage by"><Input value={ship.preCarriage || ""} onChange={(e) => setSh("preCarriage", e.target.value)} /></Field>
+            <Field label="Place of receipt"><Input value={ship.receiptPlace || ""} onChange={(e) => setSh("receiptPlace", e.target.value)} /></Field>
           </div>
           <label className="row" style={{ gap: 8, fontSize: 12.5, color: "var(--muted)" }}>
             <input type="checkbox" checked={!!skip.ship} onChange={(e) => setSkp("ship", e.target.checked)} />

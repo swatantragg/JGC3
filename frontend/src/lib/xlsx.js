@@ -159,6 +159,28 @@ const FONTS = [
   { key: "refb11", xml: '<font><b/><sz val="11"/><name val="Arial"/><family val="2"/></font>' },
   // The buyer's own name across the top of their purchase order (17).
   { key: "refb14", xml: '<font><b/><sz val="14"/><name val="Arial"/><family val="2"/></font>' },
+  // The contact strip along the foot of that same order — small print on their
+  // paper, and small here, so the four lines sit close together.
+  { key: "ref8", xml: '<font><sz val="8"/><name val="Arial"/><family val="2"/></font>' },
+  /* Arial 9 — the customs invoice (18) is typed a point smaller than the
+     packing books, so two pages of goods fit the page the way their own file
+     does. Its masthead is the same Centaur 18 as the letterhead but in black,
+     which is how that workbook was set. */
+  { key: "ref9", xml: '<font><sz val="9"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "ref9b", xml: '<font><b/><sz val="9"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "ref9bu", xml: '<font><b/><u/><sz val="9"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "brandk", xml: '<font><b/><sz val="18"/><name val="Centaur"/><family val="1"/></font>' },
+  /* The annexure to that invoice (18 · Annx) is not typed on the form at all —
+     it is a plain Calibri sheet with the printed letterhead pasted over the top
+     of it, the name in red Centaur and the address below it in blue. */
+  { key: "brandr", xml: '<font><sz val="18"/><color rgb="FFFF0000"/><name val="Centaur"/><family val="1"/></font>' },
+  /* The packing book (19) is typed in colour where the invoice book (18) is
+     not: its title and the answers customs reads off it are red, its labels
+     blue. Their file stores these as Excel's indexed palette — 10, 12 and 8 —
+     which is the same ink as the rgb below. */
+  { key: "ref9r", xml: '<font><b/><sz val="9"/><color rgb="FFFF0000"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "ref9bb", xml: '<font><b/><sz val="9"/><color rgb="FF0000FF"/><name val="Arial"/><family val="2"/></font>' },
+  { key: "ref9bl", xml: '<font><sz val="9"/><color rgb="FF0000FF"/><name val="Arial"/><family val="2"/></font>' },
   /* The supplier purchase order is a printed letter, not a table: their
      letterhead is Centaur in maroon, the form's labels are blue, and a few
      words on it are underlined. */
@@ -181,6 +203,9 @@ const FONTS = [
      rather than in the older Arial books (12 · Shipment boxes & volume). */
   { key: "cal", xml: '<font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' },
   { key: "calb", xml: '<font><b/><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font>' },
+  // The letterhead's own two inks, in that same Calibri.
+  { key: "calbl", xml: '<font><sz val="11"/><color rgb="FF0000FF"/><name val="Calibri"/><family val="2"/></font>' },
+  { key: "calr", xml: '<font><sz val="11"/><color rgb="FFFF0000"/><name val="Calibri"/><family val="2"/></font>' },
   /* Times New Roman — the customs declarations are typed forms, and that is
      the face they are typed in (13 · Export value declaration). */
   { key: "tnr", xml: '<font><sz val="12"/><color theme="1"/><name val="Times New Roman"/><family val="1"/></font>' },
@@ -204,10 +229,16 @@ const FILLS = [
    the rest are the partial frames the client's sheets use on a banner row.
    An edge may name its own colour, which is how the letterhead rules print in
    the house red rather than in black. */
+const EDGES = ["left", "right", "top", "bottom"];
 const edge = (rgb) => (rgb ? `<color rgb="${rgb}"/>` : '<color indexed="64"/>');
-const side = (on, name, rgb) => (on ? `<${name} style="thin">${edge(rgb)}</${name}>` : `<${name}/>`);
-const frame = (edges, rgb) =>
-  `<border>${["left", "right", "top", "bottom"].map((n) => side(edges.includes(n[0]), n, rgb)).join("")}<diagonal/></border>`;
+/* `sides` names the Excel line style to rule each edge with, or "" to leave it
+   open — most sheets want "thin" all round, but a workbook that rules its
+   columns solid and its rows faintly (18 · Custom invoice) needs the two to
+   differ on the same cell. */
+const frame = (sides, rgb) =>
+  `<border>${EDGES.map((n) => (sides[n]
+    ? `<${n} style="${sides[n]}">${edge(rgb)}</${n}>`
+    : `<${n}/>`)).join("")}<diagonal/></border>`;
 const BORDERS = [
   { key: "none", xml: "<border><left/><right/><top/><bottom/><diagonal/></border>" },
   {
@@ -223,14 +254,32 @@ const fillIx = (k) => Math.max(0, FILLS.findIndex((f) => f.key === k));
    the edges to rule as a string of l/r/t/b — "lrtb" (aliased "box") for a full
    cell, "tb" for a banner, "l" for the left edge of a printed form. A colour
    may follow the edges — "b#C00000" is the letterhead's red rule. Every
-   combination a sheet asks for is registered as it is met. */
+   combination a sheet asks for is registered as it is met.
+
+   Where a sheet needs its edges ruled in different weights, `border` is instead
+   an object naming the line style per edge, with the same optional colour:
+   { l: "thin", r: "thin", t: "hair", b: "hair" }. */
+const hex8 = (s) => {
+  const h = String(s || "").replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
+  return h ? (h.length === 6 ? `FF${h}` : h.slice(0, 8)) : "";
+};
 function borderSpec(b) {
   const [raw, rgb] = String(b === "box" ? "lrtb" : b).split("#");
-  const hex = (rgb || "").replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
-  return {
-    edges: raw.toLowerCase().replace(/[^lrtb]/g, ""),
-    rgb: hex ? (hex.length === 6 ? `FF${hex}` : hex.slice(0, 8)) : "",
-  };
+  return { edges: raw.toLowerCase().replace(/[^lrtb]/g, ""), rgb: hex8(rgb) };
+}
+/* Either form, as the { left, right, top, bottom } the writer rules from. */
+function borderSides(b) {
+  if (b && typeof b === "object") {
+    const pick = (v) => (v === true ? "thin" : v || "");
+    return {
+      sides: { left: pick(b.l), right: pick(b.r), top: pick(b.t), bottom: pick(b.b) },
+      rgb: hex8(b.rgb),
+    };
+  }
+  const { edges, rgb } = borderSpec(b);
+  const sides = {};
+  EDGES.forEach((n) => { sides[n] = edges.includes(n[0]) ? "thin" : ""; });
+  return { sides, rgb };
 }
 function borderRegistry() {
   const list = BORDERS.map((x) => x.xml);
@@ -238,13 +287,13 @@ function borderRegistry() {
   return {
     index(b) {
       if (b === false) return 0;
-      if (typeof b !== "string") return 1;
-      const { edges, rgb } = borderSpec(b);
-      if (!edges) return 0;
-      const key = rgb ? `${edges}#${rgb}` : edges;
+      if (b == null || (typeof b !== "string" && typeof b !== "object")) return 1;
+      const { sides, rgb } = borderSides(b);
+      if (!EDGES.some((n) => sides[n])) return 0;
+      const key = JSON.stringify([sides, rgb]);
       if (seen.has(key)) return seen.get(key);
       seen.set(key, list.length);
-      list.push(frame(edges, rgb));
+      list.push(frame(sides, rgb));
       return list.length - 1;
     },
     xml: () => list,
@@ -279,6 +328,9 @@ function styleXfs(specs) {
       s.align ? `horizontal="${s.align}"` : "",
       `vertical="${s.valign || "top"}"`,
       s.wrap ? 'wrapText="1"' : "",
+      // The client's older forms set every cell to shrink rather than wrap, so
+      // an over-long entry stays on its one ruled line instead of growing it.
+      s.shrink ? 'shrinkToFit="1"' : "",
     ].filter(Boolean).join(" ");
     return `<xf ${parts}><alignment ${al}/></xf>`;
   });
@@ -289,6 +341,14 @@ function styleXfs(specs) {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${nf}<fonts count="${FONTS.length}">${FONTS.map((f) => f.xml).join("")}</fonts><fills count="${FILLS.length}">${FILLS.map((f) => f.xml).join("")}</fills><borders count="${bd.length}">${bd.join("")}</borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="${xfs.length}">${xfs.join("")}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 }
+
+/* One registered font as the run properties a rich-text run wants. The two
+   elements hold the same children but name the face differently — <name> on a
+   cell font, <rFont> on a run — so that is the one thing swapped. */
+const runProps = (key) => {
+  const f = FONTS.find((x) => x.key === key) || FONTS[0];
+  return f.xml.replace(/^<font>/, "").replace(/<\/font>$/, "").replace(/<name /, "<rFont ");
+};
 
 /* ---- turning one sheet's rows into worksheet XML ---- */
 function sheetXml(sheet, styleOf) {
@@ -305,6 +365,15 @@ function sheetXml(sheet, styleOf) {
       const sAttr = s ? ` s="${s}"` : "";
 
       if (cell.f) return `<c r="${ref}"${sAttr}><f>${X(String(cell.f).replace(/^=/, ""))}</f></c>`;
+
+      /* A line typed in more than one ink — the letterhead's blue labels with
+         their answers in red — is written as runs rather than as one string,
+         each naming the registered font it is set in: [{ t, font }, …]. */
+      if (Array.isArray(cell.rt)) {
+        const runs = cell.rt.filter((r) => r && r.t !== "" && r.t != null)
+          .map((r) => `<r><rPr>${runProps(r.font)}</rPr><t xml:space="preserve">${X(String(r.t))}</t></r>`).join("");
+        return runs ? `<c r="${ref}"${sAttr} t="inlineStr"><is>${runs}</is></c>` : `<c r="${ref}"${sAttr}/>`;
+      }
 
       const v = cell.v;
       const numeric = cell.t === "n"
@@ -357,13 +426,16 @@ function sheetXml(sheet, styleOf) {
   const setup = page
     ? `<pageSetup paperSize="${page.paper || 9}" scale="${page.scale || 100}"${fitH} orientation="${page.orientation || "portrait"}"/>`
     : "";
+  // A form narrower than the paper is centred across it rather than left to
+  // sit against the left margin — what the client's invoice books do.
+  const opts = page && page.centered ? '<printOptions horizontalCentered="1"/>' : "";
 
   // A sheet with a picture on it points at its own drawing part.
   const drawing = sheet.image ? '<drawing r:id="rIdDr"/>' : "";
   const rNs = sheet.image ? ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"' : "";
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"${rNs}>${pr}<sheetViews>${pane}</sheetViews>${fmtPr}${cols}<sheetData>${body}</sheetData>${mergeXml}${margins}${setup}${drawing}</worksheet>`;
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"${rNs}>${pr}<sheetViews>${pane}</sheetViews>${fmtPr}${cols}<sheetData>${body}</sheetData>${mergeXml}${opts}${margins}${setup}${drawing}</worksheet>`;
 }
 
 /* A picture anchored to a cell — the letterhead mark on the supplier order.
@@ -411,25 +483,39 @@ export function buildXLSX(workbook) {
   const sheetXmls = sheets.map((s) => sheetXml(s, styleOf));
 
   /* Pictures. A sheet carrying one gets a drawing part of its own, the image
-     goes into xl/media, and the worksheet gets a rels file pointing at it. */
-  const pics = sheets.map((s, i) => (s.image?.data ? { sheet: i, img: s.image, n: 0 } : null)).filter(Boolean);
+     goes into xl/media, and the worksheet gets a rels file pointing at it.
+
+     The bytes are stored once however many sheets show them: the letterhead
+     mark on a three-sheet book is one media part pointed at three times, which
+     is how the client's own files hold it — storing it per sheet would treble
+     the size of the download for nothing. */
+  const media = [];
+  const mediaFor = (img) => {
+    let m = media.find((x) => x.data === img.data && x.ext === (img.ext || "png"));
+    if (!m) { m = { data: img.data, ext: img.ext || "png", n: media.length + 1 }; media.push(m); }
+    return m;
+  };
+  const pics = sheets.map((s, i) => (s.image?.data
+    ? { sheet: i, img: s.image, media: mediaFor(s.image) } : null)).filter(Boolean);
   pics.forEach((p, k) => { p.n = k + 1; });
-  const picFiles = pics.flatMap((p) => [
-    { name: `xl/media/image${p.n}.${p.img.ext || "png"}`, data: p.img.data },
-    { name: `xl/drawings/drawing${p.n}.xml`, data: utf8(drawingXml(p.img)) },
-    {
-      name: `xl/drawings/_rels/drawing${p.n}.xml.rels`,
-      data: utf8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${p.n}.${p.img.ext || "png"}"/></Relationships>`),
-    },
-    {
-      name: `xl/worksheets/_rels/sheet${p.sheet + 1}.xml.rels`,
-      data: utf8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+  const picFiles = [
+    ...media.map((m) => ({ name: `xl/media/image${m.n}.${m.ext}`, data: m.data })),
+    ...pics.flatMap((p) => [
+      { name: `xl/drawings/drawing${p.n}.xml`, data: utf8(drawingXml(p.img)) },
+      {
+        name: `xl/drawings/_rels/drawing${p.n}.xml.rels`,
+        data: utf8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${p.media.n}.${p.media.ext}"/></Relationships>`),
+      },
+      {
+        name: `xl/worksheets/_rels/sheet${p.sheet + 1}.xml.rels`,
+        data: utf8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdDr" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${p.n}.xml"/></Relationships>`),
-    },
-  ]);
+      },
+    ]),
+  ];
   const picTypes = pics.length
-    ? [...new Set(pics.map((p) => p.img.ext || "png"))].map((e) => `<Default Extension="${e}" ContentType="image/${e === "jpg" ? "jpeg" : e}"/>`).join("")
+    ? [...new Set(media.map((m) => m.ext))].map((e) => `<Default Extension="${e}" ContentType="image/${e === "jpg" ? "jpeg" : e}"/>`).join("")
       + pics.map((p) => `<Override PartName="/xl/drawings/drawing${p.n}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`).join("")
     : "";
 

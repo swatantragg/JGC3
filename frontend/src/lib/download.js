@@ -55,6 +55,24 @@ export function downloadGridExcel(filename, sheetName, columns, rows, opts) {
  *  column widths, so it is written as it stands rather than derived from the
  *  HTML. Its tab still takes the name the caller gave the document, so a
  *  whole-stage workbook stays numbered the way the others are. */
+/* Renaming a document's tabs moves the ground under its own formulas: the
+   packing list's second page reads its first by name, so a page prefixed into
+   "20 Page1" leaves the reference behind pointing at nothing. Every reference a
+   document makes to its own tabs is rewritten with them — quoted, because the
+   prefixed name carries a space. Only whole names followed by "!" are matched,
+   so a sheet called Page never rewrites one called Page1. */
+function renameSheets(sheets, prefix) {
+  const named = sheets.map((s) => [String(s.name), `${prefix} ${s.name}`]);
+  const ref = (name) => (/^[A-Za-z0-9_]+$/.test(name) ? `${name}!` : `'${name.replace(/'/g, "''")}'!`);
+  const fix = (f) => named.reduce((out, [from, to]) => out.split(`${from}!`).join(ref(to)), String(f));
+  return sheets.map((s, i) => ({
+    ...s,
+    name: named[i][1],
+    rows: (s.rows || []).map((row) => (row || [])
+      .map((c) => (c && typeof c === "object" && c.f ? { ...c, f: fix(c.f) } : c))),
+  }));
+}
+
 export function downloadDocsExcel(filename, docs) {
   const list = (Array.isArray(docs) ? docs : [docs]).filter((d) => d && (d.html || d.sheet || d.sheets?.length));
   if (!list.length) return;
@@ -62,10 +80,11 @@ export function downloadDocsExcel(filename, docs) {
   downloadWorkbook(filename, list.flatMap((d, i) => {
     const name = d.name || `Sheet${i + 1}`;
     // A document may be a whole workbook of its own — the supplier purchase
-    // order is a letter plus an annexure per range. Taken on its own it keeps
-    // the tab names its source file uses; gathered with others, each tab is
-    // prefixed so one supplier's annexure can't be mistaken for another's.
-    if (d.sheets?.length) return d.sheets.map((s) => ({ ...s, name: many ? `${name} ${s.name}` : s.name }));
+    // order is a letter plus an annexure per range, the packing list two pages
+    // and its item-wise details. Taken on its own it keeps the tab names its
+    // source file uses; gathered with others, each tab is prefixed so one
+    // supplier's annexure can't be mistaken for another's.
+    if (d.sheets?.length) return many ? renameSheets(d.sheets, name) : d.sheets;
     return [d.sheet ? { ...d.sheet, name } : htmlToSheet(d.html, name)];
   }));
 }
@@ -153,6 +172,15 @@ const PRINT_CSS = `
   table.bpo .ttl { font-size: 8pt; }
   table.bpo .val { font-size: 8.5pt; }
   table.bpo .foot { font-size: 6.5pt; }
+  /* The freight terms and the line the order is signed for stand side by side.
+     Both are set to the top of the run — the rest of the sheet centres in its
+     row — so the name sits level with the top of the freight box and the space
+     under it comes out clear, to be stamped and signed once it is printed. */
+  table.bpo tr.sig td { vertical-align: top; }
+  table.bpo .sign { font-size: 7pt; padding-top: 1px; }
+  /* The contact strip is small print set close — four lines that read as one
+     block, not four rows of the grid above them. */
+  table.bpo tr.ft td { padding: 0 4px; line-height: 1.5; }
   table.bpo .party { text-align: left; vertical-align: top; white-space: normal; font-weight: 700; text-transform: uppercase; padding: 3px 5px; }
   table.bpo td.nb, table.bpo th.nb { border: none !important; }
   table.bpo .bpo-logo { height: 44pt; width: auto; display: block; margin: 0 auto 1px; }
@@ -167,6 +195,134 @@ const PRINT_CSS = `
   table.bpo td.bx { padding: 0; }
   table.bpo table.in { width: 100%; table-layout: fixed; border-collapse: collapse; margin: 0; }
   table.bpo table.in td { border: none !important; padding: 1px 5px; font-size: 7pt; }
+
+  /* 18 · Custom invoice — the customs copy, ruled as one frame rather than a
+     grid: solid down the columns, hairline between the goods, open wherever
+     the form is only typing. Its cells therefore start with no rule and each
+     names the edges it draws. Set at 6.5pt, which is their own 9pt Arial at
+     the 72% their file prints at. */
+  /* Unlike the rest of the library, this one is a whole page in itself — its
+     margins are the form's own — so it takes the printable area rather than
+     sitting inside the page padding the other documents are laid out in. */
+  .jg-doc:has(table.ci) { padding: 4mm; }
+  table.ci { table-layout: fixed; width: 100%; }
+  /* Their form is typed on plain paper, so the app's own key/value banding and
+     navy are cleared rather than inherited. The padding is a hair either side:
+     the columns are the widths of their sheet and the text has to sit in them. */
+  table.ci td { border: none !important; font-size: 6.5pt; line-height: 1.25; padding: 0 1.5px;
+    white-space: nowrap; overflow: hidden; vertical-align: middle;
+    background: none !important; color: #000 !important; }
+  table.ci .lt { border-left: 1px solid #000 !important; border-top: 1px solid #000 !important; }
+  table.ci .rt { border-right: 1px solid #000 !important; border-top: 1px solid #000 !important; }
+  table.ci .lf { border-left: 1px solid #000 !important; }
+  table.ci .rt0 { border-right: 1px solid #000 !important; }
+  table.ci .lrt { border-left: 1px solid #000 !important; border-right: 1px solid #000 !important; border-top: 1px solid #000 !important; }
+  table.ci .lrb { border-left: 1px solid #000 !important; border-right: 1px solid #000 !important; border-bottom: 1px solid #000 !important; }
+  table.ci .lt0 { border-top: 1px solid #000 !important; }
+  table.ci .bb { border-bottom: 1px solid #000 !important; }
+  table.ci .bx, table.ci .h, table.ci .bnd, table.ci .hd { border: 1px solid #000 !important; }
+  /* Only the form's own column headings are set in bold. A band's heading and
+     the columns under it are typed in the same plain face as the goods, which
+     is how their sheet has them. */
+  table.ci .k, table.ci .b, table.ci .h { font-weight: 700; }
+  table.ci .bnd, table.ci .hd { font-weight: 400; }
+  table.ci .h, table.ci .hd, table.ci .c, table.ci .ttl { text-align: center; }
+  table.ci .l { text-align: left; }
+  table.ci .r { text-align: right; }
+  table.ci .dbl { border-bottom: 3px double #000 !important; }
+  table.ci .mer { font-weight: 700; text-decoration: underline; }
+  table.ci .ttl { font-weight: 700; }
+  table.ci .nb { border: none !important; }
+  table.ci .brand { font-family: Centaur, Georgia, serif; font-size: 13pt; font-weight: 700; text-align: right; }
+  /* The letterhead block: the mark set against the left margin with the name
+     and the address ranged right of it, which is how their sheet anchors the
+     picture over the corner of the form. The cell wraps, unlike the rest of
+     this table, because it is five typed lines rather than one ruled row. */
+  table.ci .lhead { vertical-align: top; padding: 1px 3px 1px 1px; white-space: normal; overflow: visible; }
+  table.ci .lhead .pllogo { float: left; width: 44px; height: auto; margin: 1px 3px 0 0; }
+  table.ci .lhead .brand { display: block; line-height: 1.05; }
+  table.ci .lhead .sub, table.ci .lhead .addr {
+    display: block; text-align: right; font-size: 7pt; line-height: 1.25; margin: 0; color: inherit; }
+  table.ci tr.gd td, table.ci tr.ln td { border-left: 1px solid #000 !important; border-right: 1px solid #000 !important; }
+  table.ci tr.ln td { border-top: 1px solid #d9d9d9 !important; border-bottom: 1px solid #d9d9d9 !important; }
+  table.ci tr.gd td:first-child, table.ci tr.ln td:first-child { border-top: none !important; border-bottom: none !important; }
+  table.ci tr.gd .bnd, table.ci tr.gd .h, table.ci tr.gd .hd { border: 1px solid #000 !important; }
+  table.ci tr.tt td { border-left: 1px solid #000 !important; border-right: 1px solid #000 !important; border-bottom: 1px solid #000 !important; }
+  table.ci tr.tt .dbl { border-top: 1px solid #000 !important; border-bottom: 3px double #000 !important; }
+
+  /* 18 · Annx — the annexure is not typed on the form at all. It is a plain
+     Calibri sheet with the printed letterhead pasted across the head of it,
+     the name in red over the address in blue with its numbers in red, and the
+     mark in a box of its own beside them. Its goods are ruled like the form's:
+     solid down the columns, hairline between the lines. */
+  table.ci.annx td { font-family: Calibri, Carlito, Arial, sans-serif; font-size: 7.5pt; padding: 0 3px; }
+  table.ci.annx tr.ln td, table.ci.annx tr.ln td:first-child {
+    border-left: 1px solid #000 !important; border-right: 1px solid #000 !important;
+    border-top: 1px solid #d9d9d9 !important; border-bottom: 1px solid #d9d9d9 !important; }
+  table.ci.annx .attl { text-align: center; }
+  table.ci.annx .alh { vertical-align: top; padding: 2px 4px; white-space: normal; }
+  table.ci.annx .amark { text-align: center; vertical-align: middle; }
+  table.ci.annx .amark .pllogo { width: 54px; height: auto; margin: 0 auto; }
+  table.ci.annx .brand { font-family: Centaur, Georgia, serif; font-size: 15pt; font-weight: 400;
+    color: #ff0000 !important; text-align: right; line-height: 1.1; letter-spacing: 1.5px; }
+  table.ci.annx .sub, table.ci.annx .addr {
+    display: block; text-align: right; font-size: 7.5pt; line-height: 1.25; margin: 0; color: #000; }
+  table.ci.annx .lb { color: #0000ff !important; }
+  table.ci.annx .rd { color: #ff0000 !important; }
+
+  /* 19 and 20 · the packing list is typed in colour where the invoice book is
+     not: the form's own labels are blue, the answers customs reads off the head
+     of it are red, and the line it is signed for is blue. */
+  table.ci.pl .lb, table.ci.pl .sg { color: #0000ff !important; }
+  table.ci.pl .rd, table.ci.pl .ttl { color: #ff0000 !important; }
+  table.ci.pl .hc { font-size: 5.5pt; }
+
+  /* 20 · the item-wise packing details — the four sheets behind that list.
+     Arial 10 on a black grid, the exporter's own codes in their green and the
+     buyer's part numbers plain, with each sheet named above it since paper has
+     no tabs to read the name off. */
+  .dth { font-family: Arial, Helvetica, sans-serif; font-size: 8pt; font-weight: 700;
+    letter-spacing: .06em; color: #000; margin: 0 0 3px; }
+  table.wb.dt td, table.wb.dt th { padding: 2px 3px; font-size: 7.5pt; }
+  table.wb.dt th.l { text-align: left; }
+  table.wb.dt .gd, table.wb.dt .code { text-align: left; }
+  table.wb.dt .gd { color: #008000 !important; }
+  table.wb.dt td.desc { white-space: normal; text-align: left; }
+  table.wb.dt tr.bnd td { font-weight: 700; }
+  table.wb.dt tr.tot td.o { border-bottom: none !important; }
+  /* A band's name is wider than the two columns it is typed across — their
+     sheet shrinks it to fit rather than widening the form, and so does this. */
+  table.ci.annx .bnl { font-size: 6.8pt; }
+
+  /* 19 · Packing list — the customs invoice's frame again, but ruled the whole
+     way across: its marks column is part of the goods table here rather than
+     the open margin the invoice leaves beside it, so the hairlines run under
+     that column too. Set at 7.5pt, their 9pt Arial at the 86% their file
+     prints at, and its address block at the 10pt of their letterhead. */
+  table.ci.pl td { font-size: 7.5pt; }
+  table.ci.pl .big { font-size: 8.5pt; }
+  table.ci.pl tr.gd td, table.ci.pl tr.ln td, table.ci.pl tr.fl td {
+    border-left: 1px solid #000 !important; border-right: 1px solid #000 !important; }
+  table.ci.pl tr.gd td, table.ci.pl tr.gd td:first-child {
+    border-top: 1px solid #000 !important; border-bottom: 1px solid #000 !important; }
+  table.ci.pl tr.ln td, table.ci.pl tr.ln td:first-child {
+    border-top: 1px solid #d9d9d9 !important; border-bottom: 1px solid #d9d9d9 !important; }
+  table.ci.pl .dbl { border-bottom: 3px double #000 !important; }
+  /* A band's column header is wider than the column it heads — their sheet
+     shrinks it to fit rather than widening the form, so it is set smaller here
+     for the same reason. */
+  table.ci.pl tr.hc td { font-size: 6.2pt; }
+  /* The packing book is typed in colour where the invoice book is not, and the
+     colour carries meaning: the form's own labels are blue, the answers customs
+     reads off the head of it are red, and so is the title. What is typed in
+     against a label stays black, as does the whole goods table. These override
+     the black this table otherwise forces on every cell. */
+  table.ci.pl .lb { color: #0000ff !important; }
+  table.ci.pl .rd, table.ci.pl .ttl { color: #ff0000 !important; }
+  table.ci.pl .sg { color: #0000ff !important; font-weight: 400; }
+  table.ci.pl .lhead .brand { color: #800000 !important; }
+  table.ci.pl .lhead .sub { color: #800000 !important; }
+  table.ci.pl .lhead .addr { color: #3366ff !important; }
 
   /* 6 · Suppliers' PO — the letter, printed as their Page1 prints. */
   table.wb.letter { border: 1px solid #000; table-layout: fixed; width: 100%; }

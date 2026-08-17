@@ -38,6 +38,13 @@ ITEM_FIELDS = (
 )
 SUPPLIER_FIELDS = ("code", "name", "place", "gstin", "addr", "pin", "state", "weights")
 BUYER_FIELDS = ("name", "brand", "country", "curr", "ship_to", "addr", "order_no")
+# The buyer's own letterhead — what their purchase order (document 17) prints
+# around the goods. It is theirs, not ours, and nothing but the seed and Setup
+# ever writes it, so it is carried separately from the trading fields above:
+# see the buyer branch of `import_masters` for why blanks are filled in even
+# when the rest of the record is left alone.
+BUYER_LETTERHEAD = ("tagline", "ac_code", "abn", "acn", "tel", "fax", "web",
+                    "email", "po_box", "logo")
 
 
 def load_seed(path: Path | None = None) -> dict:
@@ -84,13 +91,20 @@ def import_masters(db: Session, seed: dict | None = None,
     for row in seed.get("buyers", []):
         key = row["name"].strip().lower()
         obj = buyers.get(key)
+        fields = BUYER_FIELDS + BUYER_LETTERHEAD
         if obj is None:
-            db.add(models.Buyer(**{f: row.get(f, "") for f in BUYER_FIELDS}))
+            db.add(models.Buyer(**{f: row.get(f, "") for f in fields}))
             stats["buyers"]["created"] += 1
-        elif overwrite_existing and _apply(obj, row, BUYER_FIELDS):
-            stats["buyers"]["updated"] += 1
-        else:
-            stats["buyers"]["unchanged"] += 1
+            continue
+        # A letterhead the buyer has never had is not an edit to preserve — it
+        # is a field nothing has written yet — so a blank one is filled from the
+        # seed even on a run that leaves the trading fields alone. Anything
+        # already typed into Setup stands, and only --overwrite replaces it.
+        blank = [f for f in BUYER_LETTERHEAD if not getattr(obj, f, "")]
+        changed = _apply(obj, row, blank)
+        if overwrite_existing:
+            changed = _apply(obj, row, fields) or changed
+        stats["buyers"]["updated" if changed else "unchanged"] += 1
 
     # ---- transports -------------------------------------------------------
     transports = {t.name.strip().lower(): t for t in db.query(models.Transport).all()}
