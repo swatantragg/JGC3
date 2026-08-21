@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { PackageCheck, Check, Search, Boxes, Trash2 } from "lucide-react";
 import {
-  Card, CardHead, Btn, Field, Input, Select, Pill, Mono, DataTable, Drawer, Step,
+  Card, CardHead, Btn, Field, Input, NumberInput, Select, Pill, Mono, DataTable, Drawer, Step,
   Empty, SearchInput,
 } from "../../components/ui/index.jsx";
 import {
@@ -206,10 +206,10 @@ export default function RecordPackingDrawer({ onClose }) {
             <Field label="Invoice number"><Input value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} placeholder="JG/26-27/6003" /></Field>
             <Field label="Date"><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
             <Field label="RBI rate ₹/$" hint="The Reserve Bank reference rate on the packing date — captured here, not at order entry.">
-              <Input className="rate" type="number" step="0.01" value={rbi} onChange={(e) => setRbi(e.target.value)} placeholder="e.g. 87.25" />
+              <NumberInput className="rate" decimal value={rbi} onChange={setRbi} placeholder="e.g. 87.25" />
             </Field>
             <Field label="Serial (carton) start" hint="The first carton number. Each line takes the next block of numbers, so ranges never overlap.">
-              <Input type="number" value={serialStart} onChange={(e) => setSerialStart(e.target.value)} placeholder="e.g. 2001" />
+              <NumberInput value={serialStart} onChange={setSerialStart} placeholder="e.g. 2001" />
             </Field>
           </div>
         </section>
@@ -262,9 +262,9 @@ export default function RecordPackingDrawer({ onClose }) {
                                 amber "still pending" tag above — which orders these
                                 boxes clear, oldest first, live as you type. */}
                             <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, minWidth: 110 }}>
-                              <Input className={`input-sm num-in${boxesBy[v.item_id] ? " filled" : ""}`} style={{ width: 110 }}
-                                type="number" min="0" placeholder="0"
-                                value={boxesBy[v.item_id] || ""} onChange={(e) => setB(v.item_id, e.target.value)} />
+                              <NumberInput className={`input-sm num-in${boxesBy[v.item_id] ? " filled" : ""}`} style={{ width: 110 }}
+                                placeholder="0" aria-label={`Boxes packed by ${supCode(v.supplier_id)}`}
+                                value={boxesBy[v.item_id] || ""} onChange={(val) => setB(v.item_id, val)} />
                               {fifo.legs.length > 0 && (
                                 <span className="fifo-tag">
                                   <Pill tone="green">
@@ -324,8 +324,9 @@ export default function RecordPackingDrawer({ onClose }) {
                     {
                       key: "boxes", w: 116, label: "Boxes", align: "r", strong: true,
                       render: (r) => (
-                        <Input className="input-sm num-in filled" style={{ width: 100 }} type="number" min="0"
-                          value={boxesBy[r.item_id] ?? ""} onChange={(e) => setB(r.item_id, e.target.value)} />
+                        <NumberInput className="input-sm num-in filled" style={{ width: 100 }}
+                          aria-label={`Boxes for ${r.gd}`}
+                          value={boxesBy[r.item_id] ?? ""} onChange={(val) => setB(r.item_id, val)} />
                       ),
                     },
                     { key: "vol", w: 104, label: "Volume m³", align: "r", render: (r) => num(r.volume, 3) },

@@ -52,10 +52,6 @@ export default function ShipmentsPage() {
 
   return (
     <div className="stack">
-      <div className="page-head">
-        <h2 className="h1">Shipment details</h2>
-      </div>
-
       <div className="grid-4">
         <Stat icon={FileText} value={invoices.length} label="Invoices" sub="Across all buyers" />
         <Stat icon={Truck} tone={byStatus("Dispatched") ? "amber" : undefined} value={byStatus("Dispatched")} label="Dispatched" sub="Vehicle details in" />

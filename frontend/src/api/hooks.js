@@ -138,6 +138,18 @@ export function useInvoiceMutations() {
 // Derived / reports
 export const useDashboardMatrix = () => useQuery({ queryKey: ["dashboard"], queryFn: api.dashboard.matrix });
 
+/* Clearing a filled order off the balance board, and putting it back. Nothing
+   is deleted: only the dashboard's own view of the order book moves, so the
+   matrix is all that has to be refetched. */
+export function useHiddenPoMutations() {
+  const qc = useQueryClient();
+  const invalidate = () => ["dashboard", "hidden-pos"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  return {
+    hide: useMutation({ mutationFn: (pos) => api.dashboard.hidePos(pos), onSuccess: invalidate }),
+    restore: useMutation({ mutationFn: (pos) => api.dashboard.restorePos(pos), onSuccess: invalidate }),
+  };
+}
+
 /* The three counters the menu bar carries. Refetched after any mutation that
    could move them, so a badge never lies about what is still open. */
 export const useBadges = () => useQuery({ queryKey: ["badges"], queryFn: api.dashboard.badges });

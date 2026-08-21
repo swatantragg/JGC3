@@ -85,17 +85,14 @@ export default function PackingPage() {
 
   return (
     <div className="stack">
-      <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
-        <div className="page-head" style={{ margin: 0 }}>
-          <h2 className="h1">Shipment</h2>
-        </div>
+      <div className="tabbar">
+        <Seg options={[
+          ["pending", `Still to pack${allPendingBoxes ? ` · ${allPendingBoxes}` : ""}`, Boxes],
+          ["invoices", `Packing invoices · ${invoices.length}`, FileText],
+        ]} value={tab} onChange={setTab} />
+        <span className="grow" />
         <Btn size="lg" icon={Plus} onClick={() => setDrawer(true)}>Record packing</Btn>
       </div>
-
-      <Seg options={[
-        ["pending", `Still to pack${allPendingBoxes ? ` · ${allPendingBoxes}` : ""}`, Boxes],
-        ["invoices", `Packing invoices · ${invoices.length}`, FileText],
-      ]} value={tab} onChange={setTab} />
 
       {tab === "pending" && (
         <Card>

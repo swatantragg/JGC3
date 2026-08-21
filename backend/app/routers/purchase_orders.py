@@ -181,23 +181,70 @@ def create_purchase_order(body: schemas.PurchaseOrderCreate, db: Session = Depen
 
 @router.put("/{po}", dependencies=[Depends(_write)])
 def update_purchase_order(po: str, body: schemas.PurchaseOrderUpdate, db: Session = Depends(get_db)):
+    """Restate a purchase order: its number, its date, and the lines on it.
+
+    `lines` is the order as it should now read, in full. A line that arrives
+    with its `id` keeps that row (and the price it was agreed at); a line with
+    no `id` is added and priced at the item master's figures, exactly as a new
+    order would be; a row whose id does not come back is dropped. Sending no
+    `lines` at all leaves the lines alone, which is what renaming a PO does.
+    """
     rows = db.query(models.PurchaseOrderLine).filter(models.PurchaseOrderLine.po == po).all()
     if not rows:
         raise HTTPException(404, "Purchase order not found")
     new_po = body.po or po
-    qty_by_id = {}
-    if body.lines:
+    by_id = {r.id: r for r in rows}
+    date = body.date or min(r.date for r in rows)
+    buyer_id = rows[0].buyer_id
+    rbi = rows[0].rbi
+
+    if body.lines is None:
+        kept = rows
+    else:
+        if not body.lines:
+            raise HTTPException(400, "A purchase order needs at least one line")
+        # A line is "new" when it names no row of this order — either it
+        # carries no id at all, or one that is no longer on the order because
+        # somebody else edited it in between.
+        new_ids = [l.get("item_id") for l in body.lines
+                   if l.get("id") not in by_id and l.get("item_id")]
+        items = {i.id: i for i in db.query(models.Item).filter(models.Item.id.in_(new_ids)).all()} if new_ids else {}
+        missing = [i for i in new_ids if i not in items]
+        if missing:
+            raise HTTPException(404, f"Item {missing[0]} not found")
+
+        kept, seen = [], set()
         for l in body.lines:
-            if l.get("id"):
-                qty_by_id[l["id"]] = l.get("qty")
-    for r in rows:
+            qty = int(l.get("qty") or 0)
+            lid = l.get("id")
+            if lid and lid in by_id:
+                row = by_id[lid]
+                row.qty = qty
+                seen.add(lid)
+            else:
+                it = items.get(l.get("item_id"))
+                if not it:
+                    raise HTTPException(404, f"Item {l.get('item_id')} not found")
+                row = models.PurchaseOrderLine(
+                    po=new_po, date=date, item_id=it.id, qty=qty,
+                    rbi=rbi, buyer_id=buyer_id,
+                    # A line added now is agreed at today's master price.
+                    unit_value=float(it.unit_value or 0), value_mode=it.value_mode or "piece",
+                    unit_fob100=float(it.unit_fob100 or 0), fob_mode=it.fob_mode or "100",
+                )
+                db.add(row)
+            kept.append(row)
+
+        for r in rows:
+            if r.id not in seen:
+                db.delete(r)
+
+    for r in kept:
         r.po = new_po
-        if r.id in qty_by_id and qty_by_id[r.id] is not None:
-            r.qty = int(qty_by_id[r.id])
         if body.date:
             r.date = body.date
     db.commit()
-    return {"po": new_po, "lines": len(rows)}
+    return {"po": new_po, "lines": len(kept)}
 
 
 @router.delete("/{po}", status_code=204, dependencies=[Depends(_write)])

@@ -88,24 +88,17 @@ export default function ReportsPage() {
 
   return (
     <div className="stack">
-      <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
-        <div className="page-head" style={{ margin: 0 }}>
-          <h2 className="h1">Other Reports</h2>
-        </div>
+      <div className="tabbar">
+        {segOptions.length > 1 && <Seg options={segOptions} value={tab} onChange={setTab} />}
+        {tab === "po" && <Pill tone="teal">Report 37</Pill>}
+        {tab === "item" && <Pill tone="teal">Report 38</Pill>}
+        <span className="grow" />
         {tab === "po" && (
           <DownloadPair size="md" disabled={!cfg.rows.length}
             onExcel={() => downloadGridExcel(`Report_37_PO_wise_Buyer_${todayISO()}`, "PO wise", poExport, poRows, exportOpts)}
             onPDF={() => downloadGridPDF(exportTitle, poExport, poRows, exportOpts)} />
         )}
       </div>
-
-      {segOptions.length > 1 && (
-        <div className="row wrap" style={{ justifyContent: "space-between" }}>
-          <Seg options={segOptions} value={tab} onChange={setTab} />
-          {tab === "po" && <Pill tone="teal">Report 37</Pill>}
-          {tab === "item" && <Pill tone="teal">Report 38</Pill>}
-        </div>
-      )}
 
       {tab === "costing" ? <CostingPanel />
         : tab === "item" ? <SupplyDetailsPanel />

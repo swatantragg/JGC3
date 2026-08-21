@@ -162,9 +162,6 @@ export default function DocumentsPage({ group }) {
     const needPo = poMode;
     return (
       <div className="stack">
-        <div className="page-head">
-          <h2 className="h1">{heading}</h2>
-        </div>
         <Card>
           {needPo ? (
             <Empty icon={ClipboardList} title="No purchase order to build documents from"
@@ -181,7 +178,6 @@ export default function DocumentsPage({ group }) {
   const done = shipComplete(inv?.ship);
   const isPre = groupMeta?.k === "PRE";
   const split = supplierSplitDocs(open, ctx);
-  const total = catalogue.reduce((s, g) => s + g.docs.length, 0);
   const previewHtml = renderDocument(open, ctx);
   const stamp = poMode ? `PO_${po.po}` : (inv?.invoice_no || "").replace(/\//g, "-");
 
@@ -206,11 +202,6 @@ export default function DocumentsPage({ group }) {
 
   return (
     <div className="stack">
-      <div className="page-head">
-        <h2 className="h1">{heading}</h2>
-        <p className="sub">{total} document{total === 1 ? "" : "s"}</p>
-      </div>
-
       <Card pad>
         <div className="row wrap" style={{ gap: 14, alignItems: "flex-end" }}>
           {poMode ? (

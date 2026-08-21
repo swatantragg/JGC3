@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
 import {
   Plus, ClipboardList, Truck, Check, ChevronRight, Boxes,
-  Pencil, Trash2, EyeOff, Monitor,
+  Pencil, Trash2, Monitor, X,
 } from "lucide-react";
 import {
   Card, CardHead, Btn, Seg, Field, Input, Select, Pill, Mono, DataTable, Modal,
-  Empty, Note, Info, Spinner, ErrorState, FormulaPanel, DownloadPair,
+  Empty, Note, Spinner, ErrorState, FormulaPanel, DownloadPair,
 } from "../../components/ui/index.jsx";
+import ItemPicker from "../../components/ItemPicker.jsx";
 import {
   usePoList, usePoMutations, useSuppliers, useBuyers, useItemDetail,
   useMasterFormulas, useOrderMaster,
@@ -20,12 +21,16 @@ import NewOrderDrawer from "./NewOrderDrawer.jsx";
 
 /* Purchase Orders — everything the buyer has asked for.
 
-   Three views of the same order book:
+   Two views of the same order book:
 
-     PO summary        one row per purchase order — what is still owed on it
+     PO summary        one row per purchase order — what is still owed on it,
+                       narrowable to a single factory. Picking a supplier (or
+                       clicking one of the pills in "Suppliers (pending)")
+                       carries that choice into the order itself, so the item
+                       list you open is that supplier's lines, not the whole
+                       order's.
      Buyers Summary    one row per item, a column per PO, with the boxes
                        received and the boxes still pending
-     Supplier summary  the PO summary again, narrowed to one factory
 
    Every derived figure comes from the API, so this page and the masters can
    never disagree. Purchase and FOB prices are held off screen throughout;
@@ -46,12 +51,23 @@ const Progress = ({ done, total }) => {
 /* The purchase order number with the day it was raised beneath it:
      344044
      (13/03/2026)
-   Used identically on the PO summary and the supplier summary. */
+   Used identically on the desktop table and the phone cards. */
 const PoCell = ({ po, date }) => (
   <span style={{ display: "block", lineHeight: 1.25 }}>
     <span style={{ fontFamily: "var(--mono)", fontWeight: 700, color: "var(--ink)" }}>{po}</span>
     <span style={{ display: "block", fontSize: 11, color: "var(--faint)", fontFamily: "var(--mono)" }}>({dmyNum(date)})</span>
   </span>
+);
+
+/* A supplier pill you can click: it opens the order already narrowed to that
+   factory's lines. The row click behind it is stopped, or every pill would
+   just open the whole order. */
+const SupPick = ({ code, on, onPick }) => (
+  <button type="button" className={`pill pill-click${on ? " pill-teal" : ""}`}
+    title={`Show only ${code}'s items on this order`}
+    onClick={(e) => { e.stopPropagation(); onPick(); }}>
+    {code}
+  </button>
 );
 
 /* ---------- PO detail ---------- */
@@ -90,34 +106,79 @@ const PO_MASTER_COLS = (supCode) => [
   { h: "RBI ref ₹", key: "rbiref", t: "inr", fml: "{tusd}*{rbirate}", sum: true },
 ];
 
-function PoModal({ po, onClose, onEdit }) {
+const sum = (rows, k) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+
+function PoModal({ po, supplierId = "", onClose, onEdit }) {
   const suppliers = useSuppliers().data || [];
   const buyers = useBuyers().data || [];
   const master = useOrderMaster(po.po);
+  const [sup, setSup] = useState(supplierId);
   const supCode = (id) => suppliers.find((s) => s.id === id)?.code || "—";
+  const supName = (id) => suppliers.find((s) => s.id === id)?.name || "—";
   const buyer = buyers.find((b) => b.id === po.buyer_id);
-  const rows = master.data?.rows || [];
-  const t = master.data?.totals || {};
+
+  const all = master.data?.rows || [];
+  /* The factories that actually appear on this order, in the order their
+     lines do — the only ones worth offering as a filter. */
+  const onPo = useMemo(() => {
+    const seen = [];
+    all.forEach((r) => { if (r.supplier_id && !seen.includes(r.supplier_id)) seen.push(r.supplier_id); });
+    return seen;
+  }, [all]);
+  const countFor = (id) => all.filter((r) => r.supplier_id === id).length;
+
+  // A supplier that has no lines on this order would show an empty table with
+  // no way back, so the filter falls away rather than stranding the reader.
+  const live = sup && onPo.includes(sup) ? sup : "";
+  const rows = live ? all.filter((r) => r.supplier_id === live) : all;
+
+  /* Narrowed to one factory the totals must be that factory's, so they are
+     re-added from the rows on screen rather than read off the whole order. */
+  const t = live
+    ? {
+      qty: sum(rows, "qty"), boxes_exact: sum(rows, "boxes_exact"),
+      vol_total: sum(rows, "vol_total"), net_total: sum(rows, "net_total"),
+      sheets: sum(rows, "sheets"),
+    }
+    : (master.data?.totals || {});
 
   const exportCols = PO_MASTER_COLS(supCode);
   const exportOpts = {
-    title: `Purchase order ${po.po}`,
-    subtitle: `${buyer?.name || "—"} · ordered ${dmyNum(po.date)} · ${po.completed}/${po.ordered} boxes received`,
+    title: `Purchase order ${po.po}${live ? ` · ${supCode(live)}` : ""}`,
+    subtitle: `${buyer?.name || "—"} · ordered ${dmyNum(po.date)} · ${po.completed}/${po.ordered} boxes received${live ? ` · ${supName(live)} only` : ""}`,
   };
 
   return (
-    <Modal title={`Purchase order ${po.po} (${dmyNum(po.date)})`} icon={ClipboardList} onClose={onClose}
+    <Modal title={`Purchase order ${po.po} (${dmyNum(po.date)})${live ? ` · ${supCode(live)}` : ""}`}
+      icon={ClipboardList} onClose={onClose}
       footer={<>
         <span style={{ fontSize: 12, color: "var(--muted)" }}>
           {buyer?.name || "—"} · ordered {dmy(po.date)} · {po.completed}/{po.ordered} boxes received
         </span>
-        <div className="row" style={{ gap: 8 }}>
+        <div className="row wrap" style={{ gap: 8 }}>
           <Btn variant="ghost" size="sm" icon={Pencil} onClick={onEdit}>Edit / delete</Btn>
           <DownloadPair disabled={!rows.length}
-            onExcel={() => downloadGridExcel(`PO_${po.po}`, `PO ${po.po}`, exportCols, rows, exportOpts)}
-            onPDF={() => downloadGridPDF(`Purchase order ${po.po}`, exportCols, rows, exportOpts)} />
+            onExcel={() => downloadGridExcel(`PO_${po.po}${live ? "_" + supCode(live) : ""}`, `PO ${po.po}`, exportCols, rows, exportOpts)}
+            onPDF={() => downloadGridPDF(exportOpts.title, exportCols, rows, exportOpts)} />
         </div>
       </>}>
+      {/* The filter that answers "what is Oswin making on this order?" — set
+          by the summary's supplier picker or by clicking a supplier pill, and
+          changeable here without going back. */}
+      {onPo.length > 1 && (
+        <div className="row wrap" style={{ gap: 10, alignItems: "center", marginBottom: 14 }}>
+          <Select className="input-sm tab-filter" value={live} onChange={(e) => setSup(e.target.value)}
+            aria-label="Show only one supplier's items on this order">
+            <option value="">All suppliers · {all.length} item(s)</option>
+            {onPo.map((id) => (
+              <option key={id} value={id}>{supCode(id)} — {supName(id)} · {countFor(id)} item(s)</option>
+            ))}
+          </Select>
+          {live && (
+            <Btn size="sm" variant="ghost" icon={X} onClick={() => setSup("")}>Show all {all.length} items</Btn>
+          )}
+        </div>
+      )}
       {master.isLoading ? <Spinner label="Working out the order…" /> : (
         <DataTable serial
           freeze={5}
@@ -126,7 +187,7 @@ function PoModal({ po, onClose, onEdit }) {
             { key: "gd", w: 96, label: "GD code", render: (r) => <Mono>{r.gd}</Mono> },
             { key: "code", w: 92, label: "Code", render: (r) => <Mono>{r.code}</Mono> },
             { key: "desc", w: 210, label: "Description", strong: true, render: (r) => <span style={{ whiteSpace: "pre-line" }}>{r.description}</span> },
-            { key: "sp", w: 92, label: "Supplier", render: (r) => <Pill>{supCode(r.supplier_id)}</Pill> },
+            { key: "sp", w: 92, label: "Supplier", render: (r) => <Pill tone={live ? "teal" : ""}>{supCode(r.supplier_id)}</Pill> },
             { key: "qty", label: "Pieces", align: "r", render: (r) => num(r.qty, 0) },
             { key: "boxes", label: "Boxes", align: "r", strong: true, render: (r) => boxesExact(r.boxes_exact) },
             { key: "vol", label: "Volume m³", align: "r", render: (r) => num(r.vol_total, 3) },
@@ -137,7 +198,8 @@ function PoModal({ po, onClose, onEdit }) {
           ])}
           rows={rows} rowKey={(r) => r.item_id + r.line_id}
           footer={[
-            { v: "Total", span: 5 }, { v: num(t.qty || 0, 0), align: "r" }, { v: boxesExact(t.boxes_exact || 0), align: "r" },
+            { v: live ? `${supCode(live)} · total` : "Total", span: 5 },
+            { v: num(t.qty || 0, 0), align: "r" }, { v: boxesExact(t.boxes_exact || 0), align: "r" },
             { v: num(t.vol_total, 3), align: "r" }, { v: num(t.net_total, 2), align: "r" },
             { v: Math.round(t.sheets || 0), align: "r" },
           ]}
@@ -147,25 +209,66 @@ function PoModal({ po, onClose, onEdit }) {
   );
 }
 
-/* ---------- Edit / delete a purchase order ---------- */
+/* ---------- Edit / delete a purchase order ----------
+   The order as it should now read: retype a quantity, drop a line you no
+   longer want, or add an item that was left off. Lines already on the order
+   keep the price they were agreed at; a line added here is priced at today's
+   master, exactly as a fresh order would be. */
 function PoEditModal({ po, onClose }) {
   const { update, remove } = usePoMutations();
+  const suppliers = useSuppliers().data || [];
   const toast = useToast();
-  const [poNo, setPoNo] = useState(po.po);
-  const [qty, setQty] = useState(() => Object.fromEntries(po.detail.map((d) => [d.line_id || d.item_id, d.qty])));
-  const [confirm, setConfirm] = useState(false);
+  const supCode = (id) => suppliers.find((s) => s.id === id)?.code || "—";
 
-  const save = () => update.mutate(
-    { po: po.po, body: { po: poNo, lines: po.detail.map((d) => ({ id: d.line_id, qty: Number(qty[d.line_id || d.item_id]) || 0 })) } },
-    { onSuccess: () => { toast(`PO ${poNo} updated`); onClose(); } },
-  );
+  const [poNo, setPoNo] = useState(po.po);
+  const [lines, setLines] = useState(() => po.detail.map((d) => ({
+    key: d.line_id || d.item_id,
+    line_id: d.line_id || null,
+    item_id: d.item_id,
+    gd: d.gd, description: d.description, supplier_id: d.supplier_id,
+    qty: String(d.qty ?? ""),
+    delivered: d.completed || 0,
+  })));
+  const [confirm, setConfirm] = useState(false);
+  const [adding, setAdding] = useState(false);
+
+  const setQty = (key, v) => setLines((p) => p.map((l) => (l.key === key ? { ...l, qty: v } : l)));
+  const drop = (key) => setLines((p) => p.filter((l) => l.key !== key));
+  /* The picker hands back everything that was typed against it at once, so a
+     dozen items join the order in one action rather than a dozen. */
+  const add = (picked) => {
+    setLines((p) => [...p, ...picked.map(({ group, variant, qty }, i) => ({
+      key: `new:${variant.item_id}:${Date.now()}:${i}`,
+      line_id: null, item_id: variant.item_id, gd: group.gd, description: group.description,
+      supplier_id: variant.supplier_id, qty: String(qty), delivered: 0, fresh: true,
+    }))]);
+    setAdding(false);
+  };
+
+  const removedDelivered = po.detail
+    .filter((d) => (d.completed || 0) > 0 && !lines.some((l) => l.line_id === (d.line_id || null)))
+    .map((d) => d.gd);
+
+  const save = () => {
+    if (!lines.length) return;
+    update.mutate(
+      {
+        po: po.po,
+        body: {
+          po: poNo,
+          lines: lines.map((l) => ({ id: l.line_id || undefined, item_id: l.item_id, qty: Number(l.qty) || 0 })),
+        },
+      },
+      { onSuccess: () => { toast(`PO ${poNo} updated — ${lines.length} line${lines.length === 1 ? "" : "s"}`); onClose(); } },
+    );
+  };
   const del = () => remove.mutate(po.po, { onSuccess: () => { toast(`PO ${po.po} deleted`); onClose(); } });
 
   return (
     <Modal title={`Edit purchase order ${po.po}`} icon={Pencil} onClose={onClose}
       footer={<>
         {confirm
-          ? <span className="row" style={{ gap: 8 }}>
+          ? <span className="row wrap" style={{ gap: 8 }}>
             <span style={{ fontSize: 12.5, color: "var(--amber-ink)" }}>Delete PO {po.po} and all its lines?</span>
             <Btn variant="danger" size="sm" icon={Trash2} onClick={del}>Confirm delete</Btn>
             <Btn variant="ghost" size="sm" onClick={() => setConfirm(false)}>Keep</Btn>
@@ -173,45 +276,98 @@ function PoEditModal({ po, onClose }) {
           : <Btn variant="ghost" size="sm" icon={Trash2} onClick={() => setConfirm(true)}>Delete PO</Btn>}
         <div className="row" style={{ gap: 8 }}>
           <Btn variant="ghost" size="sm" onClick={onClose}>Cancel</Btn>
-          <Btn size="sm" icon={Check} disabled={update.isPending} onClick={save}>Save changes</Btn>
+          <Btn size="sm" icon={Check} disabled={update.isPending || !lines.length} onClick={save}>Save changes</Btn>
         </div>
       </>}>
-      <div className="grid-3" style={{ marginBottom: 14 }}>
-        <Field label="PO number"><Input value={poNo} onChange={(e) => setPoNo(e.target.value)} /></Field>
+      {/* The number and the one thing you might add, on the same line. */}
+      <div className="row wrap" style={{ gap: 12, alignItems: "flex-end", marginBottom: 14 }}>
+        <Field label="PO number" style={{ width: "min(280px, 100%)" }}>
+          <Input value={poNo} onChange={(e) => setPoNo(e.target.value)} />
+        </Field>
+        <span className="grow" />
+        <Btn variant={adding ? "ghost" : "teal"} icon={adding ? X : Plus} onClick={() => setAdding((a) => !a)}>
+          {adding ? "Close" : "Add an item"}
+        </Btn>
       </div>
-      <table className="tbl">
-        <thead><tr><th>Item</th><th className="r">Pieces</th></tr></thead>
-        <tbody>
-          {po.detail.map((d) => {
-            const k = d.line_id || d.item_id;
-            return (
-              <tr key={k}>
-                <td><Mono>{d.gd}</Mono> <span style={{ color: "var(--ink)" }}>{d.description}</span></td>
+
+      {adding && (
+        <ItemPicker unit="pieces" where="on this order"
+          chosen={lines.map((l) => l.item_id)} onAdd={add} />
+      )}
+
+      {removedDelivered.length > 0 && (
+        <Note tone="amber" icon={Trash2}>
+          <b>{removedDelivered.join(", ")}</b> {removedDelivered.length === 1 ? "has" : "have"} boxes
+          already received against {removedDelivered.length === 1 ? "it" : "them"}. Removing the
+          line{removedDelivered.length === 1 ? "" : "s"} takes that demand off the order — the
+          invoices themselves are untouched, but the balance register will re-add those boxes to
+          whatever is still open.
+        </Note>
+      )}
+
+      {lines.length ? (
+        // The table scrolls sideways on its own, so a narrow screen does not
+        // drag the PO number field off with it.
+        <div className="tbl-wrap edit-tbl">
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Supplier</th>
+              <th className="r">Pieces</th>
+              <th className="r" style={{ width: 52 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((l) => (
+              <tr key={l.key}>
+                <td>
+                  <Mono>{l.gd}</Mono>{" "}
+                  <span style={{ color: "var(--ink)", whiteSpace: "pre-line" }}>{l.description}</span>
+                  {l.fresh && <> <Pill tone="teal">new</Pill></>}
+                </td>
+                <td><Pill>{supCode(l.supplier_id)}</Pill></td>
                 <td className="r">
-                  <Input className="input-sm num-in" style={{ width: 110 }} type="number" min="0"
-                    value={qty[k] ?? ""} onChange={(e) => setQty((p) => ({ ...p, [k]: e.target.value }))} />
+                  <Input className="input-sm num-in" style={{ width: 110 }} type="text" inputMode="numeric"
+                    value={l.qty} onChange={(e) => setQty(l.key, e.target.value.replace(/[^\d]/g, ""))} />
+                </td>
+                <td className="r">
+                  <button className="icon-btn bare" title={`Remove ${l.gd} from this order`} onClick={() => drop(l.key)}>
+                    <Trash2 size={14} />
+                  </button>
                 </td>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            ))}
+          </tbody>
+        </table>
+        </div>
+      ) : (
+        <Empty icon={ClipboardList} title="Every line has been removed">
+          An order needs at least one item. Add one above, or delete the order outright.
+        </Empty>
+      )}
     </Modal>
   );
 }
 
-/* ---------- The PO summary table ----------
-   One structure, used by both the PO summary and the supplier summary — the
-   client reads the same shape in both places, the second one simply narrowed
-   to a single factory. */
-function poSummaryColumns(supCode, brand) {
+/* ---------- The PO summary table ---------- */
+function poSummaryColumns(supCode, brand, onPickSup, activeSup) {
   return [
     { key: "po", w: 108, label: "PO", render: (p) => <PoCell po={p.po} date={p.date} /> },
     { key: "buyer", w: 150, label: "Buyer", render: (p) => brand(p.buyer_id) },
     { key: "prog", w: 168, label: "Delivered", render: (p) => <Progress done={p.completed} total={p.ordered} /> },
     { key: "pen", w: 122, label: "Boxes pending", align: "r", render: (p) => <span style={{ fontWeight: 700, color: p.pending ? "var(--amber-ink)" : "var(--green-ink)" }}>{p.pending || "—"}</span> },
     { key: "done", w: 118, label: "Received", align: "r", render: (p) => <span>{p.completed} <span style={{ color: "var(--faint)" }}>/ {p.ordered}</span></span> },
-    { key: "sup", label: "Suppliers (pending)", render: (p) => (p.open_suppliers.length ? <span className="row wrap" style={{ gap: 4 }}>{p.open_suppliers.map((s) => <Pill key={s}>{supCode(s)}</Pill>)}</span> : <Pill tone="green"><Check size={11} /> all delivered</Pill>) },
+    {
+      key: "sup", label: "Suppliers (pending)",
+      render: (p) => (p.open_suppliers.length
+        ? <span className="row wrap" style={{ gap: 4 }}>
+          {p.open_suppliers.map((s) => (
+            <SupPick key={s} code={supCode(s)} on={s === activeSup} onPick={() => onPickSup(p, s)} />
+          ))}
+        </span>
+        : <Pill tone="green"><Check size={11} /> all delivered</Pill>),
+    },
     { key: "vol", label: "Volume m³", align: "r", render: (p) => num(p.volume, 3) },
     { key: "go", label: "", align: "r", render: () => <ChevronRight size={15} style={{ color: "var(--faint)" }} /> },
   ];
@@ -221,7 +377,7 @@ function poSummaryColumns(supCode, brand) {
    owed and which factories owe it. What has already been delivered is left to
    the desktop — on a phone this screen answers "what is outstanding", and the
    received count and the progress bar only crowd that out. */
-function PoSummaryCards({ rows, supCode, brand, onOpen }) {
+function PoSummaryCards({ rows, supCode, brand, onOpen, onPickSup, activeSup }) {
   return (
     <div className="dt-cards">
       {rows.map((p) => (
@@ -244,7 +400,9 @@ function PoSummaryCards({ rows, supCode, brand, onOpen }) {
               <dd className="r">
                 {p.open_suppliers.length
                   ? <span className="row wrap" style={{ gap: 4, justifyContent: "flex-end" }}>
-                    {p.open_suppliers.map((s) => <Pill key={s}>{supCode(s)}</Pill>)}
+                    {p.open_suppliers.map((s) => (
+                      <SupPick key={s} code={supCode(s)} on={s === activeSup} onPick={() => onPickSup(p, s)} />
+                    ))}
                   </span>
                   : <Pill tone="green"><Check size={11} /> all delivered</Pill>}
               </dd>
@@ -275,9 +433,9 @@ export default function OrdersPage() {
   const mobile = useIsMobile();
   const [tab, setTab] = useState("po");
   const [drawer, setDrawer] = useState(false);
-  const [selPo, setSelPo] = useState(null);
+  const [sel, setSel] = useState(null);         // { po, sup } — the order to open
   const [editPo, setEditPo] = useState(null);
-  const [sup, setSup] = useState("");
+  const [sup, setSup] = useState("");           // "" = every supplier
 
   const poq = usePoList();
   const suppliers = useSuppliers().data || [];
@@ -290,11 +448,11 @@ export default function OrdersPage() {
 
   const pos = poq.data || [];
   const detail = detailq.data || { pos: [], po_date: {}, rows: [] };
-  const selPoLive = selPo && pos.find((p) => p.po === selPo.po);
+  const selLive = sel && pos.find((p) => p.po === sel.po);
 
-  /* Supplier summary is the PO summary narrowed to one factory: the same
-     table, the same columns, recounted from just that supplier's lines — so
-     "pending" there means pending *from them*, not on the order as a whole. */
+  /* The supplier filter is the old supplier summary, folded into this one
+     table: the same columns, recounted from just that factory's lines — so
+     "pending" means pending *from them*, not on the order as a whole. */
   const supPos = useMemo(() => {
     if (!sup) return pos;
     return pos.map((p) => {
@@ -312,7 +470,14 @@ export default function OrdersPage() {
     }).filter(Boolean);
   }, [pos, sup]);
 
-  const summaryCols = useMemo(() => poSummaryColumns(supCode, brand), [suppliers, buyers]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* Clicking a supplier pill does two things at once: it narrows the whole
+     summary to that factory, and it opens the order showing their items. */
+  const pickSup = (p, sid) => { setSup(sid); setSel({ po: p.po, sup: sid }); };
+
+  const summaryCols = useMemo(
+    () => poSummaryColumns(supCode, brand, pickSup, sup),
+    [suppliers, buyers, sup], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const summaryExport = useMemo(() => PO_SUMMARY_EXPORT(supCode, brand), [suppliers, buyers]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Buyers Summary — one row per item, a column per PO, then the boxes
@@ -363,46 +528,66 @@ export default function OrdersPage() {
   if (poq.isLoading) return <Spinner label="Loading purchase orders…" />;
   if (poq.error) return <ErrorState error={poq.error} onRetry={poq.refetch} />;
 
-  const summaryTitle = sup ? `Supplier summary · ${supCode(sup)}` : "PO summary";
-  const summaryRows = tab === "supplier" ? supPos : pos;
-
-  const SummaryCard = ({ rows, title, subtitle, empty }) => (
-    <Card>
-      <CardHead icon={ClipboardList} title={`${rows.length} purchase order${rows.length === 1 ? "" : "s"}`}>
-        <DownloadPair disabled={!rows.length}
-          onExcel={() => downloadGridExcel(`${title.replace(/[^A-Za-z0-9]+/g, "_")}_${todayISO()}`, title, summaryExport, rows, { title, subtitle })}
-          onPDF={() => downloadGridPDF(title, summaryExport, rows, { subtitle })} />
-        {!mobile && <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Click a row for item-wise detail</span>}
-      </CardHead>
-      {rows.length
-        ? (mobile
-          ? <PoSummaryCards rows={rows} supCode={supCode} brand={brand} onOpen={setSelPo} />
-          : <DataTable serial paginate freeze={5} onRowClick={setSelPo} columns={summaryCols} rows={rows} rowKey={(p) => p.po} maxHeight={560} />)
-        : empty}
-    </Card>
-  );
+  const rows = sup ? supPos : pos;
+  const title = sup ? `PO summary · ${supCode(sup)}` : "PO summary";
+  const subtitle = `${sup ? supCode(sup) : "All suppliers"} · as on ${todayISO()} · every purchase order on the book`;
 
   return (
     <div className="stack">
-      <div className="row wrap" style={{ justifyContent: "space-between", alignItems: "flex-end" }}>
-        <div className="page-head" style={{ margin: 0 }}>
-          <h2 className="h1">Purchase Orders</h2>
-        </div>
+      {/* Tabs, the supplier filter and the one action this screen has, on a
+          single line. The page name is in the bar above and is not repeated. */}
+      <div className="tabbar">
+        <Seg options={[
+          ["po", "PO summary", ClipboardList],
+          ["itemdetail", "Buyers Summary", Boxes],
+        ]} value={tab} onChange={setTab} />
+
+        {tab === "po" && pos.length > 0 && (
+          <Select className="tab-filter" value={sup} onChange={(e) => setSup(e.target.value)}
+            aria-label="Narrow the summary to one supplier">
+            <option value="">All suppliers</option>
+            {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}
+          </Select>
+        )}
+
+        <span className="grow" />
+
+        {tab === "itemdetail" && !mobile && (
+          <DownloadPair disabled={!detail.rows.length}
+            onExcel={() => downloadGridExcel(`Buyers_Summary_${todayISO()}`, "Buyers Summary", buyersExport, detail.rows, { title: "Buyers Summary", subtitle: `Item wise · as on ${todayISO()}` })}
+            onPDF={() => downloadGridPDF("Buyers Summary", buyersExport, detail.rows, { subtitle: `Item wise · as on ${todayISO()}` })} />
+        )}
+
         <Btn size="lg" icon={Plus} onClick={() => setDrawer(true)}>New buyer order</Btn>
       </div>
-
-      <Seg options={[
-        ["po", "PO summary", ClipboardList],
-        ["itemdetail", "Buyers Summary", Boxes],
-        ["supplier", "Supplier summary", Truck],
-      ]} value={tab} onChange={setTab} />
 
       {/* ---------- PO summary ---------- */}
       {tab === "po" && (
         !pos.length ? (
           <Card><Empty icon={ClipboardList} title="No purchase orders yet" action={<Btn icon={Plus} onClick={() => setDrawer(true)}>New buyer order</Btn>}>Add the first buyer order and it will appear here with its live delivery status.</Empty></Card>
         ) : (
-          <SummaryCard rows={pos} title="PO summary" subtitle={`As on ${todayISO()} · every purchase order on the book`} />
+          <>
+            <Card>
+              <CardHead icon={ClipboardList} title={`${rows.length} purchase order${rows.length === 1 ? "" : "s"}${sup ? ` · ${supCode(sup)}` : ""}`}>
+                <DownloadPair disabled={!rows.length}
+                  onExcel={() => downloadGridExcel(`${title.replace(/[^A-Za-z0-9]+/g, "_")}_${todayISO()}`, title, summaryExport, rows, { title, subtitle })}
+                  onPDF={() => downloadGridPDF(title, summaryExport, rows, { subtitle })} />
+                {!mobile && <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Click a row for item-wise detail</span>}
+              </CardHead>
+              {rows.length
+                ? (mobile
+                  ? <PoSummaryCards rows={rows} supCode={supCode} brand={brand} activeSup={sup}
+                    onOpen={(p) => setSel({ po: p.po, sup })} onPickSup={pickSup} />
+                  : <DataTable serial paginate freeze={5} onRowClick={(p) => setSel({ po: p.po, sup })}
+                    columns={summaryCols} rows={rows} rowKey={(p) => p.po} maxHeight={560} />)
+                : (
+                  <Empty icon={Truck} title="Nothing on order for this supplier"
+                    action={<Btn size="sm" variant="ghost" onClick={() => setSup("")}>Show all suppliers</Btn>}>
+                    Pick another supplier, or enter a buyer order that includes them.
+                  </Empty>
+                )}
+            </Card>
+          </>
         )
       )}
 
@@ -415,58 +600,21 @@ export default function OrdersPage() {
           </Empty>
         </Card>
       ) : (
-        <>
-          <Card pad>
-            <div className="row wrap" style={{ gap: 12, justifyContent: "space-between", alignItems: "center" }}>
-              <DownloadPair disabled={!detail.rows.length}
-                onExcel={() => downloadGridExcel(`Buyers_Summary_${todayISO()}`, "Buyers Summary", buyersExport, detail.rows, { title: "Buyers Summary", subtitle: `Item wise · as on ${todayISO()}` })}
-                onPDF={() => downloadGridPDF("Buyers Summary", buyersExport, detail.rows, { subtitle: `Item wise · as on ${todayISO()}` })} />
-            </div>
-          </Card>
-          <Card>
-            <CardHead icon={Boxes} title={`${detail.rows.length} item${detail.rows.length === 1 ? "" : "s"} · ${detail.pos.length} PO column(s)`} />
-            {detail.rows.length ? (
-              <DataTable serial freeze={5} maxHeight={520} columns={buyersCols} rows={detail.rows} rowKey={(r) => r.item_id} />
-            ) : <Empty icon={Boxes} title="No orders yet">Add a buyer order to see the item-wise summary.</Empty>}
-            <div className="card-foot">
-            </div>
-          </Card>
-        </>
+        <Card>
+          <CardHead icon={Boxes} title={`${detail.rows.length} item${detail.rows.length === 1 ? "" : "s"} · ${detail.pos.length} PO column(s)`} />
+          {detail.rows.length ? (
+            <DataTable serial freeze={5} maxHeight={520} columns={buyersCols} rows={detail.rows} rowKey={(r) => r.item_id} />
+          ) : <Empty icon={Boxes} title="No orders yet">Add a buyer order to see the item-wise summary.</Empty>}
+        </Card>
       ))}
-
-      {/* ---------- Supplier summary — the PO summary, one factory at a time ---------- */}
-      {tab === "supplier" && (
-        <>
-          <Card pad>
-            <div className="row wrap" style={{ gap: 14, alignItems: "flex-end" }}>
-              <Field label="Supplier" style={{ minWidth: "min(280px, 100%)" }}>
-                <Select value={sup} onChange={(e) => setSup(e.target.value)}>
-                  <option value="">All suppliers</option>
-                  {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}
-                </Select>
-              </Field>
-              <span className="grow" />
-              <Pill tone="teal">
-                {(mobile ? summaryRows.filter((p) => p.pending > 0) : summaryRows).length} order(s)
-                {mobile ? " still owed by " : " involving "}{sup ? supCode(sup) : "any supplier"}
-              </Pill>
-            </div>
-            <div style={{ marginTop: 12 }}>
-            </div>
-          </Card>
-          <SummaryCard
-            rows={mobile ? summaryRows.filter((p) => p.pending > 0) : summaryRows}
-            title={summaryTitle}
-            subtitle={`${sup ? supCode(sup) : "All suppliers"} · as on ${todayISO()}`}
-            empty={<Empty icon={Truck} title="Nothing on order for this supplier">Pick another supplier, or enter a buyer order that includes them.</Empty>}
-          />
-        </>
-      )}
 
       <FormulaPanel title="How are boxes, labels and value calculated?" rows={formulas} />
 
       {drawer && <NewOrderDrawer onClose={() => setDrawer(false)} />}
-      {selPo && selPoLive && <PoModal po={selPoLive} onClose={() => setSelPo(null)} onEdit={() => { setEditPo(selPoLive); setSelPo(null); }} />}
+      {sel && selLive && (
+        <PoModal key={`${sel.po}:${sel.sup || ""}`} po={selLive} supplierId={sel.sup || ""}
+          onClose={() => setSel(null)} onEdit={() => { setEditPo(selLive); setSel(null); }} />
+      )}
       {editPo && <PoEditModal po={editPo} onClose={() => setEditPo(null)} />}
     </div>
   );

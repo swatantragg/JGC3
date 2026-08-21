@@ -485,10 +485,31 @@ def _po_dates(po_lines) -> dict:
 
 
 # ---------------- Dashboard matrix (doc 39) ----------------
-def build_balance_matrix(po_lines, invoices, items_by_id, suppliers) -> dict:
+def build_balance_matrix(po_lines, invoices, items_by_id, suppliers, hidden_pos=None) -> dict:
+    """Balance orders, boxes and volume — suppliers down, purchase orders across.
+
+    `hidden_pos` are orders somebody has cleared off the dashboard once they
+    were fully delivered. They are hidden from this view only: the order, its
+    lines and every report are untouched. The hiding also lasts only while the
+    order stays empty — should boxes fall due on it again it comes straight
+    back onto the board, rather than owing quietly off-screen.
+    """
     ledger = compute_ledger(po_lines, invoices, items_by_id)
     po_date = _po_dates(po_lines)
-    pos = sorted(po_date, key=lambda p: (po_date[p], p))
+    all_pos = sorted(po_date, key=lambda p: (po_date[p], p))
+
+    # What each order still owes, so "nothing pending" is decided here rather
+    # than by the browser reading a row of dashes.
+    owed = {po: 0 for po in all_pos}
+    for b in ledger.values():
+        for d in b["demands"]:
+            if d["remaining"] > 0 and d["po"] in owed:
+                owed[d["po"]] += d["remaining"]
+
+    asked = {str(x) for x in (hidden_pos or [])}
+    hidden = [po for po in all_pos if po in asked and owed[po] <= 0]
+    hidden_set = set(hidden)
+    pos = [po for po in all_pos if po not in hidden_set]
 
     rows = []
     for s in suppliers:
@@ -524,6 +545,11 @@ def build_balance_matrix(po_lines, invoices, items_by_id, suppliers) -> dict:
     return {
         "pos": pos, "po_date": po_date, "rows": rows, "totals": totals,
         "cntr_vol": cntr_vol, "containers": containers,
+        # The orders with nothing left pending — the only ones that may be
+        # cleared off the board — and those already cleared, so they can be
+        # put back.
+        "empty_pos": [po for po in pos if owed[po] <= 0],
+        "hidden_pos": hidden,
     }
 
 

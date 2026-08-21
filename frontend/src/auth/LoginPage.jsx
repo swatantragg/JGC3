@@ -320,7 +320,7 @@ export default function LoginPage() {
             )
           )}
         </div>
-        <div className="login-foot">Maintained and developed by <b>Avita Technologies</b> · V-5.1.1</div>
+        <div className="login-foot">Maintained and developed by <b>Avita Technologies</b> · V-5.2.2</div>
       </div>
     </div>
   );

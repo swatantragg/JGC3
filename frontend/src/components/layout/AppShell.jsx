@@ -114,7 +114,11 @@ export default function AppShell() {
     return () => window.removeEventListener("keydown", h);
   }, [drawer]);
 
-  const [crumb, title] = ROUTE_TITLES[pathname] || ["", "Jaikvin Global"];
+  /* One heading per screen. The bar used to carry a breadcrumb and the page
+     name above a page that then printed its own name again — the same words
+     twice, a line apart. The name lives here now, at full size, with the
+     search beside it, and no page repeats it. */
+  const title = (ROUTE_TITLES[pathname] || [])[1] || "Jaikvin Global";
 
   // A dropdown keeps only the entries this user can reach, and disappears
   // once none are left.
@@ -126,9 +130,16 @@ export default function AppShell() {
   const menu = MENU.map(menuFor).filter(Boolean);
 
   const isActive = (n) => (n.children ? n.children.some((c) => c.to === pathname) : pathname === n.to);
+
+  /* Only Purchase Orders carries a counter. The Shipment badge counted boxes
+     still to pack — four figures against a menu label, which reads as an
+     error rather than as a total, so the bar now shows the one number that
+     means "there is work waiting here": how many orders are still open. */
+  const BADGED = new Set(["orders"]);
+  const badgeFor = (id) => (BADGED.has(id) ? badges[id] || 0 : 0);
   const badgeOf = (n) => (n.children
-    ? n.children.reduce((s, c) => s + (badges[c.id] || 0), 0)
-    : badges[n.id] || 0);
+    ? n.children.reduce((s, c) => s + badgeFor(c.id), 0)
+    : badgeFor(n.id));
 
   const NavBtn = ({ n }) => {
     const btn = (
@@ -152,7 +163,7 @@ export default function AppShell() {
                 <span className="nmi-t">{c.label}</span>
                 <span className="nmi-s">{c.desc}</span>
               </span>
-              {badges[c.id] > 0 && <span className="nav-count">{badges[c.id]}</span>}
+              {badgeFor(c.id) > 0 && <span className="nav-count">{badgeFor(c.id)}</span>}
             </button>
           ))}
         </div>
@@ -215,7 +226,7 @@ export default function AppShell() {
                       onClick={() => nav(c.to)}>
                       <c.icon size={15} strokeWidth={2.1} />
                       <span className="grow">{c.label}</span>
-                      {badges[c.id] > 0 && <span className="nav-count">{badges[c.id]}</span>}
+                      {badgeFor(c.id) > 0 && <span className="nav-count">{badgeFor(c.id)}</span>}
                     </button>
                   ))}
                 </div>
@@ -228,10 +239,7 @@ export default function AppShell() {
       <div className="main">
         <div className="subbar">
           <div className="subbar-inner">
-            <div>
-              <div className="crumb">{crumb}</div>
-              <h1>{title}</h1>
-            </div>
+            <h1>{title}</h1>
             <div className="grow" />
             <button className="searchbtn" onClick={() => setPalette(true)}>
               <Search size={16} />
@@ -247,7 +255,7 @@ export default function AppShell() {
 
         <footer className="footer">
           <span>Maintained and Developed By <b style={{ color: "var(--ink)" }}>Avita Technologies</b></span>
-          <span className="mono">V-5.1.1</span>
+          <span className="mono">V-5.2.2</span>
         </footer>
       </div>
 

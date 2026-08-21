@@ -61,7 +61,9 @@ def derive(rows: list[schemas.ItemDeriveIn], db: Session = Depends(get_db)):
             "supplier_id": it.supplier_id, "packing": it.packing,
             **calc.derive_line(it, r.qty, r.rbi),
         })
-    sums = ("boxes", "boxes_exact", "vol_total", "net_total", "gross_total",
+    # "qty" leads the list: the summary table's Pieces column totals every
+    # line, so 3,000 + 4,000 reads as 7,000 rather than as a blank.
+    sums = ("qty", "boxes", "boxes_exact", "vol_total", "net_total", "gross_total",
             "labels", "sheets", "total_value_inr", "total_fob_usd", "rbi_ref_inr")
     return {"rows": out, "totals": {k: sum(x[k] for x in out) for k in sums}}
 
