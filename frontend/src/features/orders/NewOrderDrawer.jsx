@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { ClipboardList, Check, Search, Trash2 } from "lucide-react";
 import {
-  Card, Btn, Field, Input, Select, Pill, Mono, DataTable, Drawer, Step, Empty, SearchInput, Note,
+  Card, Btn, Field, Input, NumberInput, Select, Pill, Mono, DataTable, Drawer, Step, Empty, SearchInput,
 } from "../../components/ui/index.jsx";
 import { useGroupedItems, useBuyers, useSuppliers, usePoMutations, useDerive } from "../../api/hooks.js";
 import { useToast } from "../../providers/ToastProvider.jsx";
@@ -154,9 +154,9 @@ export default function NewOrderDrawer({ onClose }) {
                                 = {boxesExact(qty / (v.packing || 1))} boxes
                               </span>
                             )}
-                            <Input className={`input-sm num-in${qty ? " filled" : ""}`} style={{ width: 118 }}
-                              type="number" min="0" placeholder="0"
-                              value={qtys[v.item_id] || ""} onChange={(e) => setQty(v.item_id, e.target.value)} />
+                            <NumberInput className={`input-sm num-in${qty ? " filled" : ""}`} style={{ width: 118 }}
+                              placeholder="0" aria-label={`Pieces from ${supCode(v.supplier_id)}`}
+                              value={qtys[v.item_id] || ""} onChange={(val) => setQty(v.item_id, val)} />
                           </span>
                         </div>
                       );
@@ -199,8 +199,9 @@ export default function NewOrderDrawer({ onClose }) {
                   {
                     key: "qty", w: 120, label: "Pieces", align: "r",
                     render: (r) => (
-                      <Input className="input-sm num-in filled" style={{ width: 106 }} type="number" min="0"
-                        value={qtys[r.item_id] ?? ""} onChange={(e) => setQty(r.item_id, e.target.value)} />
+                      <NumberInput className="input-sm num-in filled" style={{ width: 106 }}
+                        aria-label={`Pieces for ${r.gd}`}
+                        value={qtys[r.item_id] ?? ""} onChange={(val) => setQty(r.item_id, val)} />
                     ),
                   },
                   {

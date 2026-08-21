@@ -146,6 +146,11 @@ export const invoices = {
 export const dashboard = {
   matrix: () => apiGet("/api/dashboard/matrix"),
   badges: () => apiGet("/api/dashboard/badges"),
+  // Filled orders cleared off the balance board. A view preference only —
+  // the orders themselves stay in the PO summary and in every report.
+  hiddenPos: () => apiGet("/api/dashboard/hidden-pos"),
+  hidePos: (pos) => apiPost("/api/dashboard/hidden-pos", { pos }),
+  restorePos: (pos) => apiDelete(`/api/dashboard/hidden-pos${pos ? "?" + pos.map((p) => `pos=${encodeURIComponent(p)}`).join("&") : ""}`),
 };
 
 export const reports = {

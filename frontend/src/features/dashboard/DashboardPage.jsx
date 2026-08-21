@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
-import { Boxes, Ship, ClipboardList, Container, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Boxes, Ship, ClipboardList, Container, ChevronRight, EyeOff, Undo2, Check } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { Card, CardHead, Pill, Mono, Select, DataTable, Empty, Spinner, ErrorState } from "../../components/ui/index.jsx";
-import { useDashboardMatrix, useInvoices, useItems, useBuyers } from "../../api/hooks.js";
+import { Card, CardHead, Btn, Pill, Mono, DataTable, Modal, Empty, Note, Spinner, ErrorState } from "../../components/ui/index.jsx";
+import { useDashboardMatrix, useInvoices, useItems, useBuyers, useHiddenPoMutations } from "../../api/hooks.js";
 import { dmy, num } from "../../lib/format.js";
 import { useIsMobile } from "../../lib/useIsMobile.js";
 import { INV_STATUS_TONE } from "../../lib/constants.js";
@@ -11,11 +11,19 @@ import { INV_STATUS_TONE } from "../../lib/constants.js";
    live: suppliers down the side, every open PO across the top, pending boxes
    and volume in each cell, a TOTAL row and estimated containers. Below it the
    invoices with their dispatch → ship status. Clicking a PO or an invoice
-   jumps straight to it. */
+   jumps straight to it.
+
+   An order that has been filled to the last box still holds a column of
+   dashes, and after a year of trading that is most of the board. Those — and
+   only those — carry a tick box: tick the ones you are finished with, confirm
+   the list by number, and they come off the dashboard. Nothing is deleted:
+   they stay in the PO summary, in the masters and in every report, and can be
+   put back from the foot of this card. */
+
 /* The balance matrix on a phone: suppliers across the top of a wide grid does
    not survive a 390px screen, so one supplier is chosen at a time and their
    open POs are listed down the page with the boxes and volume still owed. */
-function BalanceCards({ M, onOpenPo }) {
+function BalanceCards({ M, empty, sel, onToggle, onOpenPo }) {
   const [sup, setSup] = useState("");           // "" = every supplier
   const row = M.rows.find((r) => r.supplier.id === sup);
   const cells = row ? row.cells : M.totals.cells;
@@ -74,6 +82,27 @@ function BalanceCards({ M, onOpenPo }) {
           </div>
         )}
       </div>
+
+      {/* Filled orders, each with its tick box — the phone's half of the same
+          "clear these off the board" action the matrix header carries. */}
+      {empty.length > 0 && (
+        <div className="dt-cards done-cards">
+          <div className="done-head">
+            <Check size={13} /> {empty.length} order{empty.length === 1 ? "" : "s"} fully delivered · tick to clear off the dashboard
+          </div>
+          {empty.map((po) => (
+            <label key={po} className={`dt-card pick-card${sel.includes(po) ? " on" : ""}`}>
+              <div className="dt-card-head">
+                <span className="dt-card-title">
+                  <input type="checkbox" className="ck" checked={sel.includes(po)} onChange={() => onToggle(po)} />
+                  PO {po}
+                </span>
+                <span className="dt-card-n">{dmy(M.po_date[po])}</span>
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -108,6 +137,35 @@ function InvoiceCards({ rows, brand, onOpen }) {
   );
 }
 
+/* The confirmation. It names every order by number, because "remove 4 orders"
+   is not something anybody can check before they agree to it. */
+function RemoveConfirm({ pos, dates, busy, onCancel, onConfirm }) {
+  return (
+    <Modal size="sm" title="Remove from the dashboard" icon={EyeOff} onClose={onCancel}
+      footer={<>
+        <Btn variant="ghost" size="sm" onClick={onCancel}>Cancel</Btn>
+        <Btn variant="danger" size="sm" icon={EyeOff} disabled={busy} onClick={onConfirm}>
+          {busy ? "Removing…" : `Remove ${pos.length} order${pos.length === 1 ? "" : "s"}`}
+        </Btn>
+      </>}>
+      <p style={{ fontSize: 13, color: "var(--muted)", margin: "0 0 12px", lineHeight: 1.55 }}>
+        {pos.length === 1 ? "This order is" : `These ${pos.length} orders are`} fully delivered
+        and will come off the balance board:
+      </p>
+      <div className="row wrap" style={{ gap: 6, marginBottom: 14 }}>
+        {pos.map((po) => (
+          <Pill key={po} tone="amber">PO {po}{dates[po] ? ` · ${dmy(dates[po])}` : ""}</Pill>
+        ))}
+      </div>
+      <Note tone="teal" icon={ClipboardList}>
+        Nothing is deleted. {pos.length === 1 ? "It stays" : "They stay"} in the PO summary, in the
+        masters and in every report — this only clears the dashboard. You can put
+        {pos.length === 1 ? " it" : " them"} back from the foot of the balance card.
+      </Note>
+    </Modal>
+  );
+}
+
 export default function DashboardPage() {
   const nav = useNavigate();
   const mobile = useIsMobile();
@@ -115,10 +173,23 @@ export default function DashboardPage() {
   const invq = useInvoices();
   const items = useItems().data || [];
   const buyers = useBuyers().data || [];
+  const { hide, restore } = useHiddenPoMutations();
+
+  const [sel, setSel] = useState([]);
+  const [confirm, setConfirm] = useState(false);
 
   const invoices = invq.data || [];
   const byId = useMemo(() => Object.fromEntries(items.map((i) => [i.id, i])), [items]);
   const brand = (id) => buyers.find((b) => b.id === id)?.brand || "—";
+
+  const emptyPos = mq.data?.empty_pos || [];
+  const hiddenPos = mq.data?.hidden_pos || [];
+
+  /* A ticked order that has since been filled again — or removed by somebody
+     else — must not stay ticked behind an invisible column. */
+  useEffect(() => {
+    setSel((p) => (p.length ? p.filter((po) => emptyPos.includes(po)) : p));
+  }, [mq.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const invRows = useMemo(() => invoices.map((inv) => {
     let boxes = 0; let volume = 0;
@@ -135,31 +206,65 @@ export default function DashboardPage() {
 
   const M = mq.data;
   const cntr = (vol) => (vol > 0 ? (vol / M.cntr_vol).toFixed(2) : "—");
+  const toggle = (po) => setSel((p) => (p.includes(po) ? p.filter((x) => x !== po) : [...p, po]));
+  const removeSelected = () => hide.mutate(sel, { onSuccess: () => { setSel([]); setConfirm(false); } });
 
   return (
     <div className="stack">
-      <div className="page-head">
-        <h2 className="h1">Dashboard</h2>
-      </div>
-
       <Card>
         <CardHead icon={Boxes} title="Balance orders · boxes & volume">
           {!mobile && <span style={{ fontSize: 11.5, color: "var(--faint)" }}>Pending only · click a PO header to open it</span>}
         </CardHead>
-        {M.rows.length ? (mobile ? (
-          <BalanceCards M={M} onOpenPo={() => nav("/orders")} />
+
+        {/* The bar only appears once there is something to clear, and the
+            button only once something is ticked. */}
+        {emptyPos.length > 0 && (
+          <div className="bulk-bar">
+            <span className="bulk-txt">
+              <Check size={13} />
+              {sel.length
+                ? <><b>{sel.length}</b> of {emptyPos.length} filled order{emptyPos.length === 1 ? "" : "s"} ticked</>
+                : <>{emptyPos.length} order{emptyPos.length === 1 ? "" : "s"} fully delivered · tick one to clear it off the dashboard</>}
+            </span>
+            <span className="grow" />
+            {sel.length > 0 && (
+              <span className="row wrap" style={{ gap: 8 }}>
+                <Btn variant="ghost" size="sm" onClick={() => setSel([])}>Clear ticks</Btn>
+                <Btn variant="danger" size="sm" icon={EyeOff} onClick={() => setConfirm(true)}>
+                  Remove {sel.length} from dashboard
+                </Btn>
+              </span>
+            )}
+          </div>
+        )}
+
+        {M.rows.length || emptyPos.length ? (mobile ? (
+          <BalanceCards M={M} empty={emptyPos} sel={sel} onToggle={toggle} onOpenPo={() => nav("/orders")} />
         ) : (
           <div className="tbl-wrap">
             <table className="matrix">
               <thead>
                 <tr>
                   <th rowSpan={2} className="mx-sup">Supplier</th>
-                  {M.pos.map((po) => (
-                    <th key={po} colSpan={2} className="mx-po" onClick={() => nav("/orders")} title={`Open PO ${po}`}>
-                      <span className="mx-poname">PO {po}</span>
-                      <span className="mx-podate">{dmy(M.po_date[po])}</span>
-                    </th>
-                  ))}
+                  {M.pos.map((po) => {
+                    const done = emptyPos.includes(po);
+                    return (
+                      <th key={po} colSpan={2} className={`mx-po${done ? " mx-done" : ""}${sel.includes(po) ? " mx-picked" : ""}`}
+                        onClick={() => nav("/orders")} title={`Open PO ${po}`}>
+                        <span className="mx-poname">
+                          {done && (
+                            <input type="checkbox" className="ck mx-ck" checked={sel.includes(po)}
+                              title="Clear this filled order off the dashboard"
+                              aria-label={`Select PO ${po} to remove from the dashboard`}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={() => toggle(po)} />
+                          )}
+                          PO {po}
+                        </span>
+                        <span className="mx-podate">{dmy(M.po_date[po])}</span>
+                      </th>
+                    );
+                  })}
                   <th colSpan={2} className="mx-tot">TOTAL</th>
                   <th rowSpan={2} className="mx-tot">CNTRS</th>
                 </tr>
@@ -185,6 +290,16 @@ export default function DashboardPage() {
                     <td className="r">{cntr(r.totVol)}</td>
                   </tr>
                 ))}
+                {/* Every order filled, but filled orders left to clear: the
+                    board still has to render, or there is nothing to tick. */}
+                {!M.rows.length && (
+                  <tr>
+                    <td className="mx-sup" colSpan={M.pos.length * 2 + 4}
+                      style={{ textAlign: "center", color: "var(--faint)", position: "static" }}>
+                      No boxes are pending — every order above has been delivered in full.
+                    </td>
+                  </tr>
+                )}
               </tbody>
               <tfoot>
                 <tr>
@@ -208,6 +323,14 @@ export default function DashboardPage() {
             <span className="row" style={{ gap: 6 }}><Boxes size={13} /> {M.totals.totBox} boxes pending</span>
             <span className="row" style={{ gap: 6 }}><ClipboardList size={13} /> {M.pos.length} open PO(s)</span>
             <span className="row" style={{ gap: 6 }}><Container size={13} /> ≈ {M.containers} container(s) · {num(M.totals.totVol, 2)} m³</span>
+            {hiddenPos.length > 0 && (
+              <span className="row wrap" style={{ gap: 6 }}>
+                <EyeOff size={13} /> {hiddenPos.length} removed from this board
+                <button className="linkish" disabled={restore.isPending} onClick={() => restore.mutate(null)}>
+                  <Undo2 size={12} /> Put {hiddenPos.length === 1 ? "it" : "them"} back
+                </button>
+              </span>
+            )}
           </div>
         </div>
       </Card>
@@ -235,6 +358,11 @@ export default function DashboardPage() {
           />
         )) : <Empty icon={Ship} title="No invoices yet">Record packing to create the first invoice.</Empty>}
       </Card>
+
+      {confirm && sel.length > 0 && (
+        <RemoveConfirm pos={sel} dates={M.po_date} busy={hide.isPending}
+          onCancel={() => setConfirm(false)} onConfirm={removeSelected} />
+      )}
     </div>
   );
 }

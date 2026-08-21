@@ -92,6 +92,29 @@ export const Input = forwardRef((props, ref) => (
 ));
 Input.displayName = "Input";
 
+/* A quantity box with no stepper.
+
+   The figures typed into these run to five digits — 20,000 pieces, 1,030
+   boxes — so the up/down arrows were never how anybody entered one, and they
+   cost a third of the field's width. Worse, a `type="number"` box rewrites
+   itself when the wheel rolls over it while focused, which on a long order
+   form is a silent wrong quantity. So: a text box that accepts digits only.
+
+   `onChange` is handed the cleaned string, not the event. */
+export const NumberInput = forwardRef(({ value, onChange, decimal = false, ...p }, ref) => {
+  const clean = (raw) => {
+    const s = String(raw);
+    return decimal
+      ? s.replace(/[^\d.]/g, "").replace(/(\..*)\./g, "$1")
+      : s.replace(/[^\d]/g, "");
+  };
+  return (
+    <Input {...p} ref={ref} type="text" inputMode={decimal ? "decimal" : "numeric"}
+      autoComplete="off" value={value ?? ""} onChange={(e) => onChange(clean(e.target.value))} />
+  );
+});
+NumberInput.displayName = "NumberInput";
+
 /* A password box with an eye to reveal what was typed — the only way to catch
    a typo in a field the browser masks. Reveal is per-field and resets on
    every mount, so nothing stays readable after the form is left. */

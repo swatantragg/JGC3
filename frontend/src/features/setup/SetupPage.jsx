@@ -140,10 +140,6 @@ export default function SetupPage() {
 
   return (
     <div className="stack">
-      <div className="page-head">
-        <h2 className="h1">Setup</h2>
-      </div>
-
       <Seg options={[
         ...(canItems ? [["items", `Items · ${itemCount}`, Layers]] : []),
         ...(canParties ? [["buyers", `Buyers · ${buyers.length}`, Globe], ["suppliers", `Suppliers · ${suppliers.length}`, Truck], ["transports", `Transport · ${transports.length}`, Route]] : []),
